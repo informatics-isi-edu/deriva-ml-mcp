@@ -596,7 +596,7 @@ dependencies = [
 [[package]]
 name = "deriva-mcp-core"
 version = "0.1.0"
-source = { editable = "../../../deriva-mcp-core" }
+source = { editable = "../deriva-mcp-core" }
 dependencies = [
     { name = "chevron" },
     { name = "deriva" },
@@ -630,7 +630,7 @@ provides-extras = ["rag", "dev"]
 
 [[package]]
 name = "deriva-ml"
-source = { editable = "../../../deriva-ml" }
+source = { editable = "../deriva-ml" }
 dependencies = [
     { name = "bdbag" },
     { name = "bump-my-version" },
@@ -718,8 +718,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "bump-my-version", marker = "extra == 'dev'" },
-    { name = "deriva-mcp-core", editable = "../../../deriva-mcp-core" },
-    { name = "deriva-ml", editable = "../../../deriva-ml" },
+    { name = "deriva-mcp-core", editable = "../deriva-mcp-core" },
+    { name = "deriva-ml", editable = "../deriva-ml" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
@@ -2712,8 +2712,8 @@ name = "uvicorn"
 version = "0.46.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click" },
-    { name = "h11" },
+    { name = "click", marker = "sys_platform != 'emscripten'" },
+    { name = "h11", marker = "sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1f/93/041fca8274050e40e6791f267d82e0e2e27dd165627bd640d3e0e378d877/uvicorn-0.46.0.tar.gz", hash = "sha256:fb9da0926999cc6cb22dc7cd71a94a632f078e6ae47ff683c5c420750fb7413d", size = 88758, upload-time = "2026-04-23T07:16:00.151Z" }
 wheels = [
