@@ -76,10 +76,12 @@ don't re-discover them.
   If `ruff format --check` ever flags it, the exclude has been broken.
 
 - **Annotations: prefer unquoted under `from __future__ import annotations`.**
-  House style is `def register(ctx: PluginContext) -> None:` with the
-  `PluginContext` import guarded by `if TYPE_CHECKING:`. PEP 563 makes all
-  annotations lazy strings at runtime, so quoting is redundant and ruff
-  `UP037` flags it. Don't "fix" the unquoted form back to quoted strings.
+  House style is `from __future__ import annotations` everywhere; under that
+  PEP 563 opt-in, all annotations are lazy strings at runtime, so quoting is
+  redundant and ruff `UP037` flags it. The canonical form is
+  `def register(ctx: PluginContext) -> None:` with the `PluginContext`
+  import guarded by `if TYPE_CHECKING:`. Don't "fix" the unquoted form back
+  to quoted strings.
 
 ## Spec & Plan
 
