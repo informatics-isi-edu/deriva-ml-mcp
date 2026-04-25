@@ -6,7 +6,7 @@
 
 **Architecture:** Python package living at `/Users/carl/GitHub/DerivaML/deriva-ml-mcp/`, installable as a `deriva-mcp-core` plugin via the `deriva_mcp.plugins` entry-point group. A single `register(ctx)` function dispatches to per-domain modules (`tools/dataset.py`, `tools/feature.py`, `tools/workflow.py`, `tools/execution.py`, `resources/ml.py`). One helper module (`ml_context.py`) builds a `DerivaML` instance from core's `get_request_credential()` — every tool obtains its `DerivaML` through that helper. No connection, auth, RAG, or vocabulary code lives here.
 
-**Tech Stack:** Python 3.11+, `uv` for everything, `pytest` + `pytest-asyncio`, `ruff` for lint/format, `setuptools_scm` for versioning, `hatchling` build backend, `deriva-mcp-core` runtime, `deriva-ml` domain library.
+**Tech Stack:** Python 3.12+, `uv` for everything, `pytest` + `pytest-asyncio`, `ruff` for lint/format, `hatch-vcs` for git-tag-based versioning, `hatchling` build backend, `deriva-mcp-core` runtime, `deriva-ml` domain library.
 
 **Spec:** [`/Users/carl/GitHub/DerivaML/deriva-ml-mcp/docs/superpowers/specs/2026-04-24-deriva-ml-mcp-design.md`](../specs/2026-04-24-deriva-ml-mcp-design.md)
 
