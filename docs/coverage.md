@@ -32,7 +32,7 @@ for column meanings, disposition definitions, and maintenance rules.
 | estimate_bag_size | dataset.py | merged | bag_info | tools/dataset.py | dropped — bag_info returns same info plus cache status | Strict subset of bag_info |
 | bag_info | dataset.py | kept | bag_info | tools/dataset.py | hostname/catalog_id added | Comprehensive read for "describe a dataset bag" |
 | cache_dataset | dataset.py | split | cache_dataset (dataset only) | tools/dataset.py | dataset branch kept; asset branch dropped to core hatrac | Old tool was 2-in-1 (dataset OR asset); asset path belongs in core |
-| preview_denormalized_dataset | dataset.py | renamed | denormalize_dataset | tools/dataset.py | uses current describe_denormalized / get_denormalized_as_dict API | Same intent (preview wide table); covers list_schema_paths via mode flag |
+| preview_denormalized_dataset | dataset.py | renamed | denormalize_dataset | tools/dataset.py | uses current describe_denormalized / get_denormalized_as_dict API; row mode adds limit/after_rid/preflight_count pagination | Two clean modes: catalog-shape (no rid) vs. dataset-described (with rid). Schema-path discovery is a skill/in-process concern, not an MCP tool. |
 | create_dataset_type_term | dataset.py | dropped-to-core | add_term | (core) | none | Vocab-domain; core's add_term("Dataset_Type", ...) covers it |
 | delete_dataset_type_term | dataset.py | dropped-to-core | delete_term | (core) | none | Vocab-domain; core's delete_term("Dataset_Type", ...) covers it |
 | split_dataset | dataset.py | kept | split_dataset | tools/dataset.py | hostname/catalog_id added; selection_fn dropped (Python-only callable) | High-value ML-domain operation; sklearn-style API |
