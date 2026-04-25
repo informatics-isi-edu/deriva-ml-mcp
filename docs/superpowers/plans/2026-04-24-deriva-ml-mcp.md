@@ -333,7 +333,7 @@ if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
 
 
-def register(ctx: "PluginContext") -> None:
+def register(ctx: PluginContext) -> None:
     """Register all deriva-ml-mcp tools and resources with the given context.
 
     Per-domain registrars are added in subsequent phases of the migration
@@ -384,19 +384,38 @@ from __future__ import annotations
 
 - [ ] **Step 5: Verify the package imports cleanly**
 
-Run:
+Now that `src/deriva_ml_mcp/` exists, hatchling's vcs hook can write `_version.py`, so a full `uv sync` (no `--no-install-project`) works:
+
+```bash
+uv sync --extra dev
+```
+
+Then verify the import:
 ```bash
 uv run python -c "from deriva_ml_mcp.plugin import register; print(register)"
 ```
 
 Expected: prints `<function register at 0x...>`. No import errors.
 
-- [ ] **Step 6: Commit**
+**Worktree note:** when running this task from a git worktree under `worktrees/...`, plain `uv sync --extra dev` re-resolves `[tool.uv.sources]` paths and fails because `../deriva-mcp-core` etc. resolve to non-existent `worktrees/deriva-mcp-core`. Use `uv sync --extra dev --frozen` instead — the lockfile from Task 0.1 already pins the resolved paths correctly. From the main repo location plain `uv sync --extra dev` works; only worktrees need `--frozen`.
+
+- [ ] **Step 6: Run ruff** (sanity check before commit)
+
+```bash
+uv run ruff check src
+uv run ruff format --check src
+```
+
+Expected: clean.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/
 git commit -m "feat: empty plugin entry point and module skeleton"
 ```
+
+Verify `_version.py` is NOT in the commit (`git show --stat HEAD`); it should be excluded by the `src/*/_version.py` `.gitignore` rule.
 
 ---
 
@@ -999,7 +1018,7 @@ if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
 
 
-def register(ctx: "PluginContext") -> None:
+def register(ctx: PluginContext) -> None:
     """Register dataset domain tools with the plugin context.
 
     Args:
@@ -1081,7 +1100,7 @@ Replace the no-op body with:
 from deriva_ml_mcp.tools import dataset as _dataset
 
 
-def register(ctx: "PluginContext") -> None:
+def register(ctx: PluginContext) -> None:
     """Register all deriva-ml-mcp tools and resources.
 
     Args:
@@ -1388,7 +1407,7 @@ if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
 
 
-def register(ctx: "PluginContext") -> None:
+def register(ctx: PluginContext) -> None:
     """Register ML-domain resources.
 
     Args:
