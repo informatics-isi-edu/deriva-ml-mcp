@@ -79,7 +79,7 @@ dynamic = ["version"]
 description = "DerivaML domain plugin for deriva-mcp-core"
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 authors = [
     { name = "Informatics and Scientific Research Division, USC" }
 ]
@@ -90,7 +90,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
 
@@ -120,13 +119,24 @@ version-file = "src/deriva_ml_mcp/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/deriva_ml_mcp"]
 
+[tool.uv]
+# `deriva-ml` pins `deriva-py` to branch `2.0-dev`; `deriva-mcp-core` pins it
+# to `master`. uv refuses to resolve transitive conflicts via
+# `[tool.uv.sources]` (which only redirects *direct* requirements). The
+# `override-dependencies` mechanism rewrites the requirement everywhere it
+# appears in the dep graph, including in transitive editable installs.
+# Until the two sibling repos converge on one branch, override here.
+override-dependencies = [
+    "deriva @ git+https://github.com/informatics-isi-edu/deriva-py@2.0-dev",
+]
+
 [tool.uv.sources]
 deriva-mcp-core = { path = "../deriva-mcp-core", editable = true }
 deriva-ml = { path = "../deriva-ml", editable = true }
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "W"]
@@ -152,12 +162,18 @@ show_missing = true
 allow_dirty = false
 commit = true
 tag = true
-current_version = "0.0.0"
 ```
+
+(`current_version` is intentionally omitted — versioning is dynamic via
+`hatch-vcs` from git tags, so a literal version string here would drift
+from reality after the first `bump-version` call.)
 
 - [ ] **Step 2: Write `.gitignore`**
 
 ```gitignore
+# Worktrees
+worktrees/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -236,10 +252,18 @@ cp /Users/carl/GitHub/DerivaML/deriva-mcp-core/LICENSE /Users/carl/GitHub/Deriva
 
 Run from `/Users/carl/GitHub/DerivaML/deriva-ml-mcp/`:
 ```bash
-uv sync --extra dev
+uv sync --extra dev --no-install-project
 ```
 
 Expected: lockfile generated, no resolution errors. If `deriva-mcp-core` or `deriva-ml` fail to resolve, investigate before continuing — do not proceed with placeholder dependencies.
+
+`--no-install-project` is required at this point because `pyproject.toml`'s `[tool.hatch.build.hooks.vcs]` writes to `src/deriva_ml_mcp/_version.py`, but the `src/deriva_ml_mcp/` directory does not exist until Task 0.2. After Task 0.2 lands, plain `uv sync --extra dev` works.
+
+Spot-check the lockfile to confirm the `[tool.uv] override-dependencies` actually took effect:
+```bash
+head -20 uv.lock                                    # look for `overrides = [...]` in the manifest block
+grep -A3 'name = "deriva"' uv.lock | head -10       # confirm `deriva` resolves to a `?rev=2.0-dev` SHA
+```
 
 - [ ] **Step 6: Commit**
 
