@@ -1,1 +1,27 @@
+# Worktrees
 worktrees/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# uv / venv
+.venv/
+.python-version
+
+# Build artifacts
+dist/
+build/
+src/*/_version.py
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
