@@ -3,17 +3,22 @@
 Read-only operations on datasets: list, lookup, browse members,
 walk relations, inspect bag size, generate spec configs.
 
-Mutation tools (create, delete, add/remove members, update types, etc.)
-land in subsequent batches.
+Mutation tools: create, delete, add/remove members, update types,
+register element types, increment version. All mutation tools wrap
+their I/O in ``with deriva_call():`` and emit audit events on both
+success (``deriva_ml_<op>``) and failure (``deriva_ml_<op>_failed``).
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 from deriva_mcp_core import deriva_call
-from deriva_ml.dataset.aux_classes import DatasetSpec
+from deriva_mcp_core.telemetry import audit_event
+from deriva_ml.dataset.aux_classes import DatasetSpec, DatasetVersion, VersionPart
+from deriva_ml.dataset.dataset import Dataset
 
 from deriva_ml_mcp.ml_context import get_ml
 
@@ -22,6 +27,56 @@ if TYPE_CHECKING:
 
 
 _MAX_LIMIT = 1000
+
+logger = logging.getLogger(__name__)
+
+
+def _error_envelope(
+    exc: Exception,
+    *,
+    operation: str,
+    hostname: str,
+    catalog_id: str,
+    **audit_fields: Any,
+) -> str:
+    """Standard mutation-tool error response.
+
+    Logs the exception with traceback, emits a ``<operation>_failed``
+    audit event, and returns a JSON envelope the LLM can act on.
+
+    Args:
+        exc: The exception that triggered the error path.
+        operation: The audit-event base name (without the ``_failed``
+            suffix or ``deriva_ml_`` prefix). e.g. ``"create_dataset"``
+            -> audit event ``"deriva_ml_create_dataset_failed"``.
+        hostname: The Deriva hostname (passed to audit_event).
+        catalog_id: The catalog ID (passed to audit_event).
+        **audit_fields: Additional keyword fields included in the
+            audit event payload (e.g. ``dataset_rid``).
+
+    Returns:
+        JSON string ``{"error": str(exc)}``.
+
+    Example:
+        >>> # Inside a mutation tool's except block:
+        >>> # return _error_envelope(exc, operation="create_dataset",
+        >>> #                        hostname=h, catalog_id=c, execution_rid=e)
+    """
+    logger.warning(
+        "deriva_ml_%s failed: %s: %s",
+        operation,
+        type(exc).__name__,
+        exc,
+        exc_info=True,
+    )
+    audit_event(
+        f"deriva_ml_{operation}_failed",
+        hostname=hostname,
+        catalog_id=catalog_id,
+        error_type=type(exc).__name__,
+        **audit_fields,
+    )
+    return json.dumps({"error": str(exc)})
 
 
 def _summarize_dataset(ds: Any) -> dict[str, Any]:
@@ -599,3 +654,525 @@ def register(ctx: PluginContext) -> None:
             )
         except Exception as exc:
             return json.dumps({"error": str(exc)})
+
+    # ------------------------------------------------------------------
+    # Mutation tools (Batch 2). Each emits audit_event on success and
+    # routes failures through _error_envelope.
+    # ------------------------------------------------------------------
+
+    @ctx.tool(mutates=True)
+    async def create_dataset(
+        hostname: str,
+        catalog_id: str,
+        execution_rid: str,
+        dataset_types: list[str] | None = None,
+        description: str = "",
+        version: str | None = None,
+    ) -> str:
+        """Register a new dataset under an execution for provenance tracking.
+
+        Args:
+            hostname: The Deriva server hostname.
+            catalog_id: The catalog ID as a string.
+            execution_rid: RID of the parent Execution. Required -- the new
+                dataset's provenance is rooted in this execution.
+            dataset_types: Optional list of dataset-type term names to tag
+                the new dataset with.
+            description: Free-text description of the dataset.
+            version: Optional initial semver string (e.g. ``"1.0.0"``).
+                If None, DerivaML defaults to ``0.1.0``.
+
+        Returns:
+            JSON string ``{"status": "created", "rid", "description",
+            "dataset_types", "current_version", "execution_rid"}``.
+
+        Raises:
+            RuntimeError: Wrapped, propagated from
+                ``deriva_ml.dataset.dataset.Dataset.create_dataset`` (e.g.
+                invalid execution_rid, unknown dataset_type term).
+
+        Example:
+            ``{"status": "created", "rid": "1-NEW", "description": "...",
+            "dataset_types": ["Training"], "current_version": "0.1.0",
+            "execution_rid": "1-EXEC"}``.
+        """
+        try:
+            parsed_version = DatasetVersion.parse(version) if version else None
+            with deriva_call():
+                ml = get_ml(hostname, catalog_id)
+                new_ds = Dataset.create_dataset(
+                    ml,
+                    execution_rid=execution_rid,
+                    dataset_types=dataset_types,
+                    description=description,
+                    version=parsed_version,
+                )
+                summary = _summarize_dataset(new_ds)
+                audit_event(
+                    "deriva_ml_create_dataset",
+                    hostname=hostname,
+                    catalog_id=catalog_id,
+                    execution_rid=execution_rid,
+                    dataset_rid=new_ds.dataset_rid,
+                    dataset_types=dataset_types or [],
+                    version=summary["current_version"],
+                )
+            return json.dumps({"status": "created", **summary, "execution_rid": execution_rid})
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="create_dataset",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                execution_rid=execution_rid,
+                dataset_types=dataset_types or [],
+            )
+
+    @ctx.tool(mutates=True)
+    async def delete_dataset(
+        hostname: str,
+        catalog_id: str,
+        dataset_rid: str,
+        recurse: bool = False,
+    ) -> str:
+        """Soft-delete a dataset (sets ``Deleted=True`` on the catalog row).
+
+        With ``recurse=True``, also soft-deletes the dataset's nested
+        children. Without ``recurse``, a dataset that has parents (i.e. is
+        nested in another dataset) cannot be deleted; the upstream raises.
+
+        Args:
+            hostname: The Deriva server hostname.
+            catalog_id: The catalog ID as a string.
+            dataset_rid: The RID of the dataset to delete.
+            recurse: If True, also soft-delete nested child datasets.
+
+        Returns:
+            JSON string ``{"status": "deleted", "dataset_rid", "recursive"}``.
+
+        Raises:
+            RuntimeError: Wrapped, propagated from
+                ``deriva_ml.DerivaML.delete_dataset`` (e.g. dataset not
+                found, dataset is nested and ``recurse=False``).
+
+        Example:
+            ``{"status": "deleted", "dataset_rid": "1-AAAA",
+            "recursive": false}``.
+        """
+        try:
+            with deriva_call():
+                ml = get_ml(hostname, catalog_id)
+                ds = ml.lookup_dataset(dataset_rid)
+                ml.delete_dataset(ds, recurse=recurse)
+                audit_event(
+                    "deriva_ml_delete_dataset",
+                    hostname=hostname,
+                    catalog_id=catalog_id,
+                    dataset_rid=dataset_rid,
+                    recursive=recurse,
+                )
+            return json.dumps(
+                {
+                    "status": "deleted",
+                    "dataset_rid": dataset_rid,
+                    "recursive": recurse,
+                }
+            )
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="delete_dataset",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                dataset_rid=dataset_rid,
+                recursive=recurse,
+            )
+
+    @ctx.tool(mutates=True)
+    async def add_dataset_members(
+        hostname: str,
+        catalog_id: str,
+        dataset_rid: str,
+        member_rids: list[str] | None = None,
+        members_by_table: dict[str, list[str]] | None = None,
+        description: str = "",
+        execution_rid: str | None = None,
+    ) -> str:
+        """Add records (or whole datasets) as members of a dataset.
+
+        Provide EITHER ``member_rids`` (a mixed-table list -- each RID is
+        resolved to its table) OR ``members_by_table`` (a table-keyed dict
+        -- faster, no resolution needed). Exactly one of the two must be
+        non-empty.
+
+        Adding members automatically increments the dataset's minor
+        version. Member tables must already be registered as dataset
+        element types (see ``add_dataset_element_type``).
+
+        Args:
+            hostname: The Deriva server hostname.
+            catalog_id: The catalog ID as a string.
+            dataset_rid: The RID of the dataset to add members to.
+            member_rids: Mixed-table list of RIDs to add.
+            members_by_table: Map of table name to list of RIDs.
+            description: Free-text description recorded with the version
+                bump.
+            execution_rid: Optional execution to attribute the change to.
+
+        Returns:
+            JSON string ``{"status": "success", "added_count",
+            "dataset_rid", "new_version"}``.
+
+        Raises:
+            ValueError: If neither or both of ``member_rids``/
+                ``members_by_table`` are supplied.
+            RuntimeError: Wrapped, propagated from
+                ``deriva_ml.dataset.dataset.Dataset.add_dataset_members``
+                (e.g. table not a registered element type, would create a
+                cycle, duplicate members).
+
+        Example:
+            ``{"status": "success", "added_count": 3, "dataset_rid":
+            "1-AAAA", "new_version": "1.2.0"}``.
+        """
+        has_list = bool(member_rids)
+        has_dict = bool(members_by_table)
+        if has_list == has_dict:
+            return json.dumps(
+                {
+                    "error": (
+                        "Provide exactly one of member_rids or "
+                        "members_by_table (and it must be non-empty)."
+                    )
+                }
+            )
+        members: list[str] | dict[str, list[str]]
+        if has_list:
+            members = list(member_rids or [])
+            added_count = len(members)
+        else:
+            members = dict(members_by_table or {})
+            added_count = sum(len(v) for v in members.values())
+        try:
+            with deriva_call():
+                ml = get_ml(hostname, catalog_id)
+                ds = ml.lookup_dataset(dataset_rid)
+                ds.add_dataset_members(
+                    members=members,
+                    description=description,
+                    execution_rid=execution_rid,
+                )
+                new_version = str(ds.current_version) if ds.current_version is not None else None
+                audit_event(
+                    "deriva_ml_add_dataset_members",
+                    hostname=hostname,
+                    catalog_id=catalog_id,
+                    dataset_rid=dataset_rid,
+                    added_count=added_count,
+                    new_version=new_version,
+                )
+            return json.dumps(
+                {
+                    "status": "success",
+                    "added_count": added_count,
+                    "dataset_rid": dataset_rid,
+                    "new_version": new_version,
+                }
+            )
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="add_dataset_members",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                dataset_rid=dataset_rid,
+                added_count=added_count,
+            )
+
+    @ctx.tool(mutates=True)
+    async def delete_dataset_members(
+        hostname: str,
+        catalog_id: str,
+        dataset_rid: str,
+        member_rids: list[str],
+        description: str = "",
+        execution_rid: str | None = None,
+    ) -> str:
+        """Remove records from a dataset.
+
+        The records themselves are NOT deleted -- only the association
+        rows linking them to the dataset are removed. Removing members
+        increments the dataset's minor version.
+
+        Args:
+            hostname: The Deriva server hostname.
+            catalog_id: The catalog ID as a string.
+            dataset_rid: The RID of the dataset to remove members from.
+            member_rids: List of member RIDs to remove.
+            description: Free-text description recorded with the version
+                bump.
+            execution_rid: Optional execution to attribute the change to.
+
+        Returns:
+            JSON string ``{"status": "success", "removed_count",
+            "dataset_rid", "new_version"}``.
+
+        Raises:
+            RuntimeError: Wrapped, propagated from
+                ``deriva_ml.dataset.dataset.Dataset.delete_dataset_members``
+                (e.g. RID not part of dataset).
+
+        Example:
+            ``{"status": "success", "removed_count": 2, "dataset_rid":
+            "1-AAAA", "new_version": "1.3.0"}``.
+        """
+        removed_count = len(member_rids)
+        try:
+            with deriva_call():
+                ml = get_ml(hostname, catalog_id)
+                ds = ml.lookup_dataset(dataset_rid)
+                ds.delete_dataset_members(
+                    members=member_rids,
+                    description=description,
+                    execution_rid=execution_rid,
+                )
+                new_version = str(ds.current_version) if ds.current_version is not None else None
+                audit_event(
+                    "deriva_ml_delete_dataset_members",
+                    hostname=hostname,
+                    catalog_id=catalog_id,
+                    dataset_rid=dataset_rid,
+                    removed_count=removed_count,
+                    new_version=new_version,
+                )
+            return json.dumps(
+                {
+                    "status": "success",
+                    "removed_count": removed_count,
+                    "dataset_rid": dataset_rid,
+                    "new_version": new_version,
+                }
+            )
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="delete_dataset_members",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                dataset_rid=dataset_rid,
+                removed_count=removed_count,
+            )
+
+    @ctx.tool(mutates=True)
+    async def update_dataset_types(
+        hostname: str,
+        catalog_id: str,
+        dataset_rid: str,
+        add: list[str] | None = None,
+        remove: list[str] | None = None,
+    ) -> str:
+        """Add and/or remove dataset-type tags on a dataset in one call.
+
+        Either or both of ``add`` and ``remove`` may be empty; an empty
+        call is a no-op (still returns success with the unchanged type
+        list). Adds happen before removes.
+
+        Args:
+            hostname: The Deriva server hostname.
+            catalog_id: The catalog ID as a string.
+            dataset_rid: The RID of the dataset whose types to update.
+            add: Dataset_Type term names to add.
+            remove: Dataset_Type term names to remove.
+
+        Returns:
+            JSON string ``{"status": "updated", "dataset_rid",
+            "dataset_types", "added", "removed", "new_version"}``.
+
+        Raises:
+            RuntimeError: Wrapped, propagated from
+                ``deriva_ml.dataset.dataset.Dataset.add_dataset_types`` or
+                ``remove_dataset_type`` (e.g. unknown vocabulary term).
+
+        Example:
+            ``{"status": "updated", "dataset_rid": "1-AAAA",
+            "dataset_types": ["Training", "Validation"],
+            "added": ["Validation"], "removed": [], "new_version":
+            "1.4.0"}``.
+        """
+        adds = list(add or [])
+        removes = list(remove or [])
+        try:
+            with deriva_call():
+                ml = get_ml(hostname, catalog_id)
+                ds = ml.lookup_dataset(dataset_rid)
+                if adds:
+                    ds.add_dataset_types(adds)
+                for term in removes:
+                    ds.remove_dataset_type(term)
+                updated_types = list(ds.dataset_types) if ds.dataset_types else []
+                new_version = str(ds.current_version) if ds.current_version is not None else None
+                audit_event(
+                    "deriva_ml_update_dataset_types",
+                    hostname=hostname,
+                    catalog_id=catalog_id,
+                    dataset_rid=dataset_rid,
+                    added=adds,
+                    removed=removes,
+                    new_version=new_version,
+                )
+            return json.dumps(
+                {
+                    "status": "updated",
+                    "dataset_rid": dataset_rid,
+                    "dataset_types": updated_types,
+                    "added": adds,
+                    "removed": removes,
+                    "new_version": new_version,
+                }
+            )
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="update_dataset_types",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                dataset_rid=dataset_rid,
+                added=adds,
+                removed=removes,
+            )
+
+    @ctx.tool(mutates=True)
+    async def add_dataset_element_type(
+        hostname: str,
+        catalog_id: str,
+        table_name: str,
+    ) -> str:
+        """Register a domain table as a valid dataset member type.
+
+        Creates the association table linking the dataset table to
+        ``table_name``. The caller must have catalog admin privileges.
+
+        Args:
+            hostname: The Deriva server hostname.
+            catalog_id: The catalog ID as a string.
+            table_name: Name of the domain table to register.
+
+        Returns:
+            JSON string ``{"status": "success", "table_name",
+            "association_table"}``.
+
+        Raises:
+            RuntimeError: Wrapped, propagated from
+                ``deriva_ml.DerivaML.add_dataset_element_type`` (e.g.
+                unknown table, table is system/ML and not eligible).
+
+        Example:
+            ``{"status": "success", "table_name": "Image",
+            "association_table": "Dataset_Image"}``.
+        """
+        try:
+            with deriva_call():
+                ml = get_ml(hostname, catalog_id)
+                assoc_table = ml.add_dataset_element_type(table_name)
+                association_name = assoc_table.name
+                audit_event(
+                    "deriva_ml_add_dataset_element_type",
+                    hostname=hostname,
+                    catalog_id=catalog_id,
+                    table_name=table_name,
+                    association_table=association_name,
+                )
+            return json.dumps(
+                {
+                    "status": "success",
+                    "table_name": table_name,
+                    "association_table": association_name,
+                }
+            )
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="add_dataset_element_type",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                table_name=table_name,
+            )
+
+    @ctx.tool(mutates=True)
+    async def increment_dataset_version(
+        hostname: str,
+        catalog_id: str,
+        dataset_rid: str,
+        component: Literal["major", "minor", "patch"] = "minor",
+        description: str = "",
+        execution_rid: str | None = None,
+    ) -> str:
+        """Bump a dataset's semver version after upstream changes.
+
+        Use this to record a new version after metadata/data updates that
+        the regular member/type APIs don't already version (e.g. after an
+        out-of-band catalog edit). Bumping a higher-order component resets
+        lower-order components to zero.
+
+        Args:
+            hostname: The Deriva server hostname.
+            catalog_id: The catalog ID as a string.
+            dataset_rid: The RID of the dataset to bump.
+            component: Which semver component to increment.
+            description: Free-text description recorded with the bump.
+            execution_rid: Optional execution to attribute the bump to.
+
+        Returns:
+            JSON string ``{"status": "success", "dataset_rid",
+            "previous_version", "new_version", "component"}``.
+
+        Raises:
+            RuntimeError: Wrapped, propagated from
+                ``deriva_ml.dataset.dataset.Dataset.increment_dataset_version``.
+
+        Example:
+            ``{"status": "success", "dataset_rid": "1-AAAA",
+            "previous_version": "1.2.0", "new_version": "1.3.0",
+            "component": "minor"}``.
+        """
+        try:
+            version_part = VersionPart(component)
+            with deriva_call():
+                ml = get_ml(hostname, catalog_id)
+                ds = ml.lookup_dataset(dataset_rid)
+                previous_version = (
+                    str(ds.current_version) if ds.current_version is not None else None
+                )
+                new_version = ds.increment_dataset_version(
+                    component=version_part,
+                    description=description,
+                    execution_rid=execution_rid,
+                )
+                new_version_str = str(new_version)
+                audit_event(
+                    "deriva_ml_increment_dataset_version",
+                    hostname=hostname,
+                    catalog_id=catalog_id,
+                    dataset_rid=dataset_rid,
+                    component=component,
+                    previous_version=previous_version,
+                    new_version=new_version_str,
+                )
+            return json.dumps(
+                {
+                    "status": "success",
+                    "dataset_rid": dataset_rid,
+                    "previous_version": previous_version,
+                    "new_version": new_version_str,
+                    "component": component,
+                }
+            )
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="increment_dataset_version",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                dataset_rid=dataset_rid,
+                component=component,
+            )
