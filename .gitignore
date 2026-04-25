@@ -25,3 +25,6 @@ src/*/_version.py
 .idea/
 *.swp
 .DS_Store
+
+# Per-phase analysis scratch space (gitignored — keep paper trail local)
+docs/scratch/
