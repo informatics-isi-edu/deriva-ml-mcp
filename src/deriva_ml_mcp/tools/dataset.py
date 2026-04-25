@@ -59,11 +59,19 @@ def _paginate(
 
     Returns:
         Tuple of (page, truncated, next_after_rid).
+
+    Note:
+        ``truncated`` is True whenever the page returned exactly ``limit``
+        rows, even if there happen to be no more rows. This may produce a
+        false positive in the edge case where ``len(items) == limit``
+        exactly, but the convention matches deriva-mcp-core's
+        ``get_entities`` so callers can use one pagination idiom across
+        both layers.
     """
     if after_rid is not None:
         items = [it for it in items if _read_rid(it, rid_key) > after_rid]
     page = items[:limit]
-    truncated = len(page) == limit and len(items) > limit
+    truncated = len(page) == limit
     next_after_rid = _read_rid(page[-1], rid_key) if page and truncated else None
     return page, truncated, next_after_rid
 
@@ -246,6 +254,12 @@ def register(ctx: PluginContext) -> None:
         Workflow: call with ``element_table=None`` first to see the shape;
         then call again with ``element_table`` set to drill into one table.
 
+        ``recurse=True`` and ``version`` apply to BOTH modes — summary counts
+        reflect the recursive/versioned member set just like page rows do.
+        When ``recurse=True``, ``summary["Image"]`` includes images from
+        nested child datasets, matching what a subsequent page-mode call
+        with the same ``recurse`` value will return.
+
         Args:
             hostname: The Deriva server hostname.
             catalog_id: The catalog ID as a string.
@@ -343,6 +357,13 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """Walk a dataset's nesting hierarchy in either direction.
 
+        PAGINATION: ``after_rid`` only applies when ``direction`` is
+        ``"parents"`` or ``"children"``. When ``direction="both"``, parents
+        and children come from disjoint RID-spaces and a single cursor is
+        incoherent — ``after_rid`` is ignored and a ``warning`` field is
+        included in the response. To page both sides, call once per
+        direction with that side's own ``after_rid``.
+
         Args:
             hostname: The Deriva server hostname.
             catalog_id: The catalog ID as a string.
@@ -352,13 +373,18 @@ def register(ctx: PluginContext) -> None:
             recurse: If True, also include indirect ancestors/descendants.
             limit: Max relations per side (default 100, max 1000).
             after_rid: RID cursor; skip relations with RID <= after_rid.
+                Ignored when ``direction="both"`` (see above).
             version: Optional dataset version to query.
 
         Returns:
             JSON string with the requested keys present:
             ``{"parents": [<dataset summary>], "children": [<dataset summary>],
-            "parents_truncated": bool, "children_truncated": bool}``.
-            Keys are omitted when not requested by ``direction``.
+            "parents_truncated": bool, "children_truncated": bool,
+            "warning": str | omitted}``.
+            ``parents`` / ``parents_truncated`` are omitted when
+            ``direction="children"``; vice versa for ``children``.
+            ``warning`` appears only when ``after_rid`` was supplied with
+            ``direction="both"``.
 
         Raises:
             RuntimeError: Wrapped as ``{"error": ...}``, propagated from
@@ -370,6 +396,18 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             capped = min(max(limit, 0), _MAX_LIMIT)
+            # When walking both sides, the single cursor is incoherent
+            # because parents and children RIDs aren't synchronized. Drop
+            # the cursor and warn rather than silently mis-paginating.
+            effective_after_rid: str | None = after_rid
+            warning: str | None = None
+            if direction == "both" and after_rid is not None:
+                effective_after_rid = None
+                warning = (
+                    "after_rid was ignored because direction='both'. "
+                    "To page both sides, call once per direction with "
+                    "that side's own after_rid."
+                )
             result: dict[str, Any] = {}
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
@@ -382,7 +420,7 @@ def register(ctx: PluginContext) -> None:
                     )
                     page, truncated, _ = _paginate(
                         parents,
-                        after_rid=after_rid,
+                        after_rid=effective_after_rid,
                         limit=capped,
                         rid_key="dataset_rid",
                     )
@@ -396,12 +434,15 @@ def register(ctx: PluginContext) -> None:
                     )
                     page, truncated, _ = _paginate(
                         children,
-                        after_rid=after_rid,
+                        after_rid=effective_after_rid,
                         limit=capped,
                         rid_key="dataset_rid",
                     )
                     result["children"] = [_summarize_dataset(c) for c in page]
                     result["children_truncated"] = truncated
+
+            if warning is not None:
+                result["warning"] = warning
 
             return json.dumps(result)
         except Exception as exc:
