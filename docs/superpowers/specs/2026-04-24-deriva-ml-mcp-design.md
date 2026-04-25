@@ -185,11 +185,30 @@ For each ML domain area (dataset, feature, workflow, execution):
 5. Record outcomes in `coverage.md` immediately, while context is
    fresh.
 
+### User-Intent Perspective
+
+When evaluating "what is a user trying to do?" during the per-concept
+analysis, the relevant users are:
+
+- **ML model developers** — building models against a Deriva catalog,
+  driving experiments, defining features, registering workflows,
+  recording executions, working with datasets across versions.
+- **Deriva-ML catalog administrators** — provisioning catalogs for ML
+  use, seeding ML schema and vocabularies, managing dataset lifecycles
+  across multiple users and projects, configuring workflow registry.
+
+A tool earns its place when it expresses an action one of these two
+personas would naturally describe in plain language ("create a new
+training dataset", "register this notebook as a workflow", "start an
+experiment run") — not when it mirrors an internal `DerivaML` method.
+
 ### Tool Granularity Rules
 
-- **One tool per user intent**, not one tool per `DerivaML` method. If
-  three methods together accomplish what an LLM thinks of as a single
-  act, they merge into one tool with sensible defaults.
+- **One tool per user intent**, not one tool per `DerivaML` method. The
+  intent is what an ML developer or catalog admin would describe in
+  plain language. If three `DerivaML` methods together accomplish what
+  the user thinks of as a single act, they merge into one tool with
+  sensible defaults.
 - **Reads can be coarser than writes.** A single `get_dataset` returning
   the full shape is fine; mutations should be specific so `mutates=True`
   semantics and audit events are precise.
