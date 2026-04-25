@@ -34,3 +34,9 @@ Live-catalog tests:
 ```bash
 uv run pytest -m integration   # requires a Deriva server reachable on localhost
 ```
+
+## Design
+
+- Design spec: [`docs/superpowers/specs/2026-04-24-deriva-ml-mcp-design.md`](docs/superpowers/specs/2026-04-24-deriva-ml-mcp-design.md)
+- Implementation plan: [`docs/superpowers/plans/2026-04-24-deriva-ml-mcp.md`](docs/superpowers/plans/2026-04-24-deriva-ml-mcp.md)
+- Migration coverage tracker: [`docs/coverage.md`](docs/coverage.md)

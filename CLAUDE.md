@@ -15,6 +15,8 @@ group at server startup.
 
 ## Architecture
 
+Target shape (phased rollout — see plan for what each phase adds):
+
 ```
 src/deriva_ml_mcp/
 ├── plugin.py          # register(ctx) entry point — dispatches to module registrars
@@ -27,6 +29,10 @@ src/deriva_ml_mcp/
 └── resources/
     └── ml.py          # deriva-ml://... resources
 ```
+
+Phase 0 ships only `plugin.py` and the empty `tools/`/`resources/` package
+markers. `ml_context.py` arrives in Phase 1; the domain modules in Phases
+2-5; `resources/ml.py` in Phase 6.
 
 **Boundary rules.** This plugin **never** duplicates anything that lives in
 `deriva-mcp-core`:

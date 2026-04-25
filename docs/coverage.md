@@ -23,7 +23,14 @@ for column meanings, disposition definitions, and maintenance rules.
 | old_uri | old_module | disposition | new_uri | new_module | notes |
 |---|---|---|---|---|---|
 
-## Validation
+## Validation (Phase 7+)
 
-Run `uv run python scripts/check_coverage.py` (added in Task 7.1) to confirm every
-old tool and resource appears exactly once. Manual review at each phase boundary.
+Once `scripts/check_coverage.py` lands in Task 7.1, run:
+
+```bash
+uv run python scripts/check_coverage.py
+```
+
+It walks the old `deriva-mcp` tool/resource definitions and confirms every name
+appears exactly once in this file. Until then, the coverage table is reviewed
+manually at each phase boundary (see Definition of Done in the design spec).
