@@ -855,6 +855,18 @@ git commit -m "feat: ml_context.get_ml() helper for DerivaML construction"
 
 These four phases share the same shape. Phase 2 (dataset) lays out the analysis-and-implementation pattern in full detail; phases 3-5 reuse the same structure and reference back. The per-tool TDD task template (after the analysis pass) is identical across phases.
 
+### Conventions inherited from Phase 1
+
+Surfaced during the `ml_context.get_ml()` review; apply throughout phases 2-6:
+
+- **Boundary rule (enforce in Task 2.3):** Domain tool/resource modules MUST go through `ml_context.get_ml()`. They MUST NOT call `deriva_mcp_core.get_request_credential` directly or instantiate `DerivaML(...)` themselves. Phase 2's wiring task adds a grep check (`! grep -rE 'get_request_credential|DerivaML\(' src/deriva_ml_mcp/tools src/deriva_ml_mcp/resources`) to enforce this — see Task 2.3.
+
+- **`catalog_id: str` is intentional.** All tool signatures take catalog_id as `str`, not `int | str`. MCP clients pass IDs over JSON; keeping them as `str` throughout the tool surface avoids silent int/str coercion and matches `get_ml`'s signature. Don't "fix" this to a union type.
+
+- **Test patching pattern.** When patching `get_ml` (or any cross-module symbol) in a tool's tests, import the tool module *inside* the `with patch(...)` block — NOT at the top of the test file. Top-level imports cache the unpatched lookup before tests run, defeating the patch. The Phase 1 test (`tests/test_ml_context.py`) is the canonical example.
+
+- **`Raises:` docstrings name the upstream source.** Format: `Raises: <Exception>: <when>, propagated from <upstream-symbol>.` Saves a future debugger one grep. Don't write `Raises: Exception: On error.`
+
 ### Phase 2 — Dataset domain
 
 **Why this order.** Largest old module (1124 lines, 19 tools). Touches versioning, members, splits, downloads. Sets implementation patterns the smaller phases will follow.
@@ -1150,7 +1162,15 @@ uv run pytest
 
 Expected: all green.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Boundary check — no tool may bypass `get_ml()`**
+
+```bash
+! grep -rnE 'get_request_credential|DerivaML\(' src/deriva_ml_mcp/tools src/deriva_ml_mcp/resources
+```
+
+Expected: exit 0 (no matches). Any tool calling `get_request_credential` directly or instantiating `DerivaML(...)` itself violates the connection-boundary rule established in Phase 1 — those calls belong only in `ml_context.py`. If you get a match, fix the offending tool to use `get_ml()` instead.
+
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src/deriva_ml_mcp/plugin.py tests/test_plugin.py
