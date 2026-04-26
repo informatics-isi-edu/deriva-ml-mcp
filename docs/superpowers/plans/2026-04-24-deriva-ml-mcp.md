@@ -867,6 +867,34 @@ Surfaced during the `ml_context.get_ml()` review; apply throughout phases 2-6:
 
 - **`Raises:` docstrings name the upstream source.** Format: `Raises: <Exception>: <when>, propagated from <upstream-symbol>.` Saves a future debugger one grep. Don't write `Raises: Exception: On error.`
 
+### Conventions inherited from Phase 2 (mutation tools)
+
+Surfaced during Batch 2 review; apply to every mutation tool in Phases 2-5:
+
+- **Pagination idiom matches core's `get_entities` exactly.** `limit: int = 100, after_rid: str | None = None, preflight_count: bool = False`. Cap `limit` at 1000. Convention: `truncated = (len(page) == limit)` even if no more rows exist (false positive in the edge case where total == limit, but matches core so callers use one idiom).
+
+- **Audit success OUTSIDE the `with deriva_call():` block.** Audit failures from inside `_error_envelope` (which runs in the `except`, also outside the `with`). Otherwise a 401-on-close from `deriva_call()`'s context-exit can produce paired success+failure audits for one call. See `src/deriva_ml_mcp/tools/dataset.py` `create_dataset` for the canonical shape:
+  ```python
+  try:
+      with deriva_call():
+          ml = get_ml(hostname, catalog_id)
+          # ... do the mutation, capture locals you need ...
+      audit_event("deriva_ml_<op>", hostname=..., catalog_id=..., **fields)  # OUTSIDE
+      return json.dumps({"status": "success", ...})
+  except Exception as exc:
+      return _error_envelope(exc, operation="<op>", hostname=..., catalog_id=..., **fields)
+  ```
+
+- **`_error_envelope` helper handles the failure path.** Located in `src/deriva_ml_mcp/tools/dataset.py` for now; lift to a shared module the moment Phase 3 needs it (don't copy-paste). Signature: `_error_envelope(exc, *, operation, hostname, catalog_id, response_fields=None, **audit_fields) -> str`. Logs with `logger.error(..., exc_info=True)`, emits `deriva_ml_<op>_failed` audit with `error_type=type(exc).__name__`, returns `{"error": str(exc), **response_fields}`. Use `response_fields` for partial-state visibility (see `update_dataset_types` for the pattern: pass `added_done`, `removed_done` to the LLM).
+
+- **Audit field discipline:** include bounded identifiers (RIDs, vocab terms, counts, enum values, table names). EXCLUDE user-supplied free text (`description` strings, `member_rids` lists). Privacy + audit-table-size win.
+
+- **Failure-path field naming:** when a mutation can fail mid-way, name failure-path counts `attempted_count` (not `added_count`) so operators summing audits aren't fooled. The success path keeps `added_count` (because actually-added is observable there).
+
+- **Argument-validation errors return `{"error": ...}` directly without `_error_envelope`.** Caller-fixable input errors aren't operational failures and shouldn't pollute the failure-audit log. The DerivaML call never happened. See `add_dataset_members` (the both-or-neither check on `member_rids` / `members_by_table`) for the canonical pattern.
+
+- **Patching `audit_event` in tests:** patch at the use-site, `patch("deriva_ml_mcp.tools.<module>.audit_event")`. The audit name in tests is the full string including `deriva_ml_` prefix and (for failures) `_failed` suffix.
+
 ### Phase 2 — Dataset domain
 
 **Why this order.** Largest old module (1124 lines, 19 tools). Touches versioning, members, splits, downloads. Sets implementation patterns the smaller phases will follow.
