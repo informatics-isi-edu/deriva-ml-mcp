@@ -17,12 +17,20 @@ def _patch_audit():
     shared-helpers failure site so tests can capture either with a
     single mock.
 
-    Mutation tools call ``audit_event`` directly from
-    ``deriva_ml_mcp.tools.dataset`` on success and route failure
-    audits through ``deriva_ml_mcp._helpers._error_envelope`` (which
-    imports ``audit_event`` into its own namespace). Patching both
-    locations to the same mock keeps the test pattern unchanged
-    regardless of which path the call originated from.
+    Why two patches: Python's ``from X import name`` binds ``name`` in
+    the importing module's namespace at import time. So patching
+    ``deriva_ml_mcp._helpers.audit_event`` only affects callers that
+    do attribute lookup on the helpers module (like ``_error_envelope``
+    inside ``_helpers.py`` itself). It does NOT affect ``dataset.py``'s
+    already-bound ``audit_event`` name. To capture both success-path
+    audits (from ``dataset.audit_event``) and failure-path audits
+    (from ``_helpers.audit_event`` inside ``_error_envelope``), we
+    patch both locations to the same mock object.
+
+    A future Phase 3+ refactor could move the success audits behind a
+    ``_helpers.emit_success(...)`` wrapper that does the attribute
+    lookup at call time, eliminating the dual patch. Not worth doing
+    just for this — the dual patch is two lines.
 
     Example:
         >>> with _patch_audit() as mock_audit:

@@ -18,6 +18,17 @@ Public API:
 
 The leading underscore on each helper is preserved -- they're internal
 to deriva-ml-mcp, not part of the package's public API.
+
+Note on testing audit events: ``audit_event`` (imported below from
+``deriva_mcp_core.telemetry``) is called from inside ``_error_envelope``
+on the failure path. Tool modules also import ``audit_event`` directly
+into their own namespace for success-path emission. Tests that need to
+capture both paths must patch BOTH the tool-module name AND
+``deriva_ml_mcp._helpers.audit_event`` to the same mock — see
+``_patch_audit()`` in ``tests/test_dataset.py``. Python's
+``from X import name`` binds ``name`` in the importing module's
+namespace at import time, so a single-patch facade isn't possible
+without changing every call site to use attribute lookup.
 """
 
 from __future__ import annotations

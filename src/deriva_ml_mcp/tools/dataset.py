@@ -28,6 +28,16 @@ from deriva_ml.dataset.aux_classes import DatasetSpec, DatasetVersion, VersionPa
 from deriva_ml.dataset.dataset import Dataset
 from deriva_ml.dataset.split import split_dataset as _split_dataset
 
+# Note: `audit_event` is imported directly above (success-path audits
+# fire from THIS module's namespace), and ALSO indirectly via
+# `_error_envelope` in `_helpers` (failure-path audits fire from the
+# helpers module's namespace). Tests that need to capture both must
+# patch BOTH `deriva_ml_mcp.tools.dataset.audit_event` and
+# `deriva_ml_mcp._helpers.audit_event` to the same mock — see the
+# `_patch_audit()` helper in `tests/test_dataset.py`. Python's
+# import-binding semantics make a single-patch facade impossible
+# without changing the call shape (e.g. `_helpers.audit_event(...)`
+# at every success site, which is uglier than the dual patch).
 from deriva_ml_mcp._helpers import (
     _MAX_LIMIT,
     _error_envelope,
