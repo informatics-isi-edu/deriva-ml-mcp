@@ -16,11 +16,12 @@ Skip semantics:
   reads, and run the round-trip through the registered tool functions.
 
 Scope of v1 (per Task 2.4 plan): a read-side round-trip only —
-``list_datasets``, ``list_dataset_element_types``, and
-``get_dataset_spec`` are exercised. Mutation tools like
+``list_datasets`` (page mode + preflight) and
+``list_dataset_element_types`` are exercised. Mutation tools like
 ``create_dataset`` require an existing ``Execution`` whose scaffolding
 (workflow + execution lifecycle) is out of scope for this smoke test;
-write-side coverage can be added in a follow-up.
+write-side coverage can be added in a follow-up once Phase 5 lands
+the execution-domain tools.
 """
 
 from __future__ import annotations
@@ -32,6 +33,14 @@ from collections.abc import Iterator
 
 import pytest
 from deriva.core import get_credential
+
+# `set_current_credential` is private-by-convention in deriva_mcp_core
+# (the docstring says "Not intended for use in tool or resource handlers"),
+# but tests aren't tool handlers. We import it here to seed the per-request
+# contextvar that ml_context.get_ml() reads — mirroring what stdio-mode
+# server startup does in deriva_mcp_core/server.py. This is the canonical
+# test seam for plugin integration tests; if Phase 3-5 add more such tests
+# we should ask core to expose a public test helper.
 from deriva_mcp_core.context import set_current_credential
 from deriva_mcp_core.plugin.api import PluginContext, _set_plugin_context
 
