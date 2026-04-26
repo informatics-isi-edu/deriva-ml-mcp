@@ -589,10 +589,21 @@ def register(ctx: PluginContext) -> None:
         try:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
+                # Pre-resolve workflow_rid to a Workflow object. Upstream
+                # `ml.create_execution(workflow=...)` accepts `Workflow | RID
+                # | str | None` BUT when given a string, it routes through
+                # `lookup_workflow_by_url` (treating the string as URL or
+                # checksum), NOT `lookup_workflow` (RID). So passing a
+                # workflow_rid string here would silently fail with
+                # "Workflow with URL or checksum '<rid>' not found in
+                # catalog". Look up the Workflow object via the RID API
+                # explicitly so the MCP tool's parameter name and behavior
+                # agree.
+                workflow = ml.lookup_workflow(workflow_rid)
                 # Pass strings through; upstream coerces datasets via
                 # DatasetSpec.from_shorthand and assets via AssetSpec(rid=...).
                 execution = ml.create_execution(
-                    workflow=workflow_rid,
+                    workflow=workflow,
                     datasets=ds_list or None,
                     assets=as_list or None,
                     description=description,

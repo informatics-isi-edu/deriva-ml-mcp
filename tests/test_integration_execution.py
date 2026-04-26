@@ -24,11 +24,13 @@ This file ships TWO tests:
 
 Caveats / known surprises (codified during Phase 5.4 investigation):
 
-- ``create_execution(workflow=...)`` upstream resolves a string
-  argument via ``lookup_workflow_by_url``, NOT by RID. Despite the
-  MCP tool's parameter being called ``workflow_rid``, callers must
-  pass the workflow's URL (or checksum) string. We pass the URL we
-  used at create_workflow time — it round-trips cleanly.
+- ``create_execution(workflow=...)`` upstream resolves string
+  arguments via ``lookup_workflow_by_url``, NOT by RID. The MCP
+  ``create_execution`` tool pre-resolves ``workflow_rid`` via
+  ``lookup_workflow`` (RID API) and hands the Workflow object to
+  upstream, so the MCP tool's ``workflow_rid`` parameter actually
+  takes a RID as the name suggests. Tests pass the RID returned by
+  ``create_workflow`` — round-trip works.
 - ``DerivaML.__del__`` aborts any non-terminal ``self._execution`` on
   garbage collection. The MCP ``create_execution`` tool detaches by
   setting ``ml._execution = None`` before returning so the per-call
@@ -220,13 +222,16 @@ async def test_execution_lifecycle_round_trip(
     assert wf_out["status"] in {"created", "exists"}
     workflow_rid = wf_out["workflow_rid"]
 
-    # 3. Create execution. NOTE: pass the workflow URL as workflow_rid —
-    #    upstream resolves string args via lookup_workflow_by_url, not by RID.
+    # 3. Create execution against the workflow RID returned in step 2.
+    #    The MCP tool pre-resolves workflow_rid via lookup_workflow before
+    #    handing the Workflow object to upstream create_execution
+    #    (workaround for upstream's string-arg-routes-to-lookup_by_url
+    #    misalignment — see tools/execution.py:create_workflow).
     exec_out = json.loads(
         await tools["create_execution"](
             hostname=hostname,
             catalog_id=catalog_id,
-            workflow_rid=_LIFECYCLE_URL,
+            workflow_rid=workflow_rid,
             description="lifecycle smoke",
         )
     )
@@ -377,6 +382,7 @@ async def test_phase3_dod2_feature_round_trip(
     )
     assert wf_out.get("error") is None, f"create_workflow returned error: {wf_out}"
     assert wf_out["status"] in {"created", "exists"}
+    workflow_rid = wf_out["workflow_rid"]
 
     # 3. Create the feature on Subject. metadata is a single value
     #    column ("Label", text). No term/asset columns — the simplest
@@ -403,13 +409,12 @@ async def test_phase3_dod2_feature_round_trip(
     assert create_feat["feature_name"] == _DOD2_FEATURE_NAME
     assert _DOD2_FEATURE_VALUE_COL in create_feat["value_columns"]
 
-    # 4. Create execution against the workflow URL (per upstream
-    #    string-arg resolution semantics; see module docstring).
+    # 4. Create execution against the workflow RID returned in step 3.
     exec_out = json.loads(
         await tools["create_execution"](
             hostname=hostname,
             catalog_id=catalog_id,
-            workflow_rid=_DOD2_URL,
+            workflow_rid=workflow_rid,
             description="DoD #2 feature value injection",
         )
     )
