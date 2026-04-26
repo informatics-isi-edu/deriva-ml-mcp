@@ -54,6 +54,65 @@ for column meanings, disposition definitions, and maintenance rules.
 | add_nested_execution | execution.py | kept | add_nested_execution | tools/execution.py | hostname/catalog_id added | Already takes both RIDs explicitly. Same intent; no signature change beyond the boundary args. |
 | list_nested_executions | execution.py | renamed | list_execution_children | tools/execution.py | name change mirrors upstream rename `Execution.list_nested_executions` → `ExecutionRecord.list_execution_children`; aligns with dataset-hierarchy template (`list_dataset_children`); hostname/catalog_id added | Net-new symmetric complement `list_execution_parents` (catalog-side parent query) lands alongside this in Phase 5.2 but is NOT a port of any old tool — it has no row here. |
 
+### Pre-existing core-owned tools (Phase 7.1 backfill)
+
+These 52 old `deriva-mcp` tools were never analyzed in the per-domain phases (2-5) because they have no ML-domain semantics — they're generic Deriva primitives that live in `deriva-mcp-core` (or were dropped with the connection-singleton architecture). Phase 7.1's `scripts/check_coverage.py` flagged them as missing from `coverage.md`; this section catalogues the disposition for completeness.
+
+| old_name | old_module | disposition | new_name | new_module | notes |
+|---|---|---|---|---|---|
+| add_asset_type | catalog.py | dropped | (none) | (none) | DerivaML-specific asset typing concept; the new `Asset_Type` vocabulary is managed via core's `add_term`. |
+| add_asset_type_to_asset | catalog.py | dropped | (none) | (none) | Same — the new architecture exposes asset-type assignment via generic `update_entities` on the asset row's `Type` column. |
+| add_column | schema.py | dropped-to-core | add_column | (core) tools/schema.py | Generic schema CRUD. |
+| add_visible_column | annotation.py | dropped-to-core | add_visible_column | (core) tools/annotation.py | Generic annotation. |
+| add_visible_foreign_key | annotation.py | dropped-to-core | add_visible_foreign_key | (core) tools/annotation.py | Generic annotation. |
+| apply_annotations | annotation.py | dropped | (none) | (none) | Bulk annotation apply was a connection-singleton helper; core's per-annotation tools cover the surface without the bulk wrapper. |
+| apply_catalog_annotations | annotation.py | dropped | (none) | (none) | Same as `apply_annotations` but at catalog scope; superseded by core's per-annotation tools. |
+| cancel_task | background_tasks.py | dropped-to-core | cancel_task | (core) tools/tasks.py | Generic background-task management. |
+| cite | catalog.py | dropped-to-core | cite | (core) tools/catalog.py | Generic citation builder. |
+| clone_catalog | catalog.py | dropped-to-core | clone_catalog | (core) tools/catalog.py | Generic catalog management. |
+| clone_catalog_async | catalog.py | dropped-to-core | clone_catalog | (core) tools/catalog.py | Async variant collapsed into the single `clone_catalog` in core. |
+| connect_catalog | catalog.py | dropped | (none) | (none) | Connection-singleton primitive; the new architecture takes `(hostname, catalog_id)` per call. |
+| create_asset_table | catalog.py | dropped | (none) | (none) | DerivaML-specific table-creation helper; replaced by generic `create_table` + asset-type vocabulary registration. |
+| create_catalog | catalog.py | dropped-to-core | create_catalog | (core) tools/catalog.py | Generic catalog management. |
+| create_catalog_alias | catalog.py | dropped-to-core | create_catalog_alias | (core) tools/catalog.py | Generic catalog management. |
+| create_table | schema.py | dropped-to-core | create_table | (core) tools/schema.py | Generic schema CRUD. |
+| delete_catalog | catalog.py | dropped-to-core | delete_catalog | (core) tools/catalog.py | Generic catalog management. |
+| delete_catalog_alias | catalog.py | dropped-to-core | delete_catalog_alias | (core) tools/catalog.py | Generic catalog management. |
+| disconnect_catalog | catalog.py | dropped | (none) | (none) | Connection-singleton primitive; nothing to disconnect under the per-call boundary. |
+| get_handlebars_template_variables | annotation.py | dropped-to-core | get_handlebars_template_variables | (core) tools/annotation.py | Generic annotation introspection. |
+| get_record | data.py | dropped-to-core | get_entities | (core) tools/entity.py | Renamed in core. |
+| get_table_sample_data | annotation.py | dropped-to-core | get_table_sample_data | (core) tools/annotation.py | Generic annotation introspection. |
+| get_task_status | background_tasks.py | dropped-to-core | get_task_status | (core) tools/tasks.py | Generic background-task management. |
+| insert_records | data.py | dropped-to-core | insert_entities | (core) tools/entity.py | Renamed in core. |
+| invalidate_cache | cache.py | dropped | (none) | (none) | Per-connection result cache from the dead connection-singleton era; no successor concept. |
+| list_asset_executions | catalog.py | dropped | (none) | (none) | DerivaML-specific asset/execution join; the new architecture exposes this via `list_executions` + per-execution assets in the execution detail resource. |
+| list_cached_results | cache.py | dropped | (none) | (none) | Connection-singleton result cache; gone with that era. |
+| list_catalog_registry | catalog.py | dropped | (none) | (none) | The catalog registry is exposed as a core MCP resource (`deriva://registry/{hostname}`) instead of a tool. |
+| list_tasks | background_tasks.py | dropped-to-core | list_tasks | (core) tools/tasks.py | Generic background-task management. |
+| preview_table | data.py | dropped-to-core | get_entities | (core) tools/entity.py | Use `get_entities(..., limit=N)` in core. |
+| query_cached_result | cache.py | dropped | (none) | (none) | Connection-singleton result cache; gone with that era. |
+| remove_asset_type_from_asset | catalog.py | dropped | (none) | (none) | Asset-type removal goes through generic `update_entities` setting the `Type` column to null. |
+| remove_visible_column | annotation.py | dropped-to-core | remove_visible_column | (core) tools/annotation.py | Generic annotation. |
+| remove_visible_foreign_key | annotation.py | dropped-to-core | remove_visible_foreign_key | (core) tools/annotation.py | Generic annotation. |
+| reorder_visible_columns | annotation.py | dropped-to-core | reorder_visible_columns | (core) tools/annotation.py | Generic annotation. |
+| reorder_visible_foreign_keys | annotation.py | dropped-to-core | reorder_visible_foreign_keys | (core) tools/annotation.py | Generic annotation. |
+| set_active_catalog | catalog.py | dropped | (none) | (none) | Connection-singleton primitive; gone with the per-call boundary. |
+| set_column_description | schema.py | dropped-to-core | set_column_description | (core) tools/schema.py | Generic schema CRUD. |
+| set_column_display | annotation.py | dropped-to-core | set_column_display | (core) tools/annotation.py | Generic annotation. |
+| set_column_display_name | annotation.py | dropped-to-core | set_column_display_name | (core) tools/annotation.py | Generic annotation. |
+| set_column_nullok | schema.py | dropped-to-core | set_column_nullok | (core) tools/schema.py | Generic schema CRUD. |
+| set_default_schema | catalog.py | dropped | (none) | (none) | Connection-singleton primitive; the new architecture passes `(schema, table)` per call. |
+| set_display_annotation | annotation.py | dropped-to-core | set_display_annotation | (core) tools/annotation.py | Generic annotation. |
+| set_row_name_pattern | annotation.py | dropped-to-core | set_row_name_pattern | (core) tools/annotation.py | Generic annotation. |
+| set_table_description | schema.py | dropped-to-core | set_table_description | (core) tools/schema.py | Generic schema CRUD. |
+| set_table_display | annotation.py | dropped-to-core | set_table_display | (core) tools/annotation.py | Generic annotation. |
+| set_table_display_name | annotation.py | dropped-to-core | set_table_display_name | (core) tools/annotation.py | Generic annotation. |
+| set_visible_columns | annotation.py | dropped-to-core | set_visible_columns | (core) tools/annotation.py | Generic annotation. |
+| set_visible_foreign_keys | annotation.py | dropped-to-core | set_visible_foreign_keys | (core) tools/annotation.py | Generic annotation. |
+| update_catalog_alias | catalog.py | dropped-to-core | update_catalog_alias | (core) tools/catalog.py | Generic catalog management. |
+| update_record | data.py | dropped-to-core | update_entities | (core) tools/entity.py | Renamed in core. |
+| validate_rids | data.py | dropped | (none) | (none) | Bulk-RID validation was a convenience over per-call lookups; use core's `get_entities` per RID. |
+
 ## Resources
 
 | old_uri | old_module | disposition | new_uri | new_module | notes |
