@@ -58,17 +58,24 @@ if TYPE_CHECKING:
 
 
 def _vocab_terms(ml: Any, vocab_name: str) -> list[dict[str, Any]]:
-    """Read all terms from one vocabulary table as plain dicts.
+    """Read all terms from one vocabulary table as compact dicts.
+
+    Returns ``name`` + ``rid`` only, by design. The full description and
+    synonym lists are available via core's ``get_term`` tool or via
+    ``rag_search`` if the LLM needs them; bundling them into the
+    registries snapshot would make this resource ~12 KB per fetch
+    (4 vocabularies x ~20 terms x ~150-byte descriptions) for a payload
+    that the LLM reads on every "what types are available" question.
 
     Args:
         ml: A connected ``deriva_ml.DerivaML`` instance.
         vocab_name: Vocabulary table name (e.g. ``"Dataset_Type"``).
 
     Returns:
-        List of dicts ``[{"name", "description", "synonyms", "rid"},
-        ...]``. Empty list if the vocab table is missing or has no
-        terms; suppresses upstream errors so a missing vocab does not
-        nuke the whole registries snapshot.
+        List of dicts ``[{"name", "rid"}, ...]``. Empty list if the
+        vocab table is missing or has no terms; suppresses upstream
+        errors so a missing vocab does not nuke the whole registries
+        snapshot.
     """
     try:
         terms = ml.list_vocabulary_terms(vocab_name)
@@ -77,8 +84,6 @@ def _vocab_terms(ml: Any, vocab_name: str) -> list[dict[str, Any]]:
     return [
         {
             "name": getattr(t, "name", None),
-            "description": getattr(t, "description", None),
-            "synonyms": list(getattr(t, "synonyms", []) or []),
             "rid": getattr(t, "rid", None),
         }
         for t in terms

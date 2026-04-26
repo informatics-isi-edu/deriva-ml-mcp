@@ -549,14 +549,20 @@ async def test_ml_registries_missing_vocab_yields_empty_list(resource_ctx, captu
             await capturing_mcp.resources[_REGISTRIES_URI](hostname="h", catalog_id="1")
         )
     # The successful vocab still lands; the failed ones are silently empty.
+    # Compact shape: name + rid only (description/synonyms deliberately
+    # omitted to keep the snapshot under ~1 KB; see _vocab_terms docstring).
     assert out["dataset_types"] == [
         {
             "name": "Training",
-            "description": "",
-            "synonyms": [],
             "rid": "VRID-Training",
         }
     ]
+    # Verify description and synonyms are NOT in the payload (token economy:
+    # this resource is read on every "what types are available" question;
+    # a 12 KB payload would dominate context for routine vocab checks).
+    term = out["dataset_types"][0]
+    assert "description" not in term
+    assert "synonyms" not in term
     assert out["workflow_types"] == []
     assert out["asset_types"] == []
     assert out["execution_statuses"] == []
