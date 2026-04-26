@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 # TODO(upstream-rag-userfilter): rag_search must filter data: sources by
@@ -199,51 +200,8 @@ class _ExecutionSerializer(RowSerializer):
 
 
 # ---------------------------------------------------------------------------
-# Hook bodies
+# Row fetchers
 # ---------------------------------------------------------------------------
-
-
-async def _index_rows(
-    *,
-    hostname: str,
-    catalog_id: str,
-    table_name: str,
-    rows: list[dict[str, Any]],
-    serializer: RowSerializer,
-) -> None:
-    """Resolve the calling user and upsert ``rows`` into the per-user index.
-
-    Best-effort: any exception is logged and swallowed so a hook failure
-    never propagates back into the calling tool's path. The store may be
-    unavailable (RAG disabled) -- in which case this is a no-op.
-
-    Args:
-        hostname: DERIVA hostname.
-        catalog_id: Catalog ID.
-        table_name: Catalog table the rows belong to (used as the
-            serializer dispatch key and the chunk header table name).
-        rows: Row dicts in summary shape (already rendered by
-            ``_list_*_impl``'s ``_summarize_*`` helpers).
-        serializer: The ``RowSerializer`` to render each row.
-    """
-    # TODO(upstream-rag-doctype): once upstream accepts a doc_type param
-    # on index_table_data, pass "ml-dataset" / "ml-workflow" / "ml-execution"
-    # to make rag_search(doc_type=...) able to distinguish these from
-    # generic catalog-data chunks. Tracked in docs/coverage.md
-    # "Upstream gaps (Phase 6 RAG)".
-    store = get_rag_store()
-    if store is None:
-        return
-    user_id = resolve_user_identity(hostname)
-    await index_table_data(
-        store,
-        hostname,
-        catalog_id,
-        table_name,
-        rows,
-        user_id=user_id,
-        serializer=serializer,
-    )
 
 
 def _fetch_dataset_rows(hostname: str, catalog_id: str) -> list[dict[str, Any]]:
@@ -291,100 +249,93 @@ def _coerce_for_index(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [json.loads(json.dumps(r, default=str)) for r in rows]
 
 
-async def _on_catalog_connect_dataset(
-    hostname: str,
-    catalog_id: str,
-    schema_hash: str,  # noqa: ARG001 -- hook signature requires it
-    schema_json: dict,  # noqa: ARG001 -- hook signature requires it
-) -> None:
-    """``on_catalog_connect`` hook that indexes Dataset rows for the caller."""
-    try:
-        rows = _coerce_for_index(_fetch_dataset_rows(hostname, catalog_id))
-    except Exception:  # noqa: BLE001 -- hooks must never propagate
-        logger.exception(
-            "deriva-ml RAG: failed to fetch Dataset rows for %s/%s",
+# ---------------------------------------------------------------------------
+# Hook factory
+# ---------------------------------------------------------------------------
+
+
+def _make_hook(
+    fetch_fn: Callable[[str, str], list[dict[str, Any]]],
+    table_name: str,
+    serializer: RowSerializer,
+) -> Callable[[str, str, str, dict], Awaitable[None]]:
+    """Build an ``on_catalog_connect`` hook that indexes ``table_name`` per-user.
+
+    The returned coroutine fetches rows under the caller's credential,
+    resolves the calling user's identity, and upserts the rendered chunks
+    into the vector store with a user-scoped source name. Adding a
+    fourth indexed table is a one-liner at the call site.
+
+    Behavior contract:
+
+    - Wraps the fetch in ``try/except`` so a deriva-ml read failure is
+      logged with table context but does not propagate. The framework's
+      ``_safe_call`` wraps the index step on its own, so we don't double
+      up there -- letting ``index_table_data`` raise gives the framework
+      a clean traceback to log.
+    - Skips silently (debug log) when ``get_rag_store()`` returns
+      ``None`` -- i.e. when RAG is disabled in this deployment.
+    - Logs a debug success line including row count + resolved user_id
+      so an operator can investigate "why isn't user X's data showing up?"
+      by flipping on debug logging without overwhelming production logs.
+
+    Args:
+        fetch_fn: Callable that takes ``(hostname, catalog_id)`` and
+            returns summary-shape row dicts.
+        table_name: Catalog table the rows belong to. Used as both the
+            serializer dispatch key and the chunk header.
+        serializer: The ``RowSerializer`` to render each row.
+
+    Returns:
+        An async hook with the ``on_catalog_connect`` signature
+        ``(hostname, catalog_id, schema_hash, schema_json) -> None``.
+    """
+
+    # TODO(upstream-rag-doctype): once upstream accepts a doc_type param
+    # on index_table_data, pass "ml-dataset" / "ml-workflow" / "ml-execution"
+    # to make rag_search(doc_type=...) able to distinguish these from
+    # generic catalog-data chunks. Tracked in docs/coverage.md
+    # "Upstream gaps (Phase 6 RAG)".
+    async def hook(
+        hostname: str,
+        catalog_id: str,
+        schema_hash: str,  # noqa: ARG001 -- hook signature requires it
+        schema_json: dict,  # noqa: ARG001 -- hook signature requires it
+    ) -> None:
+        try:
+            rows = _coerce_for_index(fetch_fn(hostname, catalog_id))
+        except Exception:  # noqa: BLE001 -- fetch errors are domain-specific
+            logger.exception(
+                "deriva-ml RAG: failed to fetch %s rows for %s/%s",
+                table_name,
+                hostname,
+                catalog_id,
+            )
+            return
+        store = get_rag_store()
+        if store is None:
+            logger.debug("rag store unavailable, skipping %s index", table_name)
+            return
+        user_id = resolve_user_identity(hostname)
+        await index_table_data(
+            store,
             hostname,
             catalog_id,
+            table_name,
+            rows,
+            user_id=user_id,
+            serializer=serializer,
         )
-        return
-    try:
-        await _index_rows(
-            hostname=hostname,
-            catalog_id=catalog_id,
-            table_name=_DATASET_TABLE,
-            rows=rows,
-            serializer=_DatasetSerializer(),
-        )
-    except Exception:  # noqa: BLE001 -- hooks must never propagate
-        logger.exception(
-            "deriva-ml RAG: failed to index Dataset rows for %s/%s",
+        logger.debug(
+            "indexed %d %s rows for user=%s host=%s catalog=%s",
+            len(rows),
+            table_name,
+            user_id,
             hostname,
             catalog_id,
         )
 
-
-async def _on_catalog_connect_workflow(
-    hostname: str,
-    catalog_id: str,
-    schema_hash: str,  # noqa: ARG001 -- hook signature requires it
-    schema_json: dict,  # noqa: ARG001 -- hook signature requires it
-) -> None:
-    """``on_catalog_connect`` hook that indexes Workflow rows for the caller."""
-    try:
-        rows = _coerce_for_index(_fetch_workflow_rows(hostname, catalog_id))
-    except Exception:  # noqa: BLE001 -- hooks must never propagate
-        logger.exception(
-            "deriva-ml RAG: failed to fetch Workflow rows for %s/%s",
-            hostname,
-            catalog_id,
-        )
-        return
-    try:
-        await _index_rows(
-            hostname=hostname,
-            catalog_id=catalog_id,
-            table_name=_WORKFLOW_TABLE,
-            rows=rows,
-            serializer=_WorkflowSerializer(),
-        )
-    except Exception:  # noqa: BLE001 -- hooks must never propagate
-        logger.exception(
-            "deriva-ml RAG: failed to index Workflow rows for %s/%s",
-            hostname,
-            catalog_id,
-        )
-
-
-async def _on_catalog_connect_execution(
-    hostname: str,
-    catalog_id: str,
-    schema_hash: str,  # noqa: ARG001 -- hook signature requires it
-    schema_json: dict,  # noqa: ARG001 -- hook signature requires it
-) -> None:
-    """``on_catalog_connect`` hook that indexes Execution rows for the caller."""
-    try:
-        rows = _coerce_for_index(_fetch_execution_rows(hostname, catalog_id))
-    except Exception:  # noqa: BLE001 -- hooks must never propagate
-        logger.exception(
-            "deriva-ml RAG: failed to fetch Execution rows for %s/%s",
-            hostname,
-            catalog_id,
-        )
-        return
-    try:
-        await _index_rows(
-            hostname=hostname,
-            catalog_id=catalog_id,
-            table_name=_EXECUTION_TABLE,
-            rows=rows,
-            serializer=_ExecutionSerializer(),
-        )
-    except Exception:  # noqa: BLE001 -- hooks must never propagate
-        logger.exception(
-            "deriva-ml RAG: failed to index Execution rows for %s/%s",
-            hostname,
-            catalog_id,
-        )
+    return hook
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +349,8 @@ def register_rag_sources(ctx: PluginContext) -> None:
     Called from ``plugin.register(ctx)`` (wired in Phase 6.4). Safe to
     call without any RAG config -- ``ctx.rag_github_source`` is a no-op
     when RAG is disabled, and the hooks are best-effort: they swallow
-    exceptions and short-circuit when the vector store is unavailable.
+    fetch exceptions and short-circuit when the vector store is
+    unavailable.
 
     Args:
         ctx: PluginContext supplied by deriva-mcp-core at startup.
@@ -419,6 +371,8 @@ def register_rag_sources(ctx: PluginContext) -> None:
         path_prefix=_GITHUB_DOCS_PATH_PREFIX,
         doc_type=_GITHUB_DOCS_DOC_TYPE,
     )
-    ctx.on_catalog_connect(_on_catalog_connect_dataset)
-    ctx.on_catalog_connect(_on_catalog_connect_workflow)
-    ctx.on_catalog_connect(_on_catalog_connect_execution)
+    ctx.on_catalog_connect(_make_hook(_fetch_dataset_rows, _DATASET_TABLE, _DatasetSerializer()))
+    ctx.on_catalog_connect(_make_hook(_fetch_workflow_rows, _WORKFLOW_TABLE, _WorkflowSerializer()))
+    ctx.on_catalog_connect(
+        _make_hook(_fetch_execution_rows, _EXECUTION_TABLE, _ExecutionSerializer())
+    )

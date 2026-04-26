@@ -32,7 +32,28 @@ import pytest
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
+
+
+# Hook registration order in register_rag_sources(ctx):
+#   0 -> Dataset, 1 -> Workflow, 2 -> Execution.
+# Tests pull hooks via index rather than by name because the factory
+# refactor produces anonymous closures (no module-level attribute to import).
+_DATASET_HOOK_IDX = 0
+_WORKFLOW_HOOK_IDX = 1
+_EXECUTION_HOOK_IDX = 2
+
+
+def _hook_at(idx: int):
+    """Build a fresh PluginContext, register rag sources, return the hook at idx."""
+    from deriva_mcp_core.plugin.api import PluginContext
+
+    from deriva_ml_mcp.resources import rag as rag_module
+    from tests._helpers import _CapturingMCP
+
+    plugin_ctx = PluginContext(_CapturingMCP())
+    rag_module.register_rag_sources(plugin_ctx)
+    return plugin_ctx._catalog_connect_hooks[idx]
 
 
 @pytest.fixture()
@@ -286,7 +307,7 @@ def test_dataset_hook_calls_index_table_data_with_resolved_user_id() -> None:
         patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
         patch.object(rag_module, "index_table_data", side_effect=fake_index_table_data),
     ):
-        _run(rag_module._on_catalog_connect_dataset("h.example", "1", "hash", {}))
+        _run(_hook_at(_DATASET_HOOK_IDX)("h.example", "1", "hash", {}))
 
     assert captured["user_id"] == _USER_ID
     assert captured["table_name"] == "Dataset"
@@ -314,7 +335,7 @@ def test_workflow_hook_calls_index_table_data_with_resolved_user_id() -> None:
         patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
         patch.object(rag_module, "index_table_data", side_effect=fake_index_table_data),
     ):
-        _run(rag_module._on_catalog_connect_workflow("h.example", "1", "hash", {}))
+        _run(_hook_at(_WORKFLOW_HOOK_IDX)("h.example", "1", "hash", {}))
 
     assert captured["user_id"] == _USER_ID
     assert captured["table_name"] == "Workflow"
@@ -339,7 +360,7 @@ def test_execution_hook_calls_index_table_data_with_resolved_user_id() -> None:
         patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
         patch.object(rag_module, "index_table_data", side_effect=fake_index_table_data),
     ):
-        _run(rag_module._on_catalog_connect_execution("h.example", "1", "hash", {}))
+        _run(_hook_at(_EXECUTION_HOOK_IDX)("h.example", "1", "hash", {}))
 
     assert captured["user_id"] == _USER_ID
     assert captured["table_name"] == "Execution"
@@ -351,7 +372,13 @@ def test_execution_hook_calls_index_table_data_with_resolved_user_id() -> None:
 
 
 def test_dataset_hook_swallows_fetch_exception() -> None:
-    """If the row fetch raises, the hook logs and returns without propagating."""
+    """If the row fetch raises, the hook logs and returns without propagating.
+
+    The fetch-side ``try/except`` is retained inside the hook because
+    a deriva-ml read failure is domain-specific (table-name context in
+    the log helps debugging). The framework's ``_safe_call`` would catch
+    it too, but with a generic message.
+    """
     from deriva_ml_mcp.resources import rag as rag_module
 
     fake_index = AsyncMock()
@@ -362,13 +389,20 @@ def test_dataset_hook_swallows_fetch_exception() -> None:
         patch.object(rag_module, "index_table_data", new=fake_index),
     ):
         # Must not raise
-        _run(rag_module._on_catalog_connect_dataset("h.example", "1", "hash", {}))
+        _run(_hook_at(_DATASET_HOOK_IDX)("h.example", "1", "hash", {}))
 
     fake_index.assert_not_called()
 
 
-def test_workflow_hook_swallows_index_exception() -> None:
-    """If index_table_data raises, the hook logs and returns without propagating."""
+def test_workflow_hook_propagates_index_exception() -> None:
+    """If index_table_data raises, the hook lets it propagate.
+
+    Phase 6.3 follow-on: the redundant index-side ``try/except`` was
+    dropped. The framework's ``_safe_call`` already wraps every dispatched
+    hook, so a duplicated suppression here added nothing -- only stripped
+    the traceback. The contract is now: fetch errors are swallowed with
+    table-name context; index errors propagate to the framework.
+    """
     from deriva_ml_mcp.resources import rag as rag_module
 
     rows = [{"rid": "1-WFAA"}]
@@ -377,9 +411,9 @@ def test_workflow_hook_swallows_index_exception() -> None:
         patch.object(rag_module, "resolve_user_identity", return_value=_USER_ID),
         patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
         patch.object(rag_module, "index_table_data", side_effect=RuntimeError("boom")),
+        pytest.raises(RuntimeError, match="boom"),
     ):
-        # Must not raise
-        _run(rag_module._on_catalog_connect_workflow("h.example", "1", "hash", {}))
+        _run(_hook_at(_WORKFLOW_HOOK_IDX)("h.example", "1", "hash", {}))
 
 
 def test_hook_short_circuits_when_rag_store_is_none() -> None:
@@ -394,7 +428,7 @@ def test_hook_short_circuits_when_rag_store_is_none() -> None:
         patch.object(rag_module, "get_rag_store", return_value=None),
         patch.object(rag_module, "index_table_data", new=fake_index),
     ):
-        _run(rag_module._on_catalog_connect_dataset("h.example", "1", "hash", {}))
+        _run(_hook_at(_DATASET_HOOK_IDX)("h.example", "1", "hash", {}))
 
     fake_index.assert_not_called()
 
@@ -414,14 +448,15 @@ def test_dataset_hook_partitions_per_user() -> None:
 
     with (
         patch.object(rag_module, "_fetch_dataset_rows", return_value=rows),
-        patch.object(
-            rag_module, "resolve_user_identity", side_effect=["userA", "userB"]
-        ),
+        patch.object(rag_module, "resolve_user_identity", side_effect=["userA", "userB"]),
         patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
         patch.object(rag_module, "index_table_data", new=fake_index),
     ):
-        _run(rag_module._on_catalog_connect_dataset("h.example", "1", "hash", {}))
-        _run(rag_module._on_catalog_connect_dataset("h.example", "1", "hash", {}))
+        # Build the hook inside the patch context so the factory's closure
+        # captures the patched fetch fn rather than the real one.
+        hook = _hook_at(_DATASET_HOOK_IDX)
+        _run(hook("h.example", "1", "hash", {}))
+        _run(hook("h.example", "1", "hash", {}))
 
     assert fake_index.call_count == 2
     assert fake_index.call_args_list[0].kwargs["user_id"] == "userA"
@@ -441,6 +476,7 @@ def test_register_rag_sources_not_wired_into_plugin_yet() -> None:
     """
     from pathlib import Path
 
-    plugin_src = Path("src/deriva_ml_mcp/plugin.py").resolve().read_text(encoding="utf-8")
+    plugin_path = Path(__file__).parent.parent / "src" / "deriva_ml_mcp" / "plugin.py"
+    plugin_src = plugin_path.read_text(encoding="utf-8")
     assert "register_rag_sources" not in plugin_src
     assert "from deriva_ml_mcp.resources" not in plugin_src
