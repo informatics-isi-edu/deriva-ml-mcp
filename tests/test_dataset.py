@@ -771,7 +771,7 @@ async def test_add_dataset_members_error_path(dataset_ctx, capturing_mcp, mock_m
     assert out == {"error": "cycle detected"}
     failed = _success_calls(mock_audit, "deriva_ml_add_dataset_members_failed")
     assert failed
-    assert failed[0].kwargs["added_count"] == 1
+    assert failed[0].kwargs["attempted_count"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -820,7 +820,7 @@ async def test_delete_dataset_members_error(dataset_ctx, capturing_mcp, mock_ml)
     assert out == {"error": "rid not in dataset"}
     failed = _success_calls(mock_audit, "deriva_ml_delete_dataset_members_failed")
     assert failed
-    assert failed[0].kwargs["removed_count"] == 3
+    assert failed[0].kwargs["attempted_count"] == 3
 
 
 # ---------------------------------------------------------------------------
@@ -903,10 +903,60 @@ async def test_update_dataset_types_error(dataset_ctx, capturing_mcp, mock_ml):
                 add=["BadTerm"],
             )
         )
-    assert out == {"error": "unknown term"}
+    # Error response now includes partial-state fields so the LLM can
+    # see which sub-operations completed before the failure.
+    assert out["error"] == "unknown term"
+    assert out["dataset_rid"] == "1-AAAA"
+    assert out["added_done"] == []  # add_dataset_types raised; nothing committed
+    assert out["removed_done"] == []
+    assert out["added_requested"] == ["BadTerm"]
     failed = _success_calls(mock_audit, "deriva_ml_update_dataset_types_failed")
     assert failed
     assert failed[0].kwargs["added"] == ["BadTerm"]
+    assert failed[0].kwargs["added_done"] == []
+    assert failed[0].kwargs["removed_done"] == []
+
+
+async def test_update_dataset_types_partial_remove_failure_surfaces_progress(
+    dataset_ctx, capturing_mcp, mock_ml
+):
+    """If a remove mid-way through the loop fails, the error response and
+    audit must surface which terms were already removed (M-2 fix)."""
+    ds = _make_dataset_mock("1-AAAA")
+    # add_dataset_types succeeds; first remove succeeds; second remove fails.
+    call_count = {"n": 0}
+
+    def remove_side_effect(term):
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise RuntimeError("term B not found")
+
+    ds.remove_dataset_type.side_effect = remove_side_effect
+    mock_ml.lookup_dataset.return_value = ds
+
+    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+        out = json.loads(
+            await capturing_mcp.tools["update_dataset_types"](
+                hostname="h",
+                catalog_id="1",
+                dataset_rid="1-AAAA",
+                add=["NewTag"],
+                remove=["A", "B"],
+            )
+        )
+
+    # Error response shows partial state: NewTag added, A removed, B failed.
+    assert out["error"] == "term B not found"
+    assert out["added_done"] == ["NewTag"]
+    assert out["removed_done"] == ["A"]
+    assert out["added_requested"] == ["NewTag"]
+    assert out["removed_requested"] == ["A", "B"]
+
+    # Audit also captures partial state.
+    failed = _success_calls(mock_audit, "deriva_ml_update_dataset_types_failed")
+    assert failed
+    assert failed[0].kwargs["added_done"] == ["NewTag"]
+    assert failed[0].kwargs["removed_done"] == ["A"]
 
 
 # ---------------------------------------------------------------------------

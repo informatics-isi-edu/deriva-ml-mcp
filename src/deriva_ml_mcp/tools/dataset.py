@@ -37,6 +37,7 @@ def _error_envelope(
     operation: str,
     hostname: str,
     catalog_id: str,
+    response_fields: dict[str, Any] | None = None,
     **audit_fields: Any,
 ) -> str:
     """Standard mutation-tool error response.
@@ -51,18 +52,24 @@ def _error_envelope(
             -> audit event ``"deriva_ml_create_dataset_failed"``.
         hostname: The Deriva hostname (passed to audit_event).
         catalog_id: The catalog ID (passed to audit_event).
+        response_fields: Optional extra keys to merge into the JSON
+            error response (in addition to ``"error"``). Use for
+            partial-state visibility — e.g. for a tool that does N
+            sub-operations in a loop, pass ``{"completed": [...]}`` so
+            the LLM can reason about what was actually mutated before
+            the failure.
         **audit_fields: Additional keyword fields included in the
             audit event payload (e.g. ``dataset_rid``).
 
     Returns:
-        JSON string ``{"error": str(exc)}``.
+        JSON string. Default shape is ``{"error": str(exc)}``; with
+        ``response_fields`` it becomes ``{"error": ..., **response_fields}``.
 
-    Example:
-        >>> # Inside a mutation tool's except block:
+    Example (illustrative — runs only inside an except block):
         >>> # return _error_envelope(exc, operation="create_dataset",
         >>> #                        hostname=h, catalog_id=c, execution_rid=e)
     """
-    logger.warning(
+    logger.error(
         "deriva_ml_%s failed: %s: %s",
         operation,
         type(exc).__name__,
@@ -76,7 +83,10 @@ def _error_envelope(
         error_type=type(exc).__name__,
         **audit_fields,
     )
-    return json.dumps({"error": str(exc)})
+    payload: dict[str, Any] = {"error": str(exc)}
+    if response_fields:
+        payload.update(response_fields)
+    return json.dumps(payload)
 
 
 def _summarize_dataset(ds: Any) -> dict[str, Any]:
@@ -708,15 +718,15 @@ def register(ctx: PluginContext) -> None:
                     version=parsed_version,
                 )
                 summary = _summarize_dataset(new_ds)
-                audit_event(
-                    "deriva_ml_create_dataset",
-                    hostname=hostname,
-                    catalog_id=catalog_id,
-                    execution_rid=execution_rid,
-                    dataset_rid=new_ds.dataset_rid,
-                    dataset_types=dataset_types or [],
-                    version=summary["current_version"],
-                )
+            audit_event(
+                "deriva_ml_create_dataset",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                execution_rid=execution_rid,
+                dataset_rid=new_ds.dataset_rid,
+                dataset_types=dataset_types or [],
+                version=summary["current_version"],
+            )
             return json.dumps({"status": "created", **summary, "execution_rid": execution_rid})
         except Exception as exc:
             return _error_envelope(
@@ -764,13 +774,13 @@ def register(ctx: PluginContext) -> None:
                 ml = get_ml(hostname, catalog_id)
                 ds = ml.lookup_dataset(dataset_rid)
                 ml.delete_dataset(ds, recurse=recurse)
-                audit_event(
-                    "deriva_ml_delete_dataset",
-                    hostname=hostname,
-                    catalog_id=catalog_id,
-                    dataset_rid=dataset_rid,
-                    recursive=recurse,
-                )
+            audit_event(
+                "deriva_ml_delete_dataset",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                dataset_rid=dataset_rid,
+                recursive=recurse,
+            )
             return json.dumps(
                 {
                     "status": "deleted",
@@ -863,14 +873,14 @@ def register(ctx: PluginContext) -> None:
                     execution_rid=execution_rid,
                 )
                 new_version = str(ds.current_version) if ds.current_version is not None else None
-                audit_event(
-                    "deriva_ml_add_dataset_members",
-                    hostname=hostname,
-                    catalog_id=catalog_id,
-                    dataset_rid=dataset_rid,
-                    added_count=added_count,
-                    new_version=new_version,
-                )
+            audit_event(
+                "deriva_ml_add_dataset_members",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                dataset_rid=dataset_rid,
+                added_count=added_count,
+                new_version=new_version,
+            )
             return json.dumps(
                 {
                     "status": "success",
@@ -886,7 +896,7 @@ def register(ctx: PluginContext) -> None:
                 hostname=hostname,
                 catalog_id=catalog_id,
                 dataset_rid=dataset_rid,
-                added_count=added_count,
+                attempted_count=added_count,
             )
 
     @ctx.tool(mutates=True)
@@ -937,14 +947,14 @@ def register(ctx: PluginContext) -> None:
                     execution_rid=execution_rid,
                 )
                 new_version = str(ds.current_version) if ds.current_version is not None else None
-                audit_event(
-                    "deriva_ml_delete_dataset_members",
-                    hostname=hostname,
-                    catalog_id=catalog_id,
-                    dataset_rid=dataset_rid,
-                    removed_count=removed_count,
-                    new_version=new_version,
-                )
+            audit_event(
+                "deriva_ml_delete_dataset_members",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                dataset_rid=dataset_rid,
+                removed_count=removed_count,
+                new_version=new_version,
+            )
             return json.dumps(
                 {
                     "status": "success",
@@ -960,7 +970,7 @@ def register(ctx: PluginContext) -> None:
                 hostname=hostname,
                 catalog_id=catalog_id,
                 dataset_rid=dataset_rid,
-                removed_count=removed_count,
+                attempted_count=removed_count,
             )
 
     @ctx.tool(mutates=True)
@@ -1001,25 +1011,34 @@ def register(ctx: PluginContext) -> None:
         """
         adds = list(add or [])
         removes = list(remove or [])
+        # Track partial progress for the failure path: an `add_dataset_types`
+        # call is atomic-per-call (all-or-none for the list), but `remove`
+        # is a per-term loop that can fail mid-way. The LLM caller needs
+        # visibility into which removes succeeded before failure so it can
+        # reason about partial state.
+        adds_done: list[str] = []
+        removes_done: list[str] = []
         try:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
                 ds = ml.lookup_dataset(dataset_rid)
                 if adds:
                     ds.add_dataset_types(adds)
+                    adds_done = list(adds)
                 for term in removes:
                     ds.remove_dataset_type(term)
+                    removes_done.append(term)
                 updated_types = list(ds.dataset_types) if ds.dataset_types else []
                 new_version = str(ds.current_version) if ds.current_version is not None else None
-                audit_event(
-                    "deriva_ml_update_dataset_types",
-                    hostname=hostname,
-                    catalog_id=catalog_id,
-                    dataset_rid=dataset_rid,
-                    added=adds,
-                    removed=removes,
-                    new_version=new_version,
-                )
+            audit_event(
+                "deriva_ml_update_dataset_types",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                dataset_rid=dataset_rid,
+                added=adds,
+                removed=removes,
+                new_version=new_version,
+            )
             return json.dumps(
                 {
                     "status": "updated",
@@ -1039,6 +1058,15 @@ def register(ctx: PluginContext) -> None:
                 dataset_rid=dataset_rid,
                 added=adds,
                 removed=removes,
+                added_done=adds_done,
+                removed_done=removes_done,
+                response_fields={
+                    "dataset_rid": dataset_rid,
+                    "added_done": adds_done,
+                    "removed_done": removes_done,
+                    "added_requested": adds,
+                    "removed_requested": removes,
+                },
             )
 
     @ctx.tool(mutates=True)
@@ -1075,13 +1103,13 @@ def register(ctx: PluginContext) -> None:
                 ml = get_ml(hostname, catalog_id)
                 assoc_table = ml.add_dataset_element_type(table_name)
                 association_name = assoc_table.name
-                audit_event(
-                    "deriva_ml_add_dataset_element_type",
-                    hostname=hostname,
-                    catalog_id=catalog_id,
-                    table_name=table_name,
-                    association_table=association_name,
-                )
+            audit_event(
+                "deriva_ml_add_dataset_element_type",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                table_name=table_name,
+                association_table=association_name,
+            )
             return json.dumps(
                 {
                     "status": "success",
@@ -1149,15 +1177,15 @@ def register(ctx: PluginContext) -> None:
                     execution_rid=execution_rid,
                 )
                 new_version_str = str(new_version)
-                audit_event(
-                    "deriva_ml_increment_dataset_version",
-                    hostname=hostname,
-                    catalog_id=catalog_id,
-                    dataset_rid=dataset_rid,
-                    component=component,
-                    previous_version=previous_version,
-                    new_version=new_version_str,
-                )
+            audit_event(
+                "deriva_ml_increment_dataset_version",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                dataset_rid=dataset_rid,
+                component=component,
+                previous_version=previous_version,
+                new_version=new_version_str,
+            )
             return json.dumps(
                 {
                     "status": "success",
