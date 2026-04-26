@@ -885,7 +885,7 @@ Surfaced during Batch 2 review; apply to every mutation tool in Phases 2-5:
       return _error_envelope(exc, operation="<op>", hostname=..., catalog_id=..., **fields)
   ```
 
-- **`_error_envelope` helper handles the failure path.** Located in `src/deriva_ml_mcp/tools/dataset.py` for now; lift to a shared module the moment Phase 3 needs it (don't copy-paste). Signature: `_error_envelope(exc, *, operation, hostname, catalog_id, response_fields=None, **audit_fields) -> str`. Logs with `logger.error(..., exc_info=True)`, emits `deriva_ml_<op>_failed` audit with `error_type=type(exc).__name__`, returns `{"error": str(exc), **response_fields}`. Use `response_fields` for partial-state visibility (see `update_dataset_types` for the pattern: pass `added_done`, `removed_done` to the LLM).
+- **`_error_envelope` helper handles every tool's failure path.** Located in `src/deriva_ml_mcp/tools/dataset.py` for now; lift to a shared module the moment Phase 3 needs it (don't copy-paste). Signature: `_error_envelope(exc, *, operation, hostname, catalog_id, audit=True, response_fields=None, **audit_fields) -> str`. Always logs with `logger.error(..., exc_info=True)`. When `audit=True` (default — for mutation tools), also emits `deriva_ml_<op>_failed` audit with `error_type=type(exc).__name__`. **Read tools pass `audit=False`** — failures are still logged but no audit row is written (audit logs are reserved for state changes). Returns `{"error": str(exc), **response_fields}`. Use `response_fields` for partial-state visibility (see `update_dataset_types` for the pattern: pass `added_done`, `removed_done` to the LLM).
 
 - **Audit field discipline:** include bounded identifiers (RIDs, vocab terms, counts, enum values, table names). EXCLUDE user-supplied free text (`description` strings, `member_rids` lists). Privacy + audit-table-size win.
 
@@ -894,6 +894,24 @@ Surfaced during Batch 2 review; apply to every mutation tool in Phases 2-5:
 - **Argument-validation errors return `{"error": ...}` directly without `_error_envelope`.** Caller-fixable input errors aren't operational failures and shouldn't pollute the failure-audit log. The DerivaML call never happened. See `add_dataset_members` (the both-or-neither check on `member_rids` / `members_by_table`) for the canonical pattern.
 
 - **Patching `audit_event` in tests:** patch at the use-site, `patch("deriva_ml_mcp.tools.<module>.audit_event")`. The audit name in tests is the full string including `deriva_ml_` prefix and (for failures) `_failed` suffix.
+
+### Conventions inherited from Phase 2 (complex tools)
+
+Surfaced during Batch 3 review (`cache_dataset`, `denormalize_dataset`, `split_dataset`); apply to any complex tool in Phases 3-5 that involves generators, dry-run support, or multi-mode dispatching:
+
+- **`dry_run=True` doesn't audit.** Audit logs are for actual state changes. A dry-run that doesn't mutate the catalog should NOT emit a success audit (would pollute provenance/replay reasoning). The response still carries `dry_run=True` so the caller has full visibility. See `split_dataset` for the canonical shape: `if not dry_run: audit_event(...)`.
+
+- **Bound generator materialization.** When a tool returns rows from a generator (`get_denormalized_as_dict` etc.), use `itertools.islice(gen, capped + 1)` to cap consumption to one page worth of rows. Never `list(gen)` — a million-row join becomes an OOM. Also gate at the planner: if `desc["estimated_row_count"]["total"] > 10 * capped`, refuse to drain and route the caller through preflight via a `<mode>_preflight_required` response. Pattern: `denormalize_dataset`.
+
+- **Two-mode tool template.** When one tool naturally has both a "shape/discovery" mode and a "rows/details" mode, dispatch on a sentinel arg (e.g. `dataset_rid=None` → catalog-shape; set → dataset-described). Three branches in one body is fine if each is a clean early return. Reusable for any "I can show you the shape OR the data" tool. Pattern: `denormalize_dataset` (catalog-shape vs. dataset-described).
+
+- **Preflight-as-estimate is OK.** When a true row count would require materializing the generator (slow), use the planner's coarse estimate (`desc["estimated_row_count"]["total"]`) and label it "Estimated N rows" in `action_required`. Better than nothing, and avoids the OOM gate. Caller still gets the signal to choose a sensible limit before fetching.
+
+- **Non-portable args (callables, file handles, live connections) are dropped from the MCP surface.** Document the omission in the docstring with a pointer to the Python API for callers who need it. Pattern: `split_dataset` drops `selection_fn`.
+
+- **Helpers parameterized by callable, not by string key.** When the same pagination/extraction logic applies to multiple shapes (objects with `.rid`, dicts with `RID`, denormalized rows with `Table.RID`), accept a `key: Callable[[Any], str]` instead of a `rid_key: str` and build the closures with `functools.partial(_read_rid, rid_key="...")` or a dedicated factory. Avoids near-duplicate helper modules. Pattern: `_paginate(items, *, after_rid, limit, key)`.
+
+- **Module split decision: defer until cross-domain evidence.** When `dataset.py` reaches ~1500 lines (the soft threshold), don't split in isolation — Phases 3-5 will each produce similarly-sized modules. Doing one split now risks inconsistent shapes across the four domains. Re-evaluate at the start of Phase 3 (after `feature.py` lands), or in a dedicated refactor PR before Phase 7. Recommended cut when the time comes: `dataset/_helpers.py` + `dataset/read.py` + `dataset/mutate.py` + `dataset/__init__.py` with a `register(ctx)` that delegates.
 
 ### Phase 2 — Dataset domain
 
