@@ -170,6 +170,11 @@ def _list_dataset_members_summary_impl(ml: Any, dataset_rid: str) -> dict[str, A
     summary = {tname: len(rows) for tname, rows in members_by_table.items()}
     total = sum(summary.values())
     flattened: list[dict[str, Any]] = []
+    # When total > _MAX_LIMIT, this loop stops mid-way through whichever
+    # table happens to be iterated last (dict iteration order = insertion
+    # order). Per-table counts in `summary` remain accurate; only the
+    # `members` flattening is truncated. Callers needing the full member
+    # list should use the paginated `list_dataset_members` tool instead.
     for tname, rows in members_by_table.items():
         for row in rows:
             if len(flattened) >= _MAX_LIMIT:
