@@ -117,34 +117,6 @@ def _summarize_execution(record: Any) -> dict[str, Any]:
     }
 
 
-def _summarize_upload_report(report: Any) -> dict[str, Any]:
-    """Summarize an ``UploadReport`` into a JSON-friendly dict.
-
-    Caps the ``errors`` list at the top 10 lines so the response stays
-    bounded even on disasters (a botched batch can produce thousands of
-    per-row error strings). The full list remains in the operator's
-    server logs via ``_error_envelope``.
-
-    Args:
-        report: A ``deriva_ml.execution.upload_engine.UploadReport``
-            dataclass instance.
-
-    Returns:
-        Dict with ``execution_rids``, ``total_uploaded``,
-        ``total_failed``, ``per_table`` (verbatim), and
-        ``errors`` (capped at 10 lines).
-    """
-    errors = list(getattr(report, "errors", []) or [])
-    return {
-        "execution_rids": list(getattr(report, "execution_rids", []) or []),
-        "total_uploaded": getattr(report, "total_uploaded", 0),
-        "total_failed": getattr(report, "total_failed", 0),
-        "per_table": dict(getattr(report, "per_table", {}) or {}),
-        "errors": errors[:10],
-        "errors_truncated": len(errors) > 10,
-    }
-
-
 def _summarize_upload_dict(
     uploaded: dict[str, Any],
     *,
@@ -168,9 +140,11 @@ def _summarize_upload_dict(
             since they don't appear in the asset dict).
 
     Returns:
-        Dict matching ``_summarize_upload_report``'s envelope:
+        Dict with the upload-report envelope:
         ``execution_rids``, ``total_uploaded``, ``total_failed``,
-        ``per_table``, ``errors``, ``errors_truncated``.
+        ``per_table``, ``errors``, ``errors_truncated``. ``errors`` is
+        capped at the top 10 lines so the response stays bounded; the
+        full list remains in the operator's server logs.
     """
     per_table: dict[str, int] = {
         table: len(files or []) for table, files in (uploaded or {}).items()
@@ -767,7 +741,7 @@ def register(ctx: PluginContext) -> None:
             RuntimeError: Wrapped, propagated from
                 ``deriva_ml.DerivaML.resume_execution``,
                 ``Execution.execution_stop``, or
-                ``Execution.upload_outputs``.
+                ``Execution.upload_execution_outputs``.
 
         Example:
             ``{"status": "uploaded", "execution_rid": "1-EXEC",
