@@ -36,6 +36,10 @@ for column meanings, disposition definitions, and maintenance rules.
 | create_dataset_type_term | dataset.py | dropped-to-core | add_term | (core) | none | Vocab-domain; core's add_term("Dataset_Type", ...) covers it |
 | delete_dataset_type_term | dataset.py | dropped-to-core | delete_term | (core) | none | Vocab-domain; core's delete_term("Dataset_Type", ...) covers it |
 | split_dataset | dataset.py | kept | split_dataset | tools/dataset.py | hostname/catalog_id added; selection_fn dropped (Python-only callable) | High-value ML-domain operation; sklearn-style API |
+| create_feature | feature.py | kept | create_feature | tools/feature.py | hostname/catalog_id added; drops connection-manager active-execution behavior; drops side-channel RAG warnings | Same intent. Schema mutation creating an association table + a Feature_Name term. |
+| delete_feature | feature.py | kept | delete_feature | tools/feature.py | hostname/catalog_id added | Drops the feature's association table; same intent as the old tool. |
+| add_feature_value | feature.py | merged | add_feature_values | tools/feature.py | renamed (singular -> plural); merged with add_feature_value_record into one tool taking a list of field dicts; execution_rid REQUIRED (no implicit active execution) | Old "value shorthand" branch absorbed -- caller passes `{target_rid: ..., <column>: ...}` for the simple case. Goes through `Execution.restore_execution + exe.add_features` (the only supported write path). |
+| add_feature_value_record | feature.py | merged | add_feature_values | tools/feature.py | combined with add_feature_value | Same merge as add_feature_value; the multi-column entry shape was already a superset of the single-column shape. |
 
 ## Resources
 
