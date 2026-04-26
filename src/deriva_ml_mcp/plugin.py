@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from deriva_ml_mcp.resources import ml as _ml_resources
+from deriva_ml_mcp.resources import rag as _ml_rag
 from deriva_ml_mcp.tools import dataset as _dataset
 from deriva_ml_mcp.tools import execution as _execution
 from deriva_ml_mcp.tools import feature as _feature
@@ -32,7 +34,9 @@ def register(ctx: PluginContext) -> None:
     """Register all deriva-ml-mcp tools and resources with the given context.
 
     Phase 5 ships dataset, feature, workflow, and execution domain tools.
-    Resource modules will be added by Phase 6.
+    Phase 6 added MCP resources and per-user RAG indexing (one GitHub
+    docs source plus three on_catalog_connect hooks for Dataset,
+    Workflow, and Execution rows).
 
     Args:
         ctx: PluginContext supplied by deriva-mcp-core at startup.
@@ -49,3 +53,5 @@ def register(ctx: PluginContext) -> None:
     _feature.register(ctx)
     _workflow.register(ctx)
     _execution.register(ctx)
+    _ml_resources.register(ctx)
+    _ml_rag.register_rag_sources(ctx)

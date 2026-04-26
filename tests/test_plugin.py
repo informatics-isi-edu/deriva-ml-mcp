@@ -91,6 +91,25 @@ _EXECUTION_TOOLS = frozenset(
 # + workflow + execution.
 _ALL_REGISTERED_TOOLS = _DATASET_TOOLS | _FEATURE_TOOLS | _WORKFLOW_TOOLS | _EXECUTION_TOOLS
 
+# All ML-domain MCP resource URIs registered by ``resources/ml.py``.
+# Mirrors the per-domain tool frozensets above so the same exact-equality
+# assertion pattern catches both missing and unexpected resource
+# registrations -- forcing any new resource to be added here AND to
+# ``coverage.md`` in lockstep with ``resources/ml.py``.
+_ML_RESOURCE_URIS = frozenset(
+    {
+        "deriva://catalog/{hostname}/{catalog_id}/ml/datasets",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/members",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/workflows",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{workflow_rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/executions",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/registries",
+    }
+)
+
 
 def test_register_runs_without_error(ctx):
     """``register(ctx)`` must succeed end-to-end."""
@@ -175,3 +194,64 @@ def test_all_registered_tools_have_explicit_mutates(ctx, capturing_mcp):
     assert all(isinstance(v, bool) for v in seen_mutates.values()), (
         f"mutates= must be bool; got: {seen_mutates}"
     )
+
+
+def test_all_registered_resources_exact(ctx, capturing_mcp):
+    """The set of registered resource URIs must equal ``_ML_RESOURCE_URIS`` exactly.
+
+    Same drift-detector pattern as ``test_all_registered_tools_exact``:
+    exact-equality catches BOTH directions in one assertion:
+
+    - missing: a URI listed in ``_ML_RESOURCE_URIS`` but not registered
+      by ``resources/ml.py`` (regression).
+    - unexpected: a resource registered without being added to
+      ``_ML_RESOURCE_URIS`` (forces a ``coverage.md`` and frozenset
+      update on every new resource).
+    """
+    register(ctx)
+    actual = frozenset(capturing_mcp.resources.keys())
+    assert actual == _ML_RESOURCE_URIS, (
+        f"missing: {sorted(_ML_RESOURCE_URIS - actual)}; "
+        f"unexpected (update _ML_RESOURCE_URIS and coverage.md): "
+        f"{sorted(actual - _ML_RESOURCE_URIS)}"
+    )
+
+
+def test_register_wires_rag_github_source(ctx):
+    """``register(ctx)`` must declare exactly one GitHub doc source ('deriva-ml-docs').
+
+    Pins the wiring of ``resources.rag.register_rag_sources`` into the
+    plugin entry point so a future regression that drops that call (or
+    accidentally drops the GitHub source declaration) is caught here as
+    well as in ``tests/test_rag.py``.
+    """
+    register(ctx)
+    assert len(ctx._rag_sources) == 1
+    assert ctx._rag_sources[0].name == "deriva-ml-docs"
+
+
+def test_register_wires_three_catalog_connect_hooks(ctx):
+    """``register(ctx)`` must wire the three per-user RAG catalog hooks.
+
+    Hook identity is already covered by ``tests/test_rag.py``; this
+    test only pins the count so that dropping one hook from
+    ``register_rag_sources`` is also caught at the plugin level.
+    """
+    register(ctx)
+    assert len(ctx._catalog_connect_hooks) == 3
+
+
+def test_register_does_not_use_rag_dataset_indexer(ctx):
+    """Per-user-safety pin: the global enriched-source API must stay unused.
+
+    ``ctx.rag_dataset_indexer`` produces a single global enriched source
+    shared across all users (the enricher fires under whichever
+    credential happens to connect first), which would leak per-user ACL
+    rows across users. Phase 6.3 deliberately rejected this API in
+    favor of per-user ``on_catalog_connect`` hooks. If a future commit
+    accidentally introduces a call to ``ctx.rag_dataset_indexer(...)``
+    anywhere in the plugin (in ``tools/``, ``resources/``, or any new
+    file), this test catches it at the plugin level.
+    """
+    register(ctx)
+    assert len(ctx._rag_dataset_indexers) == 0

@@ -461,22 +461,3 @@ def test_dataset_hook_partitions_per_user() -> None:
     assert fake_index.call_count == 2
     assert fake_index.call_args_list[0].kwargs["user_id"] == "userA"
     assert fake_index.call_args_list[1].kwargs["user_id"] == "userB"
-
-
-# ---------------------------------------------------------------------------
-# 7. Plugin wiring guard -- not registered in plugin.py yet (Phase 6.4)
-# ---------------------------------------------------------------------------
-
-
-def test_register_rag_sources_not_wired_into_plugin_yet() -> None:
-    """Phase 6.3 ships rag.py but does not wire it into plugin.register.
-
-    Phase 6.4 takes that step. This test pins that scope so a regression
-    here lights up loudly rather than silently changing the public surface.
-    """
-    from pathlib import Path
-
-    plugin_path = Path(__file__).parent.parent / "src" / "deriva_ml_mcp" / "plugin.py"
-    plugin_src = plugin_path.read_text(encoding="utf-8")
-    assert "register_rag_sources" not in plugin_src
-    assert "from deriva_ml_mcp.resources" not in plugin_src
