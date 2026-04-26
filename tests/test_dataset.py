@@ -3,45 +3,16 @@
 from __future__ import annotations
 
 import json
-from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.conftest import _success_calls
+from tests.conftest import _success_calls, make_patch_audit
 
-
-@contextmanager
-def _patch_audit():
-    """Patch ``audit_event`` at BOTH the dataset success site and the
-    shared-helpers failure site so tests can capture either with a
-    single mock.
-
-    Why two patches: Python's ``from X import name`` binds ``name`` in
-    the importing module's namespace at import time. So patching
-    ``deriva_ml_mcp._helpers.audit_event`` only affects callers that
-    do attribute lookup on the helpers module (like ``_error_envelope``
-    inside ``_helpers.py`` itself). It does NOT affect ``dataset.py``'s
-    already-bound ``audit_event`` name. To capture both success-path
-    audits (from ``dataset.audit_event``) and failure-path audits
-    (from ``_helpers.audit_event`` inside ``_error_envelope``), we
-    patch both locations to the same mock object.
-
-    A future Phase 3+ refactor could move the success audits behind a
-    ``_helpers.emit_success(...)`` wrapper that does the attribute
-    lookup at call time, eliminating the dual patch. Not worth doing
-    just for this — the dual patch is two lines.
-
-    Example:
-        >>> with _patch_audit() as mock_audit:
-        ...     # ... invoke tool ...
-        ...     pass
-    """
-    with (
-        patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit,
-        patch("deriva_ml_mcp._helpers.audit_event", new=mock_audit),
-    ):
-        yield mock_audit
+# Dual-patch context manager for the dataset module. See
+# ``make_patch_audit`` in ``tests/conftest.py`` for the canonical
+# explanation of why both bind sites are patched together.
+_patch_audit = make_patch_audit("dataset")
 
 
 def _make_dataset_mock(

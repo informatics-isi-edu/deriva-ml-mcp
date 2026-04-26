@@ -3,30 +3,16 @@
 from __future__ import annotations
 
 import json
-from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.conftest import _success_calls
+from tests.conftest import _success_calls, make_patch_audit
 
-
-@contextmanager
-def _patch_feature_audit():
-    """Dual-patch ``audit_event`` for both the success site and the helpers
-    failure site so tests can capture either with a single mock.
-
-    Why two patches: Python's ``from X import name`` binds ``name`` in the
-    importing module's namespace at import time, so a single-patch facade
-    isn't possible without changing every call site to use attribute
-    lookup. See ``_patch_audit`` in tests/test_dataset.py for the
-    canonical explanation.
-    """
-    with (
-        patch("deriva_ml_mcp.tools.feature.audit_event") as mock_audit,
-        patch("deriva_ml_mcp._helpers.audit_event", new=mock_audit),
-    ):
-        yield mock_audit
+# Dual-patch context manager for the feature module. See
+# ``make_patch_audit`` in ``tests/conftest.py`` for the canonical
+# explanation of why both bind sites are patched together.
+_patch_feature_audit = make_patch_audit("feature")
 
 
 def _make_column_mock(name: str, type_name: str = "text", nullok: bool = True, default=None):
