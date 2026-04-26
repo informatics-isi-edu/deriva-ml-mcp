@@ -117,6 +117,137 @@ def _summarize_execution(record: Any) -> dict[str, Any]:
     }
 
 
+def _list_executions_impl(
+    ml: Any,
+    *,
+    workflow_rid: str | None,
+    status: str | None,
+    after_rid: str | None,
+    limit: int,
+) -> dict[str, Any]:
+    """Fetch + paginate executions. Pure helper -- shared by tool and resource.
+
+    Args:
+        ml: A connected ``deriva_ml.DerivaML`` instance.
+        workflow_rid: Optional workflow filter.
+        status: Optional ``ExecutionStatus`` value (string).
+        after_rid: Cursor for cursor pagination.
+        limit: Max executions per page (already capped by caller).
+
+    Returns:
+        Dict ``{"executions": [...], "count", "truncated", "next_after_rid"}``.
+    """
+    status_enum = ExecutionStatus(status) if status else None
+    executions = sorted(
+        ml.find_executions(workflow=workflow_rid, status=status_enum),
+        key=lambda e: getattr(e, "execution_rid", "") or "",
+    )
+    page, truncated, next_after = _paginate(
+        executions,
+        after_rid=after_rid,
+        limit=limit,
+        key=partial(_read_rid, rid_key="execution_rid"),
+    )
+    return {
+        "executions": [_summarize_execution(e) for e in page],
+        "count": len(page),
+        "truncated": truncated,
+        "next_after_rid": next_after,
+    }
+
+
+def _get_execution_detail_impl(ml: Any, execution_rid: str) -> dict[str, Any]:
+    """Build the execution detail payload (summary + inputs + outputs + metadata).
+
+    Used by the ``deriva://catalog/{h}/{c}/ml/execution/{rid}`` resource.
+    Aggregates input datasets, asset I/O grouped by role, and a
+    metadata bucket with ``hydra_config`` (when present), and an
+    optional ``experiment`` key.
+
+    The deriva-ml ``ExecutionRecord`` exposes:
+
+    - ``list_input_datasets()`` -> list of Dataset objects
+    - ``list_assets(asset_role="Input"|"Output"|None)`` -> list of Asset
+      objects
+
+    Hydra config and other metadata files don't have a generic API on
+    ExecutionRecord; the ``experiment`` key is stubbed as ``None`` for
+    now (see TODO).
+
+    Args:
+        ml: A connected ``deriva_ml.DerivaML`` instance.
+        execution_rid: The RID of the execution to look up.
+
+    Returns:
+        Dict with ``rid``, ``workflow_rid``, ``status``, ``description``,
+        ``start_time``, ``stop_time``, ``duration``, ``inputs``,
+        ``outputs``, ``metadata``, ``experiment``.
+    """
+    record = ml.lookup_execution(execution_rid)
+    payload = _summarize_execution(record)
+
+    # Inputs: datasets + input assets.
+    input_datasets: list[dict[str, Any]] = []
+    try:
+        for ds in record.list_input_datasets():
+            current = getattr(ds, "current_version", None)
+            input_datasets.append(
+                {
+                    "rid": ds.dataset_rid,
+                    "version": str(current) if current is not None else None,
+                }
+            )
+    except Exception:  # noqa: BLE001 -- record may not be bound on all paths
+        input_datasets = []
+
+    input_assets: list[dict[str, Any]] = []
+    output_assets: list[dict[str, Any]] = []
+    try:
+        for asset in record.list_assets(asset_role="Input"):
+            input_assets.append(
+                {
+                    "rid": getattr(asset, "asset_rid", None),
+                    "filename": getattr(asset, "filename", None),
+                }
+            )
+        for asset in record.list_assets(asset_role="Output"):
+            output_assets.append(
+                {
+                    "rid": getattr(asset, "asset_rid", None),
+                    "filename": getattr(asset, "filename", None),
+                }
+            )
+    except Exception:  # noqa: BLE001 -- assets are optional
+        pass
+
+    payload["inputs"] = {
+        "datasets": input_datasets,
+        "assets": input_assets,
+    }
+    payload["outputs"] = {
+        "assets": output_assets,
+    }
+
+    # TODO(deriva-ml-execution-metadata-api): no generic API on
+    # ExecutionRecord to enumerate Execution_Metadata files
+    # (Deriva_Config / Execution_Config / Hydra_Config / Runtime_Env).
+    # Surface what we can and leave the others empty.
+    payload["metadata"] = {
+        "deriva_config": None,
+        "execution_config": None,
+        "hydra_config": None,
+        "runtime_env": None,
+    }
+
+    # TODO(deriva-ml-experiment-detection): no clean predicate on
+    # ExecutionRecord to tell whether an execution is an "experiment"
+    # (i.e., has a Hydra config attached). Always return None until
+    # an upstream API exists.
+    payload["experiment"] = None
+
+    return payload
+
+
 def _summarize_upload_dict(
     uploaded: dict[str, Any],
     *,
@@ -224,43 +355,28 @@ def register(ctx: PluginContext) -> None:
         try:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
-                status_enum = ExecutionStatus(status) if status else None
-                # find_executions yields an iterable; materialize so we
-                # can sort+paginate client-side (upstream does not paginate).
-                executions = sorted(
-                    ml.find_executions(workflow=workflow_rid, status=status_enum),
-                    key=lambda e: getattr(e, "execution_rid", "") or "",
+                if preflight_count:
+                    status_enum = ExecutionStatus(status) if status else None
+                    total = len(list(ml.find_executions(workflow=workflow_rid, status=status_enum)))
+                    return json.dumps(
+                        {
+                            "total_count": total,
+                            "entities_fetched": False,
+                            "action_required": (
+                                f"Found {total} executions. Choose a limit and call "
+                                "again with preflight_count=False."
+                            ),
+                        }
+                    )
+                capped = min(max(limit, 0), _MAX_LIMIT)
+                payload = _list_executions_impl(
+                    ml,
+                    workflow_rid=workflow_rid,
+                    status=status,
+                    after_rid=after_rid,
+                    limit=capped,
                 )
-
-            if preflight_count:
-                total = len(executions)
-                return json.dumps(
-                    {
-                        "total_count": total,
-                        "entities_fetched": False,
-                        "action_required": (
-                            f"Found {total} executions. Choose a limit and call "
-                            "again with preflight_count=False."
-                        ),
-                    }
-                )
-
-            capped = min(max(limit, 0), _MAX_LIMIT)
-            page, truncated, next_after = _paginate(
-                executions,
-                after_rid=after_rid,
-                limit=capped,
-                key=partial(_read_rid, rid_key="execution_rid"),
-            )
-            return json.dumps(
-                {
-                    "executions": [_summarize_execution(e) for e in page],
-                    "count": len(page),
-                    "truncated": truncated,
-                    "next_after_rid": next_after,
-                },
-                default=str,
-            )
+            return json.dumps(payload, default=str)
         except Exception as exc:
             return _error_envelope(
                 exc,

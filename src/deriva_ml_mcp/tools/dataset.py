@@ -70,6 +70,128 @@ def _summarize_dataset(ds: Any) -> dict[str, Any]:
     }
 
 
+def _list_datasets_impl(
+    ml: Any,
+    *,
+    after_rid: str | None,
+    limit: int,
+    include_deleted: bool = False,
+) -> dict[str, Any]:
+    """Fetch + paginate datasets. Pure helper -- shared by tool and resource.
+
+    Args:
+        ml: A connected ``deriva_ml.DerivaML`` instance.
+        after_rid: Cursor for cursor pagination.
+        limit: Max datasets per page (already capped by caller).
+        include_deleted: Forward to ``find_datasets(deleted=...)``.
+
+    Returns:
+        Dict ``{"datasets": [...], "count", "truncated", "next_after_rid"}``.
+
+    Example:
+        >>> from unittest.mock import MagicMock
+        >>> ml = MagicMock()
+        >>> ml.find_datasets.return_value = []
+        >>> _list_datasets_impl(ml, after_rid=None, limit=100)
+        {'datasets': [], 'count': 0, 'truncated': False, 'next_after_rid': None}
+    """
+    datasets = sorted(
+        ml.find_datasets(deleted=include_deleted),
+        key=lambda d: d.dataset_rid,
+    )
+    page, truncated, next_after = _paginate(
+        datasets,
+        after_rid=after_rid,
+        limit=limit,
+        key=partial(_read_rid, rid_key="dataset_rid"),
+    )
+    return {
+        "datasets": [_summarize_dataset(d) for d in page],
+        "count": len(page),
+        "truncated": truncated,
+        "next_after_rid": next_after,
+    }
+
+
+def _get_dataset_detail_impl(ml: Any, dataset_rid: str) -> dict[str, Any]:
+    """Build the dataset detail payload (summary + chaise URL + version history).
+
+    Used by the ``deriva://catalog/{h}/{c}/ml/dataset/{rid}`` resource.
+    The shape mirrors ``get_dataset(include_history=True)`` but always
+    includes ``version_history`` (renamed from the tool's ``history``
+    key per the resource design in coverage.md).
+
+    Args:
+        ml: A connected ``deriva_ml.DerivaML`` instance.
+        dataset_rid: The RID of the dataset to look up.
+
+    Returns:
+        Dict with ``rid``, ``description``, ``dataset_types``,
+        ``current_version``, ``chaise_url``, ``version_history``.
+
+    Example:
+        >>> # Illustrative -- exercises a live ml in real use.
+    """
+    ds = ml.lookup_dataset(dataset_rid)
+    payload = _summarize_dataset(ds)
+    payload["chaise_url"] = ds.get_chaise_url()
+    payload["version_history"] = [
+        {
+            "version": str(h.dataset_version),
+            "snapshot": h.snapshot,
+            "description": h.description,
+            "execution_rid": h.execution_rid,
+        }
+        for h in ds.dataset_history()
+    ]
+    return payload
+
+
+def _list_dataset_members_summary_impl(ml: Any, dataset_rid: str) -> dict[str, Any]:
+    """Build the dataset members summary (table -> count map + total).
+
+    Resource-only convenience: returns the per-table counts plus a
+    flattened ``members`` list of ``{table, rid}`` dicts capped at
+    ``_MAX_LIMIT`` rows for the bundled summary view. The ``truncated``
+    flag is True when the flattened list was capped; callers should
+    use the ``list_dataset_members`` tool with pagination to drill in.
+
+    Args:
+        ml: A connected ``deriva_ml.DerivaML`` instance.
+        dataset_rid: The RID of the dataset to inspect.
+
+    Returns:
+        Dict ``{"dataset_rid", "summary": {<table>: count, ...},
+        "total_count", "members": [{"table", "rid"}, ...],
+        "truncated": bool, "tables": [...]}``.
+    """
+    ds = ml.lookup_dataset(dataset_rid)
+    members_by_table = ds.list_dataset_members()
+    summary = {tname: len(rows) for tname, rows in members_by_table.items()}
+    total = sum(summary.values())
+    flattened: list[dict[str, Any]] = []
+    # When total > _MAX_LIMIT, this loop stops mid-way through whichever
+    # table happens to be iterated last (dict iteration order = insertion
+    # order). Per-table counts in `summary` remain accurate; only the
+    # `members` flattening is truncated. Callers needing the full member
+    # list should use the paginated `list_dataset_members` tool instead.
+    for tname, rows in members_by_table.items():
+        for row in rows:
+            if len(flattened) >= _MAX_LIMIT:
+                break
+            flattened.append({"table": tname, "rid": row.get("RID", "")})
+        if len(flattened) >= _MAX_LIMIT:
+            break
+    return {
+        "dataset_rid": dataset_rid,
+        "summary": summary,
+        "total_count": total,
+        "members": flattened,
+        "truncated": total > len(flattened),
+        "tables": list(members_by_table.keys()),
+    }
+
+
 def register(ctx: PluginContext) -> None:
     """Register all read-only dataset tools with the plugin context.
 
@@ -129,39 +251,27 @@ def register(ctx: PluginContext) -> None:
         try:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
-                datasets = sorted(
-                    ml.find_datasets(deleted=include_deleted),
-                    key=lambda d: d.dataset_rid,
-                )
+                if preflight_count:
+                    total = len(list(ml.find_datasets(deleted=include_deleted)))
+                    return json.dumps(
+                        {
+                            "total_count": total,
+                            "entities_fetched": False,
+                            "action_required": (
+                                f"Found {total} datasets. Choose a limit and call "
+                                "again with preflight_count=False."
+                            ),
+                        }
+                    )
 
-            if preflight_count:
-                total = len(datasets)
-                return json.dumps(
-                    {
-                        "total_count": total,
-                        "entities_fetched": False,
-                        "action_required": (
-                            f"Found {total} datasets. Choose a limit and call "
-                            "again with preflight_count=False."
-                        ),
-                    }
+                capped = min(max(limit, 0), _MAX_LIMIT)
+                payload = _list_datasets_impl(
+                    ml,
+                    after_rid=after_rid,
+                    limit=capped,
+                    include_deleted=include_deleted,
                 )
-
-            capped = min(max(limit, 0), _MAX_LIMIT)
-            page, truncated, next_after = _paginate(
-                datasets,
-                after_rid=after_rid,
-                limit=capped,
-                key=partial(_read_rid, rid_key="dataset_rid"),
-            )
-            return json.dumps(
-                {
-                    "datasets": [_summarize_dataset(d) for d in page],
-                    "count": len(page),
-                    "truncated": truncated,
-                    "next_after_rid": next_after,
-                }
-            )
+            return json.dumps(payload)
         except Exception as exc:
             # Read-only tool: log+return without an audit row (I-2 fix).
             return _error_envelope(

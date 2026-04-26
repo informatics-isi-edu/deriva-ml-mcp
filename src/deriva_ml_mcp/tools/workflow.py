@@ -75,6 +75,51 @@ def _summarize_workflow(wf: Any) -> dict[str, Any]:
     }
 
 
+def _list_workflows_impl(
+    ml: Any,
+    *,
+    after_rid: str | None,
+    limit: int,
+) -> dict[str, Any]:
+    """Fetch + paginate workflows. Pure helper -- shared by tool and resource.
+
+    Args:
+        ml: A connected ``deriva_ml.DerivaML`` instance.
+        after_rid: Cursor for pagination.
+        limit: Max workflows per page (already capped by caller).
+
+    Returns:
+        Dict ``{"workflows": [...], "count", "truncated", "next_after_rid"}``.
+    """
+    workflows = sorted(ml.find_workflows(), key=lambda w: w.rid)
+    page, truncated, next_after = _paginate(
+        workflows,
+        after_rid=after_rid,
+        limit=limit,
+        key=partial(_read_rid, rid_key="rid"),
+    )
+    return {
+        "workflows": [_summarize_workflow(w) for w in page],
+        "count": len(page),
+        "truncated": truncated,
+        "next_after_rid": next_after,
+    }
+
+
+def _get_workflow_impl(ml: Any, workflow_rid: str) -> dict[str, Any]:
+    """Read one workflow's full summary.
+
+    Args:
+        ml: A connected ``deriva_ml.DerivaML`` instance.
+        workflow_rid: The RID of the workflow to look up.
+
+    Returns:
+        Workflow summary dict.
+    """
+    wf = ml.lookup_workflow(workflow_rid)
+    return _summarize_workflow(wf)
+
+
 def register(ctx: PluginContext) -> None:
     """Register all workflow domain tools with the plugin context.
 
@@ -134,36 +179,22 @@ def register(ctx: PluginContext) -> None:
         try:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
-                workflows = sorted(ml.find_workflows(), key=lambda w: w.rid)
+                if preflight_count:
+                    total = len(list(ml.find_workflows()))
+                    return json.dumps(
+                        {
+                            "total_count": total,
+                            "entities_fetched": False,
+                            "action_required": (
+                                f"Found {total} workflows. Choose a limit and call "
+                                "again with preflight_count=False."
+                            ),
+                        }
+                    )
 
-            if preflight_count:
-                total = len(workflows)
-                return json.dumps(
-                    {
-                        "total_count": total,
-                        "entities_fetched": False,
-                        "action_required": (
-                            f"Found {total} workflows. Choose a limit and call "
-                            "again with preflight_count=False."
-                        ),
-                    }
-                )
-
-            capped = min(max(limit, 0), _MAX_LIMIT)
-            page, truncated, next_after = _paginate(
-                workflows,
-                after_rid=after_rid,
-                limit=capped,
-                key=partial(_read_rid, rid_key="rid"),
-            )
-            return json.dumps(
-                {
-                    "workflows": [_summarize_workflow(w) for w in page],
-                    "count": len(page),
-                    "truncated": truncated,
-                    "next_after_rid": next_after,
-                }
-            )
+                capped = min(max(limit, 0), _MAX_LIMIT)
+                payload = _list_workflows_impl(ml, after_rid=after_rid, limit=capped)
+            return json.dumps(payload)
         except Exception as exc:
             # Read-only tool: log+return without an audit row.
             return _error_envelope(
@@ -206,8 +237,7 @@ def register(ctx: PluginContext) -> None:
         try:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
-                wf = ml.lookup_workflow(workflow_rid)
-                summary = _summarize_workflow(wf)
+                summary = _get_workflow_impl(ml, workflow_rid)
             return json.dumps(summary)
         except Exception as exc:
             return _error_envelope(
