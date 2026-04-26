@@ -70,7 +70,10 @@ ignore = ["E402", "E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-addopts = "-vv -r w --tb=short --disable-warnings"
+# Default invocation excludes the integration suite via `-m "not integration"`.
+# Run `uv run pytest -m integration` to opt back in (still gated by a live
+# Deriva server -- see tests/test_integration.py).
+addopts = "-vv -r w --tb=short --disable-warnings -m \"not integration\""
 filterwarnings = ["always"]
 testpaths = ["tests"]
 markers = [
