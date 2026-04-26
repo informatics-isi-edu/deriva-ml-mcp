@@ -110,6 +110,20 @@ _ML_RESOURCE_URIS = frozenset(
     }
 )
 
+# Names of the three MCP prompts registered by ``prompts.py``. The
+# plugin-level test below uses ``>=`` (superset) rather than equality
+# so a future fully-loaded core that registers additional prompts via
+# the same context wouldn't break this assertion -- the contract here
+# is "the ML prompts landed", not "ONLY the ML prompts are present".
+# Per-prompt name exactness is pinned in ``test_prompts.py``.
+_ML_PROMPT_NAMES = frozenset(
+    {
+        "deriva_ml_getting_started",
+        "deriva_ml_execution_lifecycle",
+        "deriva_ml_workflow_dedup",
+    }
+)
+
 
 def test_register_runs_without_error(ctx):
     """``register(ctx)`` must succeed end-to-end."""
@@ -239,6 +253,19 @@ def test_register_wires_three_catalog_connect_hooks(ctx):
     """
     register(ctx)
     assert len(ctx._catalog_connect_hooks) == 3
+
+
+def test_register_wires_three_prompts(ctx, capturing_mcp):
+    """``register(ctx)`` must wire all three ML prompts via ``prompts.register``.
+
+    Uses ``>=`` rather than ``==`` so a future fully-loaded core that
+    happens to register prompts via the same ``ctx`` wouldn't break
+    this check -- the contract is "the ML prompts landed", not "ONLY
+    the ML prompts are present". Per-prompt exact-set assertions live
+    in ``test_prompts.py``.
+    """
+    register(ctx)
+    assert set(capturing_mcp.prompts.keys()) >= _ML_PROMPT_NAMES
 
 
 def test_register_does_not_use_rag_dataset_indexer(ctx):

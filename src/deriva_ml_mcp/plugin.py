@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from deriva_ml_mcp import prompts as _ml_prompts
 from deriva_ml_mcp.resources import ml as _ml_resources
 from deriva_ml_mcp.resources import rag as _ml_rag
 from deriva_ml_mcp.tools import dataset as _dataset
@@ -36,7 +37,10 @@ def register(ctx: PluginContext) -> None:
     Phase 5 ships dataset, feature, workflow, and execution domain tools.
     Phase 6 added MCP resources and per-user RAG indexing (one GitHub
     docs source plus three on_catalog_connect hooks for Dataset,
-    Workflow, and Execution rows).
+    Workflow, and Execution rows). v1.0 polish added 3 MCP prompts
+    (``deriva_ml_getting_started``, ``deriva_ml_execution_lifecycle``,
+    ``deriva_ml_workflow_dedup``) so an LLM connecting cold has an
+    anchor for the 39-tool ML domain.
 
     Args:
         ctx: PluginContext supplied by deriva-mcp-core at startup.
@@ -55,3 +59,4 @@ def register(ctx: PluginContext) -> None:
     _execution.register(ctx)
     _ml_resources.register(ctx)
     _ml_rag.register_rag_sources(ctx)
+    _ml_prompts.register(ctx)
