@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from deriva_ml_mcp.tools import dataset as _dataset
+from deriva_ml_mcp.tools import feature as _feature
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
@@ -28,8 +29,8 @@ if TYPE_CHECKING:
 def register(ctx: PluginContext) -> None:
     """Register all deriva-ml-mcp tools and resources with the given context.
 
-    Phase 2 ships dataset domain tools. Feature, workflow, execution, and
-    resource modules will be added by Phases 3-6.
+    Phase 3 ships dataset and feature domain tools. Workflow, execution, and
+    resource modules will be added by Phases 4-6.
 
     Args:
         ctx: PluginContext supplied by deriva-mcp-core at startup.
@@ -43,3 +44,4 @@ def register(ctx: PluginContext) -> None:
         >>> register(ctx)  # doctest: +SKIP
     """
     _dataset.register(ctx)
+    _feature.register(ctx)

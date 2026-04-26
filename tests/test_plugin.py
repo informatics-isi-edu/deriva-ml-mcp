@@ -6,9 +6,19 @@ from importlib import metadata
 
 from deriva_ml_mcp.plugin import register
 
-# Dataset tools registered by ``tools.dataset.register``. Grouped by
-# semantic role, not implementation history (the "Batch 1/2/3"
-# rollout was internal scaffolding).
+# Per-domain frozensets of registered tools. Each new domain phase
+# (workflow, execution) adds one of these and OR-unions it
+# into ``_ALL_REGISTERED_TOOLS`` below. The exact-equality check in
+# ``test_all_registered_tools_exact`` then catches both:
+#
+#   - tools added without an entry in their per-domain frozenset, AND
+#   - tools registered without an updated ``coverage.md`` row.
+#
+# Update protocol when adding a new domain:
+#   1. Add ``_WORKFLOW_TOOLS = frozenset({...})`` (etc.) here.
+#   2. Add it to the ``_ALL_REGISTERED_TOOLS`` union below.
+#   3. ``test_all_registered_tools_exact`` keeps its shape; no rename.
+
 _DATASET_TOOLS = frozenset(
     {
         # Read-only tools
@@ -34,6 +44,23 @@ _DATASET_TOOLS = frozenset(
     }
 )
 
+_FEATURE_TOOLS = frozenset(
+    {
+        # Read-only tools
+        "list_features",
+        "get_feature",
+        "list_feature_values",
+        # Mutation tools
+        "create_feature",
+        "delete_feature",
+        "add_feature_values",
+    }
+)
+
+# Union of all per-domain tool sets. Phase 3 registers dataset + feature;
+# Phase 4+ adds ``| _WORKFLOW_TOOLS``, ``| _EXECUTION_TOOLS``, etc.
+_ALL_REGISTERED_TOOLS = _DATASET_TOOLS | _FEATURE_TOOLS
+
 
 def test_register_runs_without_error(ctx):
     """``register(ctx)`` must succeed end-to-end."""
@@ -48,21 +75,28 @@ def test_entry_point_resolves_to_register():
     assert matching[0].load() is register
 
 
-def test_dataset_tools_registered(ctx, capturing_mcp):
-    """All 17 Phase 2 dataset tools must be registered by ``register(ctx)``,
-    AND no unexpected tools sneak in. The exact-equality check forces a
-    test/coverage.md update whenever a tool is added to ``dataset.py``;
-    when Phase 3 lands and feature/workflow/execution tools start
-    registering through the same entry point, this becomes
-    ``_DATASET_TOOLS.issubset(...)`` and a parallel check ensures the
-    UNEXPECTED set is empty per-phase rather than overall."""
+def test_all_registered_tools_exact(ctx, capturing_mcp):
+    """The set of registered tools must equal ``_ALL_REGISTERED_TOOLS`` exactly.
+
+    Exact-equality (rather than ``issubset`` + ``not extra``) catches
+    BOTH directions in one assertion:
+
+    - missing: a tool listed in a per-domain frozenset but not yet
+      registered (regression).
+    - unexpected: a tool registered without being added to its
+      per-domain frozenset (forces a ``coverage.md`` and frozenset
+      update on every new tool).
+
+    When Phase 3+ adds a new domain, define ``_FEATURE_TOOLS`` (etc.)
+    and OR-it into ``_ALL_REGISTERED_TOOLS`` above; this test keeps
+    its shape.
+    """
     register(ctx)
-    actual = set(capturing_mcp.tools.keys())
-    missing = _DATASET_TOOLS - actual
-    unexpected = actual - _DATASET_TOOLS
-    assert not missing, f"missing tools: {sorted(missing)}"
-    assert not unexpected, (
-        f"unregistered new tools (update _DATASET_TOOLS and coverage.md): {sorted(unexpected)}"
+    actual = frozenset(capturing_mcp.tools.keys())
+    assert actual == _ALL_REGISTERED_TOOLS, (
+        f"missing: {sorted(_ALL_REGISTERED_TOOLS - actual)}; "
+        f"unexpected (update per-domain frozenset and coverage.md): "
+        f"{sorted(actual - _ALL_REGISTERED_TOOLS)}"
     )
 
 

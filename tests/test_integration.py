@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import json
 import os
-import socket
 from collections.abc import Iterator
 
 import pytest
@@ -44,25 +43,7 @@ from deriva.core import get_credential
 from deriva_mcp_core.context import set_current_credential
 from deriva_mcp_core.plugin.api import PluginContext, _set_plugin_context
 
-from tests.conftest import _CapturingMCP
-
-
-def _server_reachable() -> bool:
-    """Quick TCP probe to ``${DERIVA_HOST:-localhost}:443``.
-
-    Returns:
-        True if a TCP connect succeeded within 2 seconds, False otherwise.
-    """
-    host = os.environ.get("DERIVA_HOST", "localhost")
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2)
-        result = sock.connect_ex((host, 443))
-        sock.close()
-        return result == 0
-    except Exception:
-        return False
-
+from tests.conftest import _CapturingMCP, _server_reachable
 
 pytestmark = [
     pytest.mark.integration,
@@ -76,38 +57,6 @@ pytestmark = [
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def deriva_host() -> str:
-    """Hostname of the Deriva server under test."""
-    return os.environ.get("DERIVA_HOST", "localhost")
-
-
-@pytest.fixture(scope="session")
-def demo_catalog(deriva_host: str) -> Iterator[tuple[str, str]]:
-    """Spin up a demo catalog for the test session and tear it down after.
-
-    Returns a (hostname, catalog_id) tuple. The catalog is destroyed via
-    ``destroy_demo_catalog`` after the session ends. We do this in addition
-    to ``create_demo_catalog``'s built-in atexit hook so cleanup is
-    deterministic per test run rather than at process exit.
-    """
-    from deriva_ml.demo_catalog import create_demo_catalog, destroy_demo_catalog
-
-    catalog = create_demo_catalog(
-        deriva_host,
-        domain_schema="demo-schema",
-        project_name="ml-mcp-int-test",
-        populate=False,
-        create_features=False,
-        create_datasets=False,
-        on_exit_delete=False,
-    )
-    try:
-        yield deriva_host, str(catalog.catalog_id)
-    finally:
-        destroy_demo_catalog(catalog)
 
 
 @pytest.fixture()
