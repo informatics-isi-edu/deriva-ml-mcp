@@ -644,7 +644,9 @@ def register(ctx: PluginContext) -> None:
                 else:
                     state_name = current.value if isinstance(current, ExecutionStatus) else current
                     raise ValueError(
-                        f"cannot add feature values to execution in state {state_name}"
+                        f"cannot add feature values to execution in state {state_name}; "
+                        "only Created (auto-wraps) or Running (assumes start_execution called) "
+                        "are valid"
                     )
             audit_event(
                 "deriva_ml_add_feature_values",

@@ -645,7 +645,14 @@ def register(ctx: PluginContext) -> None:
                     )
                 if current in _START_REJECT_STATES:
                     state_name = current.value if isinstance(current, ExecutionStatus) else current
-                    return json.dumps({"error": f"cannot start execution in state {state_name}"})
+                    return json.dumps(
+                        {
+                            "error": (
+                                f"cannot start execution in state {state_name}; "
+                                "only Created (will start) or Running (no-op) are valid"
+                            )
+                        }
+                    )
 
                 execution.execution_start()
 
@@ -715,7 +722,14 @@ def register(ctx: PluginContext) -> None:
 
                 if current not in _COMMIT_ALLOWED_STATES:
                     state_name = current.value if isinstance(current, ExecutionStatus) else current
-                    return json.dumps({"error": f"cannot commit execution in state {state_name}"})
+                    return json.dumps(
+                        {
+                            "error": (
+                                f"cannot commit execution in state {state_name}; "
+                                "only Created, Running, Stopped, or Pending_Upload are valid"
+                            )
+                        }
+                    )
 
                 # Stop is only legal Created/Running -> Stopped. If we're
                 # already past that point (Stopped/Pending_Upload), just
