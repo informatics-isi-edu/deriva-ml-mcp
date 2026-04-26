@@ -57,7 +57,9 @@ async def test_list_datasets_success(dataset_ctx, capturing_mcp, mock_ml):
         _make_dataset_mock("1-AAAA", "first", ["Training"], "1.0.0"),
         _make_dataset_mock("1-BBBB", "second", ["Testing"], "1.1.0"),
     ]
-    out = json.loads(await capturing_mcp.tools["list_datasets"](hostname="h", catalog_id="1"))
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_list_datasets"](hostname="h", catalog_id="1")
+    )
 
     assert out["count"] == 2
     assert out["truncated"] is False
@@ -69,7 +71,7 @@ async def test_list_datasets_success(dataset_ctx, capturing_mcp, mock_ml):
 async def test_list_datasets_preflight_returns_count_only(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.find_datasets.return_value = [_make_dataset_mock(f"1-{i:04d}") for i in range(5)]
     out = json.loads(
-        await capturing_mcp.tools["list_datasets"](
+        await capturing_mcp.tools["deriva_ml_list_datasets"](
             hostname="h", catalog_id="1", preflight_count=True
         )
     )
@@ -85,7 +87,9 @@ async def test_list_datasets_pagination_caps_limit_and_advances_cursor(
     mock_ml.find_datasets.return_value = [_make_dataset_mock(f"1-{i:04d}") for i in range(2500)]
 
     out = json.loads(
-        await capturing_mcp.tools["list_datasets"](hostname="h", catalog_id="1", limit=2000)
+        await capturing_mcp.tools["deriva_ml_list_datasets"](
+            hostname="h", catalog_id="1", limit=2000
+        )
     )
     assert out["count"] == 1000  # capped
     assert out["truncated"] is True
@@ -93,7 +97,7 @@ async def test_list_datasets_pagination_caps_limit_and_advances_cursor(
 
     # Advance cursor.
     out2 = json.loads(
-        await capturing_mcp.tools["list_datasets"](
+        await capturing_mcp.tools["deriva_ml_list_datasets"](
             hostname="h", catalog_id="1", after_rid="1-0999", limit=5
         )
     )
@@ -109,7 +113,9 @@ async def test_list_datasets_pagination_caps_limit_and_advances_cursor(
 
 async def test_list_datasets_error_path(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.find_datasets.side_effect = RuntimeError("boom")
-    out = json.loads(await capturing_mcp.tools["list_datasets"](hostname="h", catalog_id="1"))
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_list_datasets"](hostname="h", catalog_id="1")
+    )
     assert out == {"error": "boom"}
 
 
@@ -123,7 +129,9 @@ async def test_get_dataset_success(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["get_dataset"](hostname="h", catalog_id="1", dataset_rid="1-AAAA")
+        await capturing_mcp.tools["deriva_ml_get_dataset"](
+            hostname="h", catalog_id="1", dataset_rid="1-AAAA"
+        )
     )
     assert out["rid"] == "1-AAAA"
     assert out["description"] == "desc"
@@ -145,7 +153,7 @@ async def test_get_dataset_with_history(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["get_dataset"](
+        await capturing_mcp.tools["deriva_ml_get_dataset"](
             hostname="h",
             catalog_id="1",
             dataset_rid="1-AAAA",
@@ -165,7 +173,7 @@ async def test_get_dataset_with_history(dataset_ctx, capturing_mcp, mock_ml):
 async def test_get_dataset_not_found(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.side_effect = RuntimeError("Dataset not found")
     out = json.loads(
-        await capturing_mcp.tools["get_dataset"](
+        await capturing_mcp.tools["deriva_ml_get_dataset"](
             hostname="h", catalog_id="1", dataset_rid="missing"
         )
     )
@@ -186,7 +194,7 @@ async def test_list_dataset_members_summary_mode(dataset_ctx, capturing_mcp, moc
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["list_dataset_members"](
+        await capturing_mcp.tools["deriva_ml_list_dataset_members"](
             hostname="h", catalog_id="1", dataset_rid="1-AAAA"
         )
     )
@@ -203,7 +211,7 @@ async def test_list_dataset_members_page_mode(dataset_ctx, capturing_mcp, mock_m
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["list_dataset_members"](
+        await capturing_mcp.tools["deriva_ml_list_dataset_members"](
             hostname="h",
             catalog_id="1",
             dataset_rid="1-AAAA",
@@ -226,7 +234,7 @@ async def test_list_dataset_members_preflight(dataset_ctx, capturing_mcp, mock_m
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["list_dataset_members"](
+        await capturing_mcp.tools["deriva_ml_list_dataset_members"](
             hostname="h",
             catalog_id="1",
             dataset_rid="1-AAAA",
@@ -245,7 +253,7 @@ async def test_list_dataset_members_unknown_element_table(dataset_ctx, capturing
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["list_dataset_members"](
+        await capturing_mcp.tools["deriva_ml_list_dataset_members"](
             hostname="h",
             catalog_id="1",
             dataset_rid="1-AAAA",
@@ -259,7 +267,7 @@ async def test_list_dataset_members_unknown_element_table(dataset_ctx, capturing
 async def test_list_dataset_members_error_path(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.side_effect = RuntimeError("nope")
     out = json.loads(
-        await capturing_mcp.tools["list_dataset_members"](
+        await capturing_mcp.tools["deriva_ml_list_dataset_members"](
             hostname="h", catalog_id="1", dataset_rid="1-AAAA"
         )
     )
@@ -283,7 +291,7 @@ async def test_list_dataset_relations_both(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["list_dataset_relations"](
+        await capturing_mcp.tools["deriva_ml_list_dataset_relations"](
             hostname="h", catalog_id="1", dataset_rid="1-AAAA"
         )
     )
@@ -297,7 +305,7 @@ async def test_list_dataset_relations_parents_only(dataset_ctx, capturing_mcp, m
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["list_dataset_relations"](
+        await capturing_mcp.tools["deriva_ml_list_dataset_relations"](
             hostname="h",
             catalog_id="1",
             dataset_rid="1-AAAA",
@@ -312,7 +320,7 @@ async def test_list_dataset_relations_parents_only(dataset_ctx, capturing_mcp, m
 async def test_list_dataset_relations_error(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.side_effect = RuntimeError("relations boom")
     out = json.loads(
-        await capturing_mcp.tools["list_dataset_relations"](
+        await capturing_mcp.tools["deriva_ml_list_dataset_relations"](
             hostname="h", catalog_id="1", dataset_rid="x"
         )
     )
@@ -338,7 +346,7 @@ async def test_list_dataset_relations_after_rid_with_both_emits_warning(
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["list_dataset_relations"](
+        await capturing_mcp.tools["deriva_ml_list_dataset_relations"](
             hostname="h",
             catalog_id="1",
             dataset_rid="1-AAAA",
@@ -367,7 +375,7 @@ async def test_list_dataset_relations_after_rid_respected_in_single_direction(
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["list_dataset_relations"](
+        await capturing_mcp.tools["deriva_ml_list_dataset_relations"](
             hostname="h",
             catalog_id="1",
             dataset_rid="1-AAAA",
@@ -389,7 +397,7 @@ async def test_list_datasets_truncated_on_exact_limit_match(dataset_ctx, capturi
     mock_ml.find_datasets.return_value = [_make_dataset_mock(f"1-{i:04d}") for i in range(5)]
 
     out = json.loads(
-        await capturing_mcp.tools["list_datasets"](hostname="h", catalog_id="1", limit=5)
+        await capturing_mcp.tools["deriva_ml_list_datasets"](hostname="h", catalog_id="1", limit=5)
     )
 
     assert out["count"] == 5
@@ -412,7 +420,9 @@ async def test_list_dataset_element_types_success(dataset_ctx, capturing_mcp, mo
     mock_ml.list_dataset_element_types.return_value = [table_a, table_b]
 
     out = json.loads(
-        await capturing_mcp.tools["list_dataset_element_types"](hostname="h", catalog_id="1")
+        await capturing_mcp.tools["deriva_ml_list_dataset_element_types"](
+            hostname="h", catalog_id="1"
+        )
     )
     assert out["count"] == 2
     assert out["element_types"] == [
@@ -424,7 +434,9 @@ async def test_list_dataset_element_types_success(dataset_ctx, capturing_mcp, mo
 async def test_list_dataset_element_types_error(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.list_dataset_element_types.side_effect = RuntimeError("bad")
     out = json.loads(
-        await capturing_mcp.tools["list_dataset_element_types"](hostname="h", catalog_id="1")
+        await capturing_mcp.tools["deriva_ml_list_dataset_element_types"](
+            hostname="h", catalog_id="1"
+        )
     )
     assert out == {"error": "bad"}
 
@@ -445,7 +457,7 @@ async def test_bag_info_success(dataset_ctx, capturing_mcp, mock_ml):
     }
 
     out = json.loads(
-        await capturing_mcp.tools["bag_info"](
+        await capturing_mcp.tools["deriva_ml_bag_info"](
             hostname="h",
             catalog_id="1",
             dataset_rid="1-AAAA",
@@ -464,7 +476,7 @@ async def test_bag_info_success(dataset_ctx, capturing_mcp, mock_ml):
 async def test_bag_info_with_exclude_tables(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.bag_info.return_value = {"tables": {}, "total_rows": 0}
 
-    await capturing_mcp.tools["bag_info"](
+    await capturing_mcp.tools["deriva_ml_bag_info"](
         hostname="h",
         catalog_id="1",
         dataset_rid="1-AAAA",
@@ -479,7 +491,7 @@ async def test_bag_info_with_exclude_tables(dataset_ctx, capturing_mcp, mock_ml)
 async def test_bag_info_error(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.bag_info.side_effect = RuntimeError("cant compute")
     out = json.loads(
-        await capturing_mcp.tools["bag_info"](
+        await capturing_mcp.tools["deriva_ml_bag_info"](
             hostname="h",
             catalog_id="1",
             dataset_rid="1-AAAA",
@@ -499,7 +511,7 @@ async def test_get_dataset_spec_with_explicit_version(dataset_ctx, capturing_mcp
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["get_dataset_spec"](
+        await capturing_mcp.tools["deriva_ml_get_dataset_spec"](
             hostname="h",
             catalog_id="1",
             dataset_rid="1-AAAA",
@@ -519,7 +531,7 @@ async def test_get_dataset_spec_falls_back_to_current_version(dataset_ctx, captu
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["get_dataset_spec"](
+        await capturing_mcp.tools["deriva_ml_get_dataset_spec"](
             hostname="h", catalog_id="1", dataset_rid="1-AAAA"
         )
     )
@@ -532,7 +544,7 @@ async def test_get_dataset_spec_falls_back_to_current_version(dataset_ctx, captu
 async def test_get_dataset_spec_error(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.side_effect = RuntimeError("missing")
     out = json.loads(
-        await capturing_mcp.tools["get_dataset_spec"](
+        await capturing_mcp.tools["deriva_ml_get_dataset_spec"](
             hostname="h", catalog_id="1", dataset_rid="1-AAAA"
         )
     )
@@ -558,7 +570,7 @@ async def test_create_dataset_success(dataset_ctx, capturing_mcp, mock_ml):
     ):
         mock_dataset_cls.create_dataset.return_value = new_ds
         out = json.loads(
-            await capturing_mcp.tools["create_dataset"](
+            await capturing_mcp.tools["deriva_ml_create_dataset"](
                 hostname="h",
                 catalog_id="1",
                 execution_rid="EXEC-1",
@@ -588,7 +600,7 @@ async def test_create_dataset_parses_explicit_version(dataset_ctx, capturing_mcp
         patch("deriva_ml_mcp.tools.dataset.audit_event"),
     ):
         mock_dataset_cls.create_dataset.return_value = new_ds
-        await capturing_mcp.tools["create_dataset"](
+        await capturing_mcp.tools["deriva_ml_create_dataset"](
             hostname="h",
             catalog_id="1",
             execution_rid="EXEC-1",
@@ -608,7 +620,7 @@ async def test_create_dataset_failure_emits_failed_audit(dataset_ctx, capturing_
     ):
         mock_dataset_cls.create_dataset.side_effect = RuntimeError("invalid term")
         out = json.loads(
-            await capturing_mcp.tools["create_dataset"](
+            await capturing_mcp.tools["deriva_ml_create_dataset"](
                 hostname="h",
                 catalog_id="1",
                 execution_rid="EXEC-1",
@@ -636,7 +648,7 @@ async def test_delete_dataset_success(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.return_value = ds
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["delete_dataset"](
+            await capturing_mcp.tools["deriva_ml_delete_dataset"](
                 hostname="h", catalog_id="1", dataset_rid="1-AAAA"
             )
         )
@@ -655,7 +667,7 @@ async def test_delete_dataset_recursive(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.return_value = ds
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["delete_dataset"](
+            await capturing_mcp.tools["deriva_ml_delete_dataset"](
                 hostname="h", catalog_id="1", dataset_rid="1-AAAA", recurse=True
             )
         )
@@ -669,7 +681,7 @@ async def test_delete_dataset_error_path(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.side_effect = RuntimeError("not found")
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["delete_dataset"](
+            await capturing_mcp.tools["deriva_ml_delete_dataset"](
                 hostname="h", catalog_id="1", dataset_rid="missing"
             )
         )
@@ -690,7 +702,7 @@ async def test_add_dataset_members_with_list(dataset_ctx, capturing_mcp, mock_ml
     mock_ml.lookup_dataset.return_value = ds
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["add_dataset_members"](
+            await capturing_mcp.tools["deriva_ml_add_dataset_members"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
@@ -717,7 +729,7 @@ async def test_add_dataset_members_with_dict(dataset_ctx, capturing_mcp, mock_ml
     mock_ml.lookup_dataset.return_value = ds
     with patch("deriva_ml_mcp.tools.dataset.audit_event"):
         out = json.loads(
-            await capturing_mcp.tools["add_dataset_members"](
+            await capturing_mcp.tools["deriva_ml_add_dataset_members"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
@@ -733,7 +745,7 @@ async def test_add_dataset_members_validates_inputs(dataset_ctx, capturing_mcp, 
     """Both args missing -> early ValueError-style {error: ...}, no audit call."""
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["add_dataset_members"](
+            await capturing_mcp.tools["deriva_ml_add_dataset_members"](
                 hostname="h", catalog_id="1", dataset_rid="1-AAAA"
             )
         )
@@ -746,7 +758,7 @@ async def test_add_dataset_members_validates_inputs(dataset_ctx, capturing_mcp, 
 async def test_add_dataset_members_both_args_rejected(dataset_ctx, capturing_mcp, mock_ml):
     """Supplying both member_rids and members_by_table is rejected."""
     out = json.loads(
-        await capturing_mcp.tools["add_dataset_members"](
+        await capturing_mcp.tools["deriva_ml_add_dataset_members"](
             hostname="h",
             catalog_id="1",
             dataset_rid="1-AAAA",
@@ -763,7 +775,7 @@ async def test_add_dataset_members_error_path(dataset_ctx, capturing_mcp, mock_m
     mock_ml.lookup_dataset.return_value = ds
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["add_dataset_members"](
+            await capturing_mcp.tools["deriva_ml_add_dataset_members"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
@@ -786,7 +798,7 @@ async def test_delete_dataset_members_success(dataset_ctx, capturing_mcp, mock_m
     mock_ml.lookup_dataset.return_value = ds
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["delete_dataset_members"](
+            await capturing_mcp.tools["deriva_ml_delete_dataset_members"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
@@ -812,7 +824,7 @@ async def test_delete_dataset_members_error(dataset_ctx, capturing_mcp, mock_ml)
     mock_ml.lookup_dataset.return_value = ds
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["delete_dataset_members"](
+            await capturing_mcp.tools["deriva_ml_delete_dataset_members"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
@@ -837,7 +849,7 @@ async def test_update_dataset_types_add_and_remove(dataset_ctx, capturing_mcp, m
     mock_ml.lookup_dataset.return_value = ds
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["update_dataset_types"](
+            await capturing_mcp.tools["deriva_ml_update_dataset_types"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
@@ -863,7 +875,7 @@ async def test_update_dataset_types_remove_only_loops_per_term(dataset_ctx, capt
     ds = _make_dataset_mock("1-AAAA", dataset_types=["Keep"])
     mock_ml.lookup_dataset.return_value = ds
     with patch("deriva_ml_mcp.tools.dataset.audit_event"):
-        await capturing_mcp.tools["update_dataset_types"](
+        await capturing_mcp.tools["deriva_ml_update_dataset_types"](
             hostname="h",
             catalog_id="1",
             dataset_rid="1-AAAA",
@@ -881,7 +893,7 @@ async def test_update_dataset_types_noop(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.return_value = ds
     with patch("deriva_ml_mcp.tools.dataset.audit_event"):
         out = json.loads(
-            await capturing_mcp.tools["update_dataset_types"](
+            await capturing_mcp.tools["deriva_ml_update_dataset_types"](
                 hostname="h", catalog_id="1", dataset_rid="1-AAAA"
             )
         )
@@ -898,7 +910,7 @@ async def test_update_dataset_types_error(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.return_value = ds
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["update_dataset_types"](
+            await capturing_mcp.tools["deriva_ml_update_dataset_types"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
@@ -938,7 +950,7 @@ async def test_update_dataset_types_partial_remove_failure_surfaces_progress(
 
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["update_dataset_types"](
+            await capturing_mcp.tools["deriva_ml_update_dataset_types"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
@@ -972,7 +984,7 @@ async def test_add_dataset_element_type_success(dataset_ctx, capturing_mcp, mock
     mock_ml.add_dataset_element_type.return_value = assoc
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["add_dataset_element_type"](
+            await capturing_mcp.tools["deriva_ml_add_dataset_element_type"](
                 hostname="h", catalog_id="1", table_name="Image"
             )
         )
@@ -992,7 +1004,7 @@ async def test_add_dataset_element_type_error(dataset_ctx, capturing_mcp, mock_m
     mock_ml.add_dataset_element_type.side_effect = RuntimeError("not a domain table")
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["add_dataset_element_type"](
+            await capturing_mcp.tools["deriva_ml_add_dataset_element_type"](
                 hostname="h", catalog_id="1", table_name="Execution"
             )
         )
@@ -1016,7 +1028,7 @@ async def test_increment_dataset_version_success(dataset_ctx, capturing_mcp, moc
     mock_ml.lookup_dataset.return_value = ds
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["increment_dataset_version"](
+            await capturing_mcp.tools["deriva_ml_increment_dataset_version"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
@@ -1055,7 +1067,7 @@ async def test_increment_dataset_version_major(dataset_ctx, capturing_mcp, mock_
     mock_ml.lookup_dataset.return_value = ds
     with patch("deriva_ml_mcp.tools.dataset.audit_event"):
         out = json.loads(
-            await capturing_mcp.tools["increment_dataset_version"](
+            await capturing_mcp.tools["deriva_ml_increment_dataset_version"](
                 hostname="h", catalog_id="1", dataset_rid="1-AAAA", component="major"
             )
         )
@@ -1071,7 +1083,7 @@ async def test_increment_dataset_version_error(dataset_ctx, capturing_mcp, mock_
     mock_ml.lookup_dataset.return_value = ds
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["increment_dataset_version"](
+            await capturing_mcp.tools["deriva_ml_increment_dataset_version"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
@@ -1111,7 +1123,7 @@ async def test_cache_dataset_explicit_version(dataset_ctx, capturing_mcp, mock_m
     mock_ml.cache_dataset.return_value = _bag_info_payload()
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["cache_dataset"](
+            await capturing_mcp.tools["deriva_ml_cache_dataset"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
@@ -1149,7 +1161,7 @@ async def test_cache_dataset_falls_back_to_current_version(dataset_ctx, capturin
     mock_ml.cache_dataset.return_value = _bag_info_payload()
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["cache_dataset"](
+            await capturing_mcp.tools["deriva_ml_cache_dataset"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
@@ -1173,7 +1185,7 @@ async def test_cache_dataset_exclude_tables_converted_to_set(dataset_ctx, captur
     (M-8 fix from Batch 3 review)."""
     mock_ml.cache_dataset.return_value = _bag_info_payload()
     with _patch_audit() as mock_audit:
-        await capturing_mcp.tools["cache_dataset"](
+        await capturing_mcp.tools["deriva_ml_cache_dataset"](
             hostname="h",
             catalog_id="1",
             dataset_rid="1-AAAA",
@@ -1192,7 +1204,7 @@ async def test_cache_dataset_error_path(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.cache_dataset.side_effect = RuntimeError("download failed")
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["cache_dataset"](
+            await capturing_mcp.tools["deriva_ml_cache_dataset"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
@@ -1236,7 +1248,7 @@ def _describe_payload(total_rows: int = 5) -> dict:
 async def test_denormalize_dataset_validates_include_tables(dataset_ctx, capturing_mcp, mock_ml):
     """Empty include_tables short-circuits to a validation error (no audit)."""
     out = json.loads(
-        await capturing_mcp.tools["denormalize_dataset"](
+        await capturing_mcp.tools["deriva_ml_denormalize_dataset"](
             hostname="h",
             catalog_id="1",
             include_tables=[],
@@ -1258,7 +1270,7 @@ async def test_denormalize_dataset_catalog_shape(dataset_ctx, capturing_mcp, moc
         "total_asset_size": "1 KB",
     }
     out = json.loads(
-        await capturing_mcp.tools["denormalize_dataset"](
+        await capturing_mcp.tools["deriva_ml_denormalize_dataset"](
             hostname="h",
             catalog_id="1",
             include_tables=["Image"],
@@ -1277,7 +1289,7 @@ async def test_denormalize_dataset_dataset_shape_only(dataset_ctx, capturing_mcp
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["denormalize_dataset"](
+        await capturing_mcp.tools["deriva_ml_denormalize_dataset"](
             hostname="h",
             catalog_id="1",
             include_tables=["Image", "Subject"],
@@ -1305,7 +1317,7 @@ async def test_denormalize_dataset_with_rows(dataset_ctx, capturing_mcp, mock_ml
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["denormalize_dataset"](
+        await capturing_mcp.tools["deriva_ml_denormalize_dataset"](
             hostname="h",
             catalog_id="1",
             include_tables=["Image", "Subject"],
@@ -1332,7 +1344,7 @@ async def test_denormalize_dataset_after_rid_advances_cursor(dataset_ctx, captur
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["denormalize_dataset"](
+        await capturing_mcp.tools["deriva_ml_denormalize_dataset"](
             hostname="h",
             catalog_id="1",
             include_tables=["Image"],
@@ -1354,7 +1366,7 @@ async def test_denormalize_dataset_preflight_returns_estimated_count(
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["denormalize_dataset"](
+        await capturing_mcp.tools["deriva_ml_denormalize_dataset"](
             hostname="h",
             catalog_id="1",
             include_tables=["Image"],
@@ -1371,7 +1383,7 @@ async def test_denormalize_dataset_preflight_returns_estimated_count(
 async def test_denormalize_dataset_error_path(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.estimate_denormalized_size.side_effect = RuntimeError("schema error")
     out = json.loads(
-        await capturing_mcp.tools["denormalize_dataset"](
+        await capturing_mcp.tools["deriva_ml_denormalize_dataset"](
             hostname="h",
             catalog_id="1",
             include_tables=["Image"],
@@ -1393,7 +1405,7 @@ async def test_denormalize_dataset_refuses_oversize_fetch_without_preflight(
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["denormalize_dataset"](
+        await capturing_mcp.tools["deriva_ml_denormalize_dataset"](
             hostname="h",
             catalog_id="1",
             include_tables=["Image"],
@@ -1436,7 +1448,7 @@ async def test_denormalize_dataset_islice_bounds_generator_consumption(
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["denormalize_dataset"](
+        await capturing_mcp.tools["deriva_ml_denormalize_dataset"](
             hostname="h",
             catalog_id="1",
             include_tables=["Image"],
@@ -1483,7 +1495,7 @@ async def test_split_dataset_basic_success(dataset_ctx, capturing_mcp, mock_ml):
         _patch_audit() as mock_audit,
     ):
         out = json.loads(
-            await capturing_mcp.tools["split_dataset"](
+            await capturing_mcp.tools["deriva_ml_split_dataset"](
                 hostname="h",
                 catalog_id="1",
                 source_dataset_rid="1-AAAA",
@@ -1537,7 +1549,7 @@ async def test_split_dataset_dry_run(dataset_ctx, capturing_mcp, mock_ml):
         _patch_audit() as mock_audit,
     ):
         out = json.loads(
-            await capturing_mcp.tools["split_dataset"](
+            await capturing_mcp.tools["deriva_ml_split_dataset"](
                 hostname="h",
                 catalog_id="1",
                 source_dataset_rid="1-AAAA",
@@ -1564,7 +1576,7 @@ async def test_split_dataset_stratified_three_way(dataset_ctx, capturing_mcp, mo
         _patch_audit() as mock_audit,
     ):
         out = json.loads(
-            await capturing_mcp.tools["split_dataset"](
+            await capturing_mcp.tools["deriva_ml_split_dataset"](
                 hostname="h",
                 catalog_id="1",
                 source_dataset_rid="1-AAAA",
@@ -1603,7 +1615,7 @@ async def test_split_dataset_error_path(dataset_ctx, capturing_mcp, mock_ml):
         _patch_audit() as mock_audit,
     ):
         out = json.loads(
-            await capturing_mcp.tools["split_dataset"](
+            await capturing_mcp.tools["deriva_ml_split_dataset"](
                 hostname="h",
                 catalog_id="1",
                 source_dataset_rid="1-AAAA",

@@ -22,68 +22,68 @@ from deriva_ml_mcp.plugin import register
 _DATASET_TOOLS = frozenset(
     {
         # Read-only tools
-        "list_datasets",
-        "get_dataset",
-        "list_dataset_members",
-        "list_dataset_relations",
-        "list_dataset_element_types",
-        "bag_info",
-        "get_dataset_spec",
+        "deriva_ml_list_datasets",
+        "deriva_ml_get_dataset",
+        "deriva_ml_list_dataset_members",
+        "deriva_ml_list_dataset_relations",
+        "deriva_ml_list_dataset_element_types",
+        "deriva_ml_bag_info",
+        "deriva_ml_get_dataset_spec",
         # Mutation tools
-        "create_dataset",
-        "delete_dataset",
-        "add_dataset_members",
-        "delete_dataset_members",
-        "update_dataset_types",
-        "add_dataset_element_type",
-        "increment_dataset_version",
+        "deriva_ml_create_dataset",
+        "deriva_ml_delete_dataset",
+        "deriva_ml_add_dataset_members",
+        "deriva_ml_delete_dataset_members",
+        "deriva_ml_update_dataset_types",
+        "deriva_ml_add_dataset_element_type",
+        "deriva_ml_increment_dataset_version",
         # Complex / local-FS tools
-        "cache_dataset",
-        "denormalize_dataset",
-        "split_dataset",
+        "deriva_ml_cache_dataset",
+        "deriva_ml_denormalize_dataset",
+        "deriva_ml_split_dataset",
     }
 )
 
 _FEATURE_TOOLS = frozenset(
     {
         # Read-only tools
-        "list_features",
-        "get_feature",
-        "list_feature_values",
+        "deriva_ml_list_features",
+        "deriva_ml_get_feature",
+        "deriva_ml_list_feature_values",
         # Mutation tools
-        "create_feature",
-        "delete_feature",
-        "add_feature_values",
+        "deriva_ml_create_feature",
+        "deriva_ml_delete_feature",
+        "deriva_ml_add_feature_values",
     }
 )
 
 _WORKFLOW_TOOLS = frozenset(
     {
         # Read-only tools
-        "list_workflows",
-        "get_workflow",
-        "find_workflow_by_url",
+        "deriva_ml_list_workflows",
+        "deriva_ml_get_workflow",
+        "deriva_ml_find_workflow_by_url",
         # Mutation tools
-        "create_workflow",
-        "update_workflow",
+        "deriva_ml_create_workflow",
+        "deriva_ml_update_workflow",
     }
 )
 
 _EXECUTION_TOOLS = frozenset(
     {
         # Read-only tools
-        "list_executions",
-        "get_execution",
-        "find_workflow_executions",
-        "list_execution_children",
-        "list_execution_parents",
+        "deriva_ml_list_executions",
+        "deriva_ml_get_execution",
+        "deriva_ml_find_workflow_executions",
+        "deriva_ml_list_execution_children",
+        "deriva_ml_list_execution_parents",
         # Mutation tools
-        "create_execution",
-        "start_execution",
-        "commit_execution",
-        "abort_execution",
-        "create_execution_dataset",
-        "add_nested_execution",
+        "deriva_ml_create_execution",
+        "deriva_ml_start_execution",
+        "deriva_ml_commit_execution",
+        "deriva_ml_abort_execution",
+        "deriva_ml_create_execution_dataset",
+        "deriva_ml_add_nested_execution",
     }
 )
 

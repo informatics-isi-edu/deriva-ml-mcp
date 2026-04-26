@@ -117,7 +117,7 @@ def _get_dataset_detail_impl(ml: Any, dataset_rid: str) -> dict[str, Any]:
     """Build the dataset detail payload (summary + chaise URL + version history).
 
     Used by the ``deriva://catalog/{h}/{c}/ml/dataset/{rid}`` resource.
-    The shape mirrors ``get_dataset(include_history=True)`` but always
+    The shape mirrors ``deriva_ml_get_dataset(include_history=True)`` but always
     includes ``version_history`` (renamed from the tool's ``history``
     key per the resource design in coverage.md).
 
@@ -154,7 +154,7 @@ def _list_dataset_members_summary_impl(ml: Any, dataset_rid: str) -> dict[str, A
     flattened ``members`` list of ``{table, rid}`` dicts capped at
     ``_MAX_LIMIT`` rows for the bundled summary view. The ``truncated``
     flag is True when the flattened list was capped; callers should
-    use the ``list_dataset_members`` tool with pagination to drill in.
+    use the ``deriva_ml_list_dataset_members`` tool with pagination to drill in.
 
     Args:
         ml: A connected ``deriva_ml.DerivaML`` instance.
@@ -208,7 +208,7 @@ def register(ctx: PluginContext) -> None:
     """
 
     @ctx.tool(mutates=False)
-    async def list_datasets(
+    async def deriva_ml_list_datasets(
         hostname: str,
         catalog_id: str,
         include_deleted: bool = False,
@@ -283,7 +283,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def get_dataset(
+    async def deriva_ml_get_dataset(
         hostname: str,
         catalog_id: str,
         dataset_rid: str,
@@ -340,7 +340,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def list_dataset_members(
+    async def deriva_ml_list_dataset_members(
         hostname: str,
         catalog_id: str,
         dataset_rid: str,
@@ -465,7 +465,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def list_dataset_relations(
+    async def deriva_ml_list_dataset_relations(
         hostname: str,
         catalog_id: str,
         dataset_rid: str,
@@ -576,7 +576,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def list_dataset_element_types(
+    async def deriva_ml_list_dataset_element_types(
         hostname: str,
         catalog_id: str,
     ) -> str:
@@ -621,7 +621,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def bag_info(
+    async def deriva_ml_bag_info(
         hostname: str,
         catalog_id: str,
         dataset_rid: str,
@@ -635,7 +635,7 @@ def register(ctx: PluginContext) -> None:
             catalog_id: The catalog ID as a string.
             dataset_rid: The RID of the dataset to inspect.
             version: The exact version (e.g. ``"1.0.0"``). Required — use
-                ``get_dataset`` to find the ``current_version`` if needed.
+                ``deriva_ml_get_dataset`` to find the ``current_version`` if needed.
             exclude_tables: Tables to omit from the bag (e.g. large blob
                 tables).
 
@@ -677,7 +677,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def get_dataset_spec(
+    async def deriva_ml_get_dataset_spec(
         hostname: str,
         catalog_id: str,
         dataset_rid: str,
@@ -754,7 +754,7 @@ def register(ctx: PluginContext) -> None:
     # ------------------------------------------------------------------
 
     @ctx.tool(mutates=True)
-    async def create_dataset(
+    async def deriva_ml_create_dataset(
         hostname: str,
         catalog_id: str,
         execution_rid: str,
@@ -822,7 +822,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def delete_dataset(
+    async def deriva_ml_delete_dataset(
         hostname: str,
         catalog_id: str,
         dataset_rid: str,
@@ -882,7 +882,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def add_dataset_members(
+    async def deriva_ml_add_dataset_members(
         hostname: str,
         catalog_id: str,
         dataset_rid: str,
@@ -900,7 +900,7 @@ def register(ctx: PluginContext) -> None:
 
         Adding members automatically increments the dataset's minor
         version. Member tables must already be registered as dataset
-        element types (see ``add_dataset_element_type``).
+        element types (see ``deriva_ml_add_dataset_element_type``).
 
         Args:
             hostname: The Deriva server hostname.
@@ -983,7 +983,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def delete_dataset_members(
+    async def deriva_ml_delete_dataset_members(
         hostname: str,
         catalog_id: str,
         dataset_rid: str,
@@ -1057,7 +1057,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def update_dataset_types(
+    async def deriva_ml_update_dataset_types(
         hostname: str,
         catalog_id: str,
         dataset_rid: str,
@@ -1153,7 +1153,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def add_dataset_element_type(
+    async def deriva_ml_add_dataset_element_type(
         hostname: str,
         catalog_id: str,
         table_name: str,
@@ -1210,7 +1210,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def increment_dataset_version(
+    async def deriva_ml_increment_dataset_version(
         hostname: str,
         catalog_id: str,
         dataset_rid: str,
@@ -1294,7 +1294,7 @@ def register(ctx: PluginContext) -> None:
     # in the catalog (mutates=True).
 
     @ctx.tool(mutates=True)
-    async def cache_dataset(
+    async def deriva_ml_cache_dataset(
         hostname: str,
         catalog_id: str,
         dataset_rid: str,
@@ -1381,7 +1381,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def denormalize_dataset(
+    async def deriva_ml_denormalize_dataset(
         hostname: str,
         catalog_id: str,
         include_tables: list[str],
@@ -1604,7 +1604,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def split_dataset(
+    async def deriva_ml_split_dataset(
         hostname: str,
         catalog_id: str,
         source_dataset_rid: str,

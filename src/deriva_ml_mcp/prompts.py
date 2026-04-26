@@ -18,7 +18,7 @@ Prompts registered here:
 
     deriva_ml_getting_started     -- read first; orients the LLM
     deriva_ml_execution_lifecycle -- state machine + commit semantics
-    deriva_ml_workflow_dedup      -- create_workflow is idempotent
+    deriva_ml_workflow_dedup      -- deriva_ml_create_workflow is idempotent
 
 All prompts are static strings (no f-strings, no tool calls, no catalog
 access required to render). Plain ASCII only (workspace convention).
@@ -79,23 +79,23 @@ first, then the verb:
                   collections, training subsets, splits). Verbs:
                   list / get / create / add_members / delete_members /
                   update_types / increment_version / cache /
-                  denormalize / split / get_dataset_spec / bag_info.
+                  denormalize / split / deriva_ml_get_dataset_spec / deriva_ml_bag_info.
 
     feature    -- 6 tools. Per-row labels, scores, and asset attachments
                   attached to a target table. Verbs: list / get /
-                  list_feature_values / create / delete /
-                  add_feature_values.
+                  deriva_ml_list_feature_values / create / delete /
+                  deriva_ml_add_feature_values.
 
     workflow   -- 5 tools. Registered runnable artefacts (script + Git
                   URL + checksum + workflow_type). Verbs: list / get /
-                  find_workflow_by_url / create / update.
+                  deriva_ml_find_workflow_by_url / create / update.
 
     execution  -- 11 tools. A single run of a workflow against datasets
                   and assets. Carries the lifecycle state machine.
-                  Verbs: list / get / find_workflow_executions /
-                  list_execution_children / list_execution_parents /
+                  Verbs: list / get / deriva_ml_find_workflow_executions /
+                  deriva_ml_list_execution_children / deriva_ml_list_execution_parents /
                   create / start / commit / abort /
-                  create_execution_dataset / add_nested_execution.
+                  deriva_ml_create_execution_dataset / deriva_ml_add_nested_execution.
 
 DISCOVERY: PREFER RESOURCES AND RAG OVER PAGINATED TOOL SCANS
 -------------------------------------------------------------
@@ -122,8 +122,8 @@ listing tools:
                                                         index of Dataset /
                                                         Workflow / Execution rows
 
-Fall back to the paginated list tools (``list_datasets``,
-``list_workflows``, ``list_executions``, ``list_features``) only when
+Fall back to the paginated list tools (``deriva_ml_list_datasets``,
+``deriva_ml_list_workflows``, ``deriva_ml_list_executions``, ``deriva_ml_list_features``) only when
 you need filtered scans (e.g. "executions with status=Failed for
 workflow 1-WF") that resources cannot express.
 
@@ -131,13 +131,13 @@ MUTATION: WORKFLOW -> EXECUTION -> OUTPUTS
 ------------------------------------------
 The canonical mutation chain is:
 
-    1. ``create_workflow(...)`` (or reuse an existing one -- it dedups;
+    1. ``deriva_ml_create_workflow(...)`` (or reuse an existing one -- it dedups;
        see the ``deriva_ml_workflow_dedup`` prompt).
-    2. ``create_execution(workflow_rid=...)`` to register a new run.
-    3. ``start_execution(...)`` to advance Created -> Running.
-    4. Write outputs (``add_feature_values``, ``create_execution_dataset``,
+    2. ``deriva_ml_create_execution(workflow_rid=...)`` to register a new run.
+    3. ``deriva_ml_start_execution(...)`` to advance Created -> Running.
+    4. Write outputs (``deriva_ml_add_feature_values``, ``deriva_ml_create_execution_dataset``,
        etc.) -- they all attribute provenance to the running execution.
-    5. ``commit_execution(...)`` to drain staged outputs and transition
+    5. ``deriva_ml_commit_execution(...)`` to drain staged outputs and transition
        to Uploaded.
 
 ALWAYS create artefacts inside an execution context. Bare insertions
@@ -160,8 +160,8 @@ catalog. Plus 4 built-in core prompts and 3 ML prompts (this one,
 
 
 _EXECUTION_LIFECYCLE_GUIDE = """\
-DERIVA-ML EXECUTION LIFECYCLE -- read this before using create_execution, \
-start_execution, commit_execution, abort_execution, or add_feature_values.
+DERIVA-ML EXECUTION LIFECYCLE -- read this before using deriva_ml_create_execution, \
+deriva_ml_start_execution, deriva_ml_commit_execution, deriva_ml_abort_execution, or deriva_ml_add_feature_values.
 
 An ``Execution`` row tracks one run of a registered workflow against a
 set of dataset and asset inputs. It carries a status field that the
@@ -170,32 +170,32 @@ plugin's lifecycle tools advance through a small state machine.
 THE STATE MACHINE
 -----------------
 
-    Created  --start_execution-->  Running  --commit_execution-->  Pending_Upload  -->  Uploaded
+    Created  --deriva_ml_start_execution-->  Running  --deriva_ml_commit_execution-->  Pending_Upload  -->  Uploaded
         \\                            \\
-         \\--abort_execution-->        \\--abort_execution-->  (Aborted)
+         \\--deriva_ml_abort_execution-->        \\--deriva_ml_abort_execution-->  (Aborted)
           (Aborted)                                          OR  (Failed)
 
 Concrete state values (from ``deriva_ml.execution.execution.ExecutionStatus``):
 
     Created          -- newly registered, no work has started
-    Running          -- start_execution has been called
+    Running          -- deriva_ml_start_execution has been called
     Stopped          -- the execute() context manager exited cleanly
     Pending_Upload   -- commit drained from Running/Stopped, awaiting upload finish
     Uploaded         -- terminal: outputs persisted, provenance frozen
     Failed           -- terminal: execution raised before commit
-    Aborted          -- terminal: abort_execution called explicitly
+    Aborted          -- terminal: deriva_ml_abort_execution called explicitly
 
 Two state sets are load-bearing for the lifecycle tools:
 
     _START_REJECT_STATES = {Stopped, Failed, Pending_Upload, Uploaded, Aborted}
-        -- start_execution refuses to advance from any of these. Stopped
+        -- deriva_ml_start_execution refuses to advance from any of these. Stopped
            and Pending_Upload are past the algorithmic phase; Failed /
            Uploaded / Aborted are terminal.
 
     _COMMIT_ALLOWED_STATES = {Created, Running, Stopped, Pending_Upload, Uploaded}
-        -- commit_execution accepts these. (Pending_Upload is included
+        -- deriva_ml_commit_execution accepts these. (Pending_Upload is included
            because commit's whole purpose is to drain it. Uploaded is
-           the additive-upload entry point: calling commit_execution on
+           the additive-upload entry point: calling deriva_ml_commit_execution on
            an Uploaded execution that has new pending entries cycles
            Uploaded -> Pending_Upload -> Uploaded; with no pending
            entries it is a clean no-op.)
@@ -203,41 +203,41 @@ Two state sets are load-bearing for the lifecycle tools:
 THE FIVE LIFECYCLE TOOLS
 ------------------------
 
-1. ``create_execution(workflow_rid=..., dataset_rids=[...], asset_rids=[...])``
+1. ``deriva_ml_create_execution(workflow_rid=..., dataset_rids=[...], asset_rids=[...])``
    Returns a row in ``Created`` state. Inputs and the parent workflow
    are bound in this call; you cannot change them after.
 
-2. ``start_execution(execution_rid=...)``
+2. ``deriva_ml_start_execution(execution_rid=...)``
    Required before any feature or output write that goes through the
    ``Running`` path. Advances Created -> Running.
 
-3. ``commit_execution(execution_rid=...)``
+3. ``deriva_ml_commit_execution(execution_rid=...)``
    Drains staged outputs via the upstream ``upload_execution_outputs``
    step and transitions to ``Uploaded``. REQUIRED to make staged feature
    values, datasets, and assets actually persist in queries -- a
    forgotten commit leaves outputs invisible to downstream consumers.
 
-4. ``abort_execution(execution_rid=..., reason=...)``
+4. ``deriva_ml_abort_execution(execution_rid=..., reason=...)``
    Escape hatch. Terminates a non-terminal execution with optional
    ``reason`` text. Use when a run cannot continue and you want the
    provenance row to record that fact.
 
-5. ``add_feature_values(execution_rid=..., ...)``
+5. ``deriva_ml_add_feature_values(execution_rid=..., ...)``
    Hybrid dispatch (Q1) -- the wrapping depends on the current state:
 
    - ``Created``  -> the call auto-wraps in ``with execution.execute():``
      so Created -> Running on enter and Running -> Stopped on exit.
      Suits one-shot scripts that just want to flush some values.
-   - ``Running``  -> the LLM has explicitly called ``start_execution``
+   - ``Running``  -> the LLM has explicitly called ``deriva_ml_start_execution``
      and is mid-pipeline; the call goes through directly. The eventual
-     ``commit_execution`` closes the lifecycle.
+     ``deriva_ml_commit_execution`` closes the lifecycle.
    - Other states -> arg-validation error. ``add_features`` on a
      Stopped or terminal execution has no defined behaviour.
 
-   In other words: you can either let ``add_feature_values`` drive the
+   In other words: you can either let ``deriva_ml_add_feature_values`` drive the
    whole lifecycle (Created -> auto-execute -> Stopped) or drive it
-   yourself (start_execution -> add_feature_values N times ->
-   commit_execution). Pick one and stick with it.
+   yourself (deriva_ml_start_execution -> deriva_ml_add_feature_values N times ->
+   deriva_ml_commit_execution). Pick one and stick with it.
 
 TWO PITFALLS TO AVOID
 ---------------------
@@ -245,16 +245,16 @@ TWO PITFALLS TO AVOID
 1. Do NOT call ``update_record`` to flip ``Status`` manually. The state
    machine is enforced by the lifecycle tools (and by upstream
    ``deriva_ml.Execution`` itself). A direct ``Status`` update bypasses
-   the upload-outputs side effect of ``commit_execution`` and can leave
+   the upload-outputs side effect of ``deriva_ml_commit_execution`` and can leave
    the execution in an inconsistent state. Always use
-   ``start_execution`` / ``commit_execution`` / ``abort_execution``.
+   ``deriva_ml_start_execution`` / ``deriva_ml_commit_execution`` / ``deriva_ml_abort_execution``.
 
-2. Do NOT forget ``commit_execution`` after ``add_feature_values``
-   (when you drove the lifecycle yourself with ``start_execution``).
+2. Do NOT forget ``deriva_ml_commit_execution`` after ``deriva_ml_add_feature_values``
+   (when you drove the lifecycle yourself with ``deriva_ml_start_execution``).
    Feature values written during ``Running`` are staged -- they only
    become visible to downstream queries once commit drains them and
    transitions the execution to ``Uploaded``. If you let
-   ``add_feature_values`` auto-wrap (Created path), you do NOT need a
+   ``deriva_ml_add_feature_values`` auto-wrap (Created path), you do NOT need a
    separate commit -- the auto-execute closes the loop on exit.
 
 INSPECTING STATE
@@ -267,22 +267,22 @@ metadata -- read the resource:
 For filtered scans (e.g. "all Failed executions for workflow 1-WF"),
 use the tool with cursor pagination:
 
-    list_executions(workflow_rid="<workflow_rid>", status="Failed")
+    deriva_ml_list_executions(workflow_rid="<workflow_rid>", status="Failed")
 """
 
 
 _WORKFLOW_DEDUP_GUIDE = """\
-DERIVA-ML WORKFLOW DEDUP -- read this before using create_workflow or \
-find_workflow_by_url.
+DERIVA-ML WORKFLOW DEDUP -- read this before using deriva_ml_create_workflow or \
+deriva_ml_find_workflow_by_url.
 
 Workflows are deduplicated by ``(URL, checksum)`` at insert time. This
-matters because ``create_workflow`` is the right tool to call BOTH when
+matters because ``deriva_ml_create_workflow`` is the right tool to call BOTH when
 the workflow is new and when it already exists -- you do not need to
 preflight.
 
 CREATE_WORKFLOW IS IDEMPOTENT
 -----------------------------
-Calling ``create_workflow(url=X, checksum=Y, ...)`` twice with the same
+Calling ``deriva_ml_create_workflow(url=X, checksum=Y, ...)`` twice with the same
 ``(X, Y)`` returns the SAME RID both times. The second call carries
 ``status="exists"`` in the response; the first carries
 ``status="created"``.
@@ -307,32 +307,32 @@ DO NOT PREFLIGHT WITH FIND_WORKFLOW_BY_URL
 The wrong pattern:
 
     # ANTI-PATTERN -- do not do this
-    existing = find_workflow_by_url(url=X)
+    existing = deriva_ml_find_workflow_by_url(url=X)
     if existing is None:
-        create_workflow(url=X, checksum=Y, ...)
+        deriva_ml_create_workflow(url=X, checksum=Y, ...)
     else:
         workflow_rid = existing["workflow_rid"]
 
-This wastes a round-trip. The dedup is in ``create_workflow`` itself;
+This wastes a round-trip. The dedup is in ``deriva_ml_create_workflow`` itself;
 the preflight just duplicates work the server already does.
 
 The right pattern:
 
     # CORRECT
-    result = create_workflow(url=X, checksum=Y, name="MyPipeline",
+    result = deriva_ml_create_workflow(url=X, checksum=Y, name="MyPipeline",
                              workflow_type="Model_Training")
     workflow_rid = result["workflow_rid"]  # works whether new or existing
 
 WHEN FIND_WORKFLOW_BY_URL IS THE RIGHT TOOL
 -------------------------------------------
-``find_workflow_by_url(url=X)`` is the right tool when you have a URL
+``deriva_ml_find_workflow_by_url(url=X)`` is the right tool when you have a URL
 but you DO NOT intend to create the workflow if it is missing -- e.g.
 you are answering "is this workflow already registered?" or you are
 linking against an existing workflow whose presence you want to verify
 before doing other work.
 
 If your intent is "make sure this workflow exists, creating it if not",
-go straight to ``create_workflow``.
+go straight to ``deriva_ml_create_workflow``.
 
 WHAT THE URL AND CHECKSUM SHOULD POINT AT
 -----------------------------------------
@@ -342,7 +342,7 @@ or notebook that will actually execute. So:
     url       -- Git URL pinned to a specific commit, pointing at the
                  file that runs (e.g. ``train.py`` at SHA ``abc123def``).
                  NOT the URL of the registration script that calls
-                 ``create_workflow``.
+                 ``deriva_ml_create_workflow``.
 
     checksum  -- Git object hash of that runnable file. Optional but
                  strongly recommended; serves as the secondary dedup key.
@@ -395,7 +395,7 @@ def register(ctx: PluginContext) -> None:
         "deriva_ml_execution_lifecycle",
         description=(
             "Execution state machine (Created/Running/Stopped/Pending_Upload/Uploaded), "
-            "the five lifecycle tools, add_feature_values hybrid dispatch, and commit pitfalls"
+            "the five lifecycle tools, deriva_ml_add_feature_values hybrid dispatch, and commit pitfalls"
         ),
     )
     def deriva_ml_execution_lifecycle() -> str:
@@ -404,8 +404,8 @@ def register(ctx: PluginContext) -> None:
     @ctx.prompt(
         "deriva_ml_workflow_dedup",
         description=(
-            "create_workflow is idempotent on (URL, checksum); skip the find_workflow_by_url preflight "
-            "and use find_workflow_by_url only when you do not intend to create"
+            "deriva_ml_create_workflow is idempotent on (URL, checksum); skip the deriva_ml_find_workflow_by_url preflight "
+            "and use deriva_ml_find_workflow_by_url only when you do not intend to create"
         ),
     )
     def deriva_ml_workflow_dedup() -> str:

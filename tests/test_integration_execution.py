@@ -199,14 +199,16 @@ async def test_execution_lifecycle_round_trip(
     tools = integration_execution_tools.tools
 
     # 1. Baseline count.
-    list_out = json.loads(await tools["list_executions"](hostname=hostname, catalog_id=catalog_id))
+    list_out = json.loads(
+        await tools["deriva_ml_list_executions"](hostname=hostname, catalog_id=catalog_id)
+    )
     assert "executions" in list_out
     assert "count" in list_out
     baseline_count = list_out["count"]
 
     # 2. Create workflow (needed to attribute the execution to).
     wf_out = json.loads(
-        await tools["create_workflow"](
+        await tools["deriva_ml_create_workflow"](
             hostname=hostname,
             catalog_id=catalog_id,
             name="ExecLifecycleWorkflow",
@@ -228,7 +230,7 @@ async def test_execution_lifecycle_round_trip(
     #    (workaround for upstream's string-arg-routes-to-lookup_by_url
     #    misalignment — see tools/execution.py:create_workflow).
     exec_out = json.loads(
-        await tools["create_execution"](
+        await tools["deriva_ml_create_execution"](
             hostname=hostname,
             catalog_id=catalog_id,
             workflow_rid=workflow_rid,
@@ -246,7 +248,7 @@ async def test_execution_lifecycle_round_trip(
     # 4. get_execution -- status="Created", workflow_rid round-trips
     #    to the actual workflow RID (not the URL we passed in).
     get_out = json.loads(
-        await tools["get_execution"](
+        await tools["deriva_ml_get_execution"](
             hostname=hostname,
             catalog_id=catalog_id,
             execution_rid=execution_rid,
@@ -260,7 +262,7 @@ async def test_execution_lifecycle_round_trip(
 
     # 5. start_execution -- transitions Created -> Running.
     start_out = json.loads(
-        await tools["start_execution"](
+        await tools["deriva_ml_start_execution"](
             hostname=hostname,
             catalog_id=catalog_id,
             execution_rid=execution_rid,
@@ -275,7 +277,7 @@ async def test_execution_lifecycle_round_trip(
 
     # 6. start_execution again -- idempotent no-op.
     restart_out = json.loads(
-        await tools["start_execution"](
+        await tools["deriva_ml_start_execution"](
             hostname=hostname,
             catalog_id=catalog_id,
             execution_rid=execution_rid,
@@ -290,7 +292,7 @@ async def test_execution_lifecycle_round_trip(
     #    Execution_Metadata files (config.json + env_snapshot) that
     #    upload_execution_outputs always emits.
     commit_out = json.loads(
-        await tools["commit_execution"](
+        await tools["deriva_ml_commit_execution"](
             hostname=hostname,
             catalog_id=catalog_id,
             execution_rid=execution_rid,
@@ -309,7 +311,7 @@ async def test_execution_lifecycle_round_trip(
 
     # 8. get_execution -- post-commit status is Uploaded.
     final_get = json.loads(
-        await tools["get_execution"](
+        await tools["deriva_ml_get_execution"](
             hostname=hostname,
             catalog_id=catalog_id,
             execution_rid=execution_rid,
@@ -320,7 +322,7 @@ async def test_execution_lifecycle_round_trip(
 
     # 9. list_executions -- new execution shows up.
     final_list = json.loads(
-        await tools["list_executions"](hostname=hostname, catalog_id=catalog_id)
+        await tools["deriva_ml_list_executions"](hostname=hostname, catalog_id=catalog_id)
     )
     assert final_list["count"] == baseline_count + 1
     matching = [e for e in final_list["executions"] if e["rid"] == execution_rid]
@@ -369,7 +371,7 @@ async def test_phase3_dod2_feature_round_trip(
 
     # 2. Create workflow (URL distinct from the lifecycle test).
     wf_out = json.loads(
-        await tools["create_workflow"](
+        await tools["deriva_ml_create_workflow"](
             hostname=hostname,
             catalog_id=catalog_id,
             name="DoD2FeatureWorkflow",
@@ -388,7 +390,7 @@ async def test_phase3_dod2_feature_round_trip(
     #    column ("Label", text). No term/asset columns — the simplest
     #    feature shape that exercises add_feature_values.
     create_feat = json.loads(
-        await tools["create_feature"](
+        await tools["deriva_ml_create_feature"](
             hostname=hostname,
             catalog_id=catalog_id,
             target_table=_DOD2_TARGET_TABLE,
@@ -411,7 +413,7 @@ async def test_phase3_dod2_feature_round_trip(
 
     # 4. Create execution against the workflow RID returned in step 3.
     exec_out = json.loads(
-        await tools["create_execution"](
+        await tools["deriva_ml_create_execution"](
             hostname=hostname,
             catalog_id=catalog_id,
             workflow_rid=workflow_rid,
@@ -426,7 +428,7 @@ async def test_phase3_dod2_feature_round_trip(
     #    add_feature_values (which would otherwise auto-wrap a
     #    Created -> Running -> Stopped lifecycle on each call).
     start_out = json.loads(
-        await tools["start_execution"](
+        await tools["deriva_ml_start_execution"](
             hostname=hostname,
             catalog_id=catalog_id,
             execution_rid=execution_rid,
@@ -439,7 +441,7 @@ async def test_phase3_dod2_feature_round_trip(
     #    Each entry's keys must match the FeatureRecord class fields:
     #    target table column ("Subject" -> RID) + value column ("Label").
     add_out = json.loads(
-        await tools["add_feature_values"](
+        await tools["deriva_ml_add_feature_values"](
             hostname=hostname,
             catalog_id=catalog_id,
             table=_DOD2_TARGET_TABLE,
@@ -461,7 +463,7 @@ async def test_phase3_dod2_feature_round_trip(
     #    upload_execution_outputs / _flush_staged_features. The catalog
     #    rows are written here.
     commit_out = json.loads(
-        await tools["commit_execution"](
+        await tools["deriva_ml_commit_execution"](
             hostname=hostname,
             catalog_id=catalog_id,
             execution_rid=execution_rid,
@@ -477,7 +479,7 @@ async def test_phase3_dod2_feature_round_trip(
     # 8. Read the values back via list_feature_values. This is the
     #    "values landed in the catalog" assertion that closes DoD #2.
     list_out = json.loads(
-        await tools["list_feature_values"](
+        await tools["deriva_ml_list_feature_values"](
             hostname=hostname,
             catalog_id=catalog_id,
             table=_DOD2_TARGET_TABLE,

@@ -1,11 +1,11 @@
 """Execution domain tools for deriva-ml-mcp.
 
-Read tools: ``list_executions``, ``get_execution``,
-``find_workflow_executions``, ``list_execution_children``,
-``list_execution_parents``.
-Mutation tools: ``create_execution``, ``start_execution``,
-``commit_execution``, ``abort_execution``, ``create_execution_dataset``,
-``add_nested_execution``.
+Read tools: ``deriva_ml_list_executions``, ``deriva_ml_get_execution``,
+``deriva_ml_find_workflow_executions``, ``deriva_ml_list_execution_children``,
+``deriva_ml_list_execution_parents``.
+Mutation tools: ``deriva_ml_create_execution``, ``deriva_ml_start_execution``,
+``deriva_ml_commit_execution``, ``deriva_ml_abort_execution``, ``deriva_ml_create_execution_dataset``,
+``deriva_ml_add_nested_execution``.
 
 Every tool wraps DERIVA I/O in ``with deriva_call():`` and routes errors
 through ``_error_envelope`` (mutation tools also emit success/failure
@@ -13,8 +13,8 @@ audit events; reads only log on failure).
 
 State-machine note. The ``Execution`` lifecycle is:
 ``Created -> Running -> Stopped -> Pending_Upload -> Uploaded`` with
-``Aborted`` / ``Failed`` as alternative terminals. ``start_execution``,
-``commit_execution``, and ``abort_execution`` are idempotent on the
+``Aborted`` / ``Failed`` as alternative terminals. ``deriva_ml_start_execution``,
+``deriva_ml_commit_execution``, and ``deriva_ml_abort_execution`` are idempotent on the
 target state — they no-op (and skip audit) when the execution is already
 where the call would put it.
 """
@@ -269,7 +269,7 @@ def _summarize_upload_dict(
     ``Execution.upload_execution_outputs`` returns ``dict[str,
     list[AssetFilePath]]`` (asset table -> uploaded files), not an
     ``UploadReport``. We render it into the same JSON shape callers
-    expect from ``commit_execution`` so the response surface stays
+    expect from ``deriva_ml_commit_execution`` so the response surface stays
     stable across upstream API styles.
 
     Args:
@@ -320,7 +320,7 @@ def register(ctx: PluginContext) -> None:
     # ------------------------------------------------------------------
 
     @ctx.tool(mutates=False)
-    async def list_executions(
+    async def deriva_ml_list_executions(
         hostname: str,
         catalog_id: str,
         workflow_rid: str | None = None,
@@ -397,7 +397,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def get_execution(
+    async def deriva_ml_get_execution(
         hostname: str,
         catalog_id: str,
         execution_rid: str,
@@ -439,7 +439,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def find_workflow_executions(
+    async def deriva_ml_find_workflow_executions(
         hostname: str,
         catalog_id: str,
         workflow_rid: str,
@@ -450,7 +450,7 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """Find all executions of a specific workflow.
 
-        Distinct from ``list_executions(workflow_rid=...)`` to surface
+        Distinct from ``deriva_ml_list_executions(workflow_rid=...)`` to surface
         the workflow-centric query as a first-class tool — the LLM
         intent ("show me runs of this workflow") differs from the
         general "browse executions" intent.
@@ -465,7 +465,7 @@ def register(ctx: PluginContext) -> None:
             preflight_count: If True, return only total count.
 
         Returns:
-            Same shape as ``list_executions``.
+            Same shape as ``deriva_ml_list_executions``.
 
         Raises:
             RuntimeError: Wrapped, propagated from
@@ -523,7 +523,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def list_execution_children(
+    async def deriva_ml_list_execution_children(
         hostname: str,
         catalog_id: str,
         execution_rid: str,
@@ -583,7 +583,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def list_execution_parents(
+    async def deriva_ml_list_execution_parents(
         hostname: str,
         catalog_id: str,
         execution_rid: str,
@@ -591,7 +591,7 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """List parent executions of a child.
 
-        Symmetric to ``list_execution_children``. ``recurse=True`` walks
+        Symmetric to ``deriva_ml_list_execution_children``. ``recurse=True`` walks
         the whole ancestry chain.
 
         Args:
@@ -642,7 +642,7 @@ def register(ctx: PluginContext) -> None:
     # ------------------------------------------------------------------
 
     @ctx.tool(mutates=True)
-    async def create_execution(
+    async def deriva_ml_create_execution(
         hostname: str,
         catalog_id: str,
         workflow_rid: str,
@@ -654,7 +654,7 @@ def register(ctx: PluginContext) -> None:
         """Register a new execution against an existing workflow.
 
         Dataset and asset inputs are passed through as RID strings.
-        Upstream ``create_execution`` accepts ``"RID@version"`` shorthand
+        Upstream ``deriva_ml_create_execution`` accepts ``"RID@version"`` shorthand
         for datasets (coerced via ``DatasetSpec.from_shorthand``) and
         bare RID strings for assets (wrapped in ``AssetSpec``).
 
@@ -754,7 +754,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def start_execution(
+    async def deriva_ml_start_execution(
         hostname: str,
         catalog_id: str,
         execution_rid: str,
@@ -837,7 +837,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def commit_execution(
+    async def deriva_ml_commit_execution(
         hostname: str,
         catalog_id: str,
         execution_rid: str,
@@ -911,7 +911,7 @@ def register(ctx: PluginContext) -> None:
                 # (called from _upload_execution_dirs after asset upload).
                 # The newer upload_outputs / upload_pending lease engine
                 # only handles pending_rows and skips the feature_records
-                # SQLite table — so it would leave ``add_feature_values``
+                # SQLite table — so it would leave ``deriva_ml_add_feature_values``
                 # data unflushed. Until upstream unifies the two paths,
                 # commit_execution must use upload_execution_outputs to
                 # get a real end-to-end commit.
@@ -950,7 +950,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def abort_execution(
+    async def deriva_ml_abort_execution(
         hostname: str,
         catalog_id: str,
         execution_rid: str,
@@ -1023,7 +1023,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def create_execution_dataset(
+    async def deriva_ml_create_execution_dataset(
         hostname: str,
         catalog_id: str,
         execution_rid: str,
@@ -1095,7 +1095,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def add_nested_execution(
+    async def deriva_ml_add_nested_execution(
         hostname: str,
         catalog_id: str,
         parent_execution_rid: str,

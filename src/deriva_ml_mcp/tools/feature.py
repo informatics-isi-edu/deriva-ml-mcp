@@ -1,15 +1,15 @@
 """Feature domain tools for deriva-ml-mcp.
 
-Read tools: ``list_features``, ``get_feature``, ``list_feature_values``.
-Mutation tools: ``create_feature``, ``delete_feature``,
-``add_feature_values``.
+Read tools: ``deriva_ml_list_features``, ``deriva_ml_get_feature``, ``deriva_ml_list_feature_values``.
+Mutation tools: ``deriva_ml_create_feature``, ``deriva_ml_delete_feature``,
+``deriva_ml_add_feature_values``.
 
 Every tool wraps DERIVA I/O in ``with deriva_call():`` and routes errors
 through ``_error_envelope`` (mutation tools also emit success/failure
 audit events; reads only log on failure).
 
 Pagination note: features have no first-class RID of their own
-(unlike datasets/executions). ``list_features`` paginates by
+(unlike datasets/executions). ``deriva_ml_list_features`` paginates by
 ``feature_table.name`` instead — the cursor (``after_rid``) is the
 feature_table name from the previous page.
 """
@@ -120,7 +120,7 @@ def register(ctx: PluginContext) -> None:
     """
 
     @ctx.tool(mutates=False)
-    async def list_features(
+    async def deriva_ml_list_features(
         hostname: str,
         catalog_id: str,
         table: str | None = None,
@@ -199,7 +199,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def get_feature(
+    async def deriva_ml_get_feature(
         hostname: str,
         catalog_id: str,
         table: str,
@@ -268,7 +268,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def list_feature_values(
+    async def deriva_ml_list_feature_values(
         hostname: str,
         catalog_id: str,
         table: str,
@@ -439,7 +439,7 @@ def register(ctx: PluginContext) -> None:
     # ------------------------------------------------------------------
 
     @ctx.tool(mutates=True)
-    async def create_feature(
+    async def deriva_ml_create_feature(
         hostname: str,
         catalog_id: str,
         target_table: str,
@@ -520,7 +520,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def delete_feature(
+    async def deriva_ml_delete_feature(
         hostname: str,
         catalog_id: str,
         table: str,
@@ -582,7 +582,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def add_feature_values(
+    async def deriva_ml_add_feature_values(
         hostname: str,
         catalog_id: str,
         table: str,
@@ -604,10 +604,10 @@ def register(ctx: PluginContext) -> None:
         - ``Created`` -> open ``with execution.execute():`` to advance
           ``Created -> Running`` (and ``Running -> Stopped`` on exit).
           Suits one-shot scripts that just want to flush some values.
-        - ``Running`` -> the LLM has explicitly called ``start_execution``
+        - ``Running`` -> the LLM has explicitly called ``deriva_ml_start_execution``
           and is mid-pipeline. Skip the context manager (a second
           ``Created -> Running`` transition would crash) and call
-          ``add_features`` directly. The eventual ``commit_execution``
+          ``add_features`` directly. The eventual ``deriva_ml_commit_execution``
           will close the lifecycle.
         - Other states (``Stopped`` / terminal) -> arg-validation error.
           ``add_features`` on a stopped execution has no defined behaviour.

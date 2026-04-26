@@ -171,7 +171,9 @@ async def test_workflow_round_trip(
     #    create their own workflows during the same session, so by the
     #    time this test runs, the catalog may already contain workflow
     #    rows. We track the baseline rather than asserting zero.
-    list_out = json.loads(await tools["list_workflows"](hostname=hostname, catalog_id=catalog_id))
+    list_out = json.loads(
+        await tools["deriva_ml_list_workflows"](hostname=hostname, catalog_id=catalog_id)
+    )
     assert "workflows" in list_out
     assert "count" in list_out
     assert "truncated" in list_out
@@ -184,7 +186,7 @@ async def test_workflow_round_trip(
 
     # 2. Create a new workflow.
     create_out = json.loads(
-        await tools["create_workflow"](
+        await tools["deriva_ml_create_workflow"](
             hostname=hostname,
             catalog_id=catalog_id,
             name=_TEST_WORKFLOW_NAME,
@@ -207,7 +209,7 @@ async def test_workflow_round_trip(
 
     # 3. Look up by RID.
     get_out = json.loads(
-        await tools["get_workflow"](
+        await tools["deriva_ml_get_workflow"](
             hostname=hostname,
             catalog_id=catalog_id,
             workflow_rid=workflow_rid,
@@ -224,7 +226,7 @@ async def test_workflow_round_trip(
 
     # 4. Look up by URL -- same RID.
     find_out = json.loads(
-        await tools["find_workflow_by_url"](
+        await tools["deriva_ml_find_workflow_by_url"](
             hostname=hostname,
             catalog_id=catalog_id,
             url_or_checksum=_TEST_WORKFLOW_URL,
@@ -237,7 +239,7 @@ async def test_workflow_round_trip(
     # 5. Re-create with the same URL -- dedup returns status="exists"
     #    and the original RID.
     dedup_out = json.loads(
-        await tools["create_workflow"](
+        await tools["deriva_ml_create_workflow"](
             hostname=hostname,
             catalog_id=catalog_id,
             name=_TEST_WORKFLOW_NAME,
@@ -256,7 +258,7 @@ async def test_workflow_round_trip(
     #    only (not the catalog-side effect) because of an upstream
     #    deriva-ml bug (see note below at step 7).
     update_out = json.loads(
-        await tools["update_workflow"](
+        await tools["deriva_ml_update_workflow"](
             hostname=hostname,
             catalog_id=catalog_id,
             workflow_rid=workflow_rid,
@@ -281,7 +283,9 @@ async def test_workflow_round_trip(
     # A separate task is tracking the deriva-ml fix; once it lands,
     # tighten the assertion below to also check
     # ``matching[0]["description"] == "updated description"``.
-    list_after = json.loads(await tools["list_workflows"](hostname=hostname, catalog_id=catalog_id))
+    list_after = json.loads(
+        await tools["deriva_ml_list_workflows"](hostname=hostname, catalog_id=catalog_id)
+    )
     assert list_after["count"] == baseline_count + 1
     matching = [w for w in list_after["workflows"] if w["rid"] == workflow_rid]
     assert len(matching) == 1

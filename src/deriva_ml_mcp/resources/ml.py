@@ -106,7 +106,7 @@ def register(ctx: PluginContext) -> None:
 
         Returns ``{"datasets": [...], "count", "truncated",
         "next_after_rid"}``. When ``truncated`` is True, switch to the
-        ``list_datasets`` tool for full cursor pagination.
+        ``deriva_ml_list_datasets`` tool for full cursor pagination.
         """
         try:
             with deriva_call():
@@ -155,7 +155,7 @@ def register(ctx: PluginContext) -> None:
         Returns per-table counts, the full table list, and a flattened
         ``members`` list of ``{table, rid}`` capped at 1000 rows. When
         ``truncated`` is True (the catalog has more than 1000 members),
-        use the ``list_dataset_members`` tool with pagination.
+        use the ``deriva_ml_list_dataset_members`` tool with pagination.
         """
         try:
             with deriva_call():
@@ -175,7 +175,7 @@ def register(ctx: PluginContext) -> None:
     async def ml_workflows(hostname: str, catalog_id: str) -> str:
         """Snapshot of all workflows in the catalog (up to 1000 rows).
 
-        When ``truncated`` is True, use the ``list_workflows`` tool for
+        When ``truncated`` is True, use the ``deriva_ml_list_workflows`` tool for
         cursor-paginated access.
         """
         try:
@@ -213,7 +213,7 @@ def register(ctx: PluginContext) -> None:
     async def ml_executions(hostname: str, catalog_id: str) -> str:
         """Snapshot of all executions in the catalog (up to 1000 rows).
 
-        When ``truncated`` is True, use the ``list_executions`` tool for
+        When ``truncated`` is True, use the ``deriva_ml_list_executions`` tool for
         cursor-paginated access (it also supports filtering by workflow
         and status).
         """
@@ -265,7 +265,7 @@ def register(ctx: PluginContext) -> None:
     async def ml_features_for_table(hostname: str, catalog_id: str, table_name: str) -> str:
         """Features defined on the given target table (up to 1000 rows).
 
-        When ``truncated`` is True, use the ``list_features`` tool with
+        When ``truncated`` is True, use the ``deriva_ml_list_features`` tool with
         pagination.
         """
         try:
