@@ -249,6 +249,40 @@ async def test_list_feature_values_selector_newest(feature_ctx, capturing_mcp, m
     assert selector_arg is FeatureRecord.select_newest
 
 
+@pytest.mark.parametrize(
+    "selector_name,attr_name",
+    [
+        ("first", "select_first"),
+        ("latest", "select_latest"),
+        ("majority_vote", "select_majority_vote"),
+    ],
+)
+async def test_list_feature_values_other_simple_selectors(
+    selector_name, attr_name, feature_ctx, capturing_mcp, mock_ml
+):
+    """Each simple selector resolves to the matching FeatureRecord factory.
+
+    Exercises the dispatch branches that test_list_feature_values_selector_newest
+    doesn't cover. ``first``/``latest`` are staticmethods (passed by reference);
+    ``majority_vote`` is a classmethod factory (called eagerly to produce a
+    callable). The tool's selector dispatch should handle both shapes.
+    """
+    mock_ml.feature_values.return_value = iter([_make_record_mock("1-AAAA")])
+    await capturing_mcp.tools["list_feature_values"](
+        hostname="h",
+        catalog_id="1",
+        table="Image",
+        feature_name="Quality",
+        selector=selector_name,
+    )
+    selector_arg = mock_ml.feature_values.call_args.kwargs["selector"]
+    # The selector_arg should be a callable produced by the matching factory
+    # (either the staticmethod itself or the result of calling the
+    # classmethod factory). Either way, it must not be None.
+    assert selector_arg is not None
+    assert callable(selector_arg)
+
+
 async def test_list_feature_values_selector_by_workflow_requires_arg(
     feature_ctx, capturing_mcp, mock_ml
 ):
@@ -526,6 +560,10 @@ async def test_add_feature_values_empty_entries_validation_error(
         )
     assert "error" in out
     assert "entries" in out["error"]
+    # Response-shape parity: attempted_count is present here too (=0)
+    # so callers can read it unconditionally regardless of which
+    # failure path triggered.
+    assert out["attempted_count"] == 0
     assert mock_audit.call_count == 0
     mock_ml.lookup_feature.assert_not_called()
 

@@ -7,6 +7,11 @@ Mutation tools: ``create_feature``, ``delete_feature``,
 Every tool wraps DERIVA I/O in ``with deriva_call():`` and routes errors
 through ``_error_envelope`` (mutation tools also emit success/failure
 audit events; reads only log on failure).
+
+Pagination note: features have no first-class RID of their own
+(unlike datasets/executions). ``list_features`` paginates by
+``feature_table.name`` instead — the cursor (``after_rid``) is the
+feature_table name from the previous page.
 """
 
 from __future__ import annotations
@@ -588,7 +593,11 @@ def register(ctx: PluginContext) -> None:
             "execution_rid": "EXEC-1", "count": 2}``.
         """
         if not entries:
-            return json.dumps({"error": "entries must be a non-empty list."})
+            # Include attempted_count for response-shape parity with the
+            # other failure paths (per-record build failure and upstream
+            # failure both surface attempted_count via _error_envelope's
+            # response_fields). Lets callers read the field unconditionally.
+            return json.dumps({"error": "entries must be a non-empty list.", "attempted_count": 0})
 
         # Track which entry index failed so the LLM can pinpoint the
         # offending row in the bulk request.
