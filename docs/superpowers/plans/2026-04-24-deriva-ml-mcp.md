@@ -1422,12 +1422,47 @@ git commit -m "test(integration): dataset round-trip"
 **Phase Definition of Done (from spec):**
 
 1. All feature unit tests pass.
-2. At least one integration round trip exercises feature creation + value addition + lookup.
+2. At least one integration round trip exercises a feature operation. **Phase 3 ships a read-side smoke (`list_features` page + preflight) only**; full create + value-addition + lookup round trip requires Phase 5's execution-lifecycle tools to scaffold the `Execution` that `add_feature_values` needs. Phase 5's DoD will close that loop.
 3. Every tool registered with explicit `mutates=`.
 4. Every `mutates=True` tool has audit-event tests.
 5. Every old `deriva-mcp` feature tool has a row in `coverage.md`.
 6. `uv run ruff check` and `uv run ruff format --check` clean.
 7. Phase commit on a feature branch with PR description summarising coverage decisions.
+
+---
+
+### Phase 5 design carryover from Phase 3
+
+Surfaced during Phase 3.2 implementation of `add_feature_values` (which uses
+`ml.resume_execution(rid)` + `with execution.execute(): execution.add_features(records)`).
+Capture as design questions for Phase 5:
+
+- **Execution lifecycle exposure.** `Execution.add_features` stages records to a local
+  SQLite registry; they only flush to ermrest when the execution context exits. Phase 3's
+  `add_feature_values` enters AND exits the context within one MCP call — which works
+  for happy paths but means a single execution_rid can't be reused across multiple
+  `add_feature_values` calls (the second call sees the execution in `Stopped` state and
+  raises `InvalidTransitionError`). Phase 5 must decide: are executions long-running
+  (with explicit `start_execution` / `commit_execution` / `abort_execution` MCP tools so
+  callers control flush timing), or batch-wrappers (hidden inside each mutation tool)?
+  The current `add_feature_values` implicitly chose batch-wrapper. Make this an explicit
+  spec decision.
+
+- **`with execution.execute():` requires being inside `with deriva_call():`.** The
+  ermrest flush on `__exit__` makes catalog calls; `deriva_call`'s 401-on-close handling
+  must wrap them. `add_feature_values` does this correctly (deriva_call outer, execute
+  inner). Codify as a tool-authoring rule for any Phase 5 mutation tool that uses an
+  Execution context.
+
+- **Idempotency / retry safety.** `add_feature_values` can leave a partially-flushed
+  batch on transient failure with no way to safely retry. Phase 5 should consider
+  whether MCP-level mutation tools need an `idempotency_key` parameter.
+
+- **Bulk-mutation `response_fields` shape.** The `attempted_count` + `failed_entry_index`
+  pattern in `add_feature_values` covers simple bulk failure. Phase 5 tools may want
+  richer per-record success/failure visibility (e.g. `succeeded_indices: list[int]`).
+  The current `_error_envelope.response_fields` mechanism supports this via free-form
+  dict; consider whether to formalize the shape.
 
 ---
 
