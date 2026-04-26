@@ -1401,6 +1401,14 @@ git commit -m "test(integration): dataset round-trip"
 
 ### Phase 3 — Feature domain
 
+**Phase 3 entry tasks (do these BEFORE Task 3.1 to prevent diff churn):**
+
+- [ ] **Lift dataset's helpers to a shared module.** Create `src/deriva_ml_mcp/_helpers.py` and move `_error_envelope`, `_paginate`, `_read_rid`, `_row_rid_for` (currently in `tools/dataset.py`) into it. Update `tools/dataset.py` imports. Verify all 72 unit tests still pass. The helpers have zero dataset-specific coupling — `_error_envelope` takes `operation` as a string parameter and embeds the `deriva_ml_` prefix uniformly; `_paginate` is shape-agnostic. Doing this BEFORE `feature.py` imports them avoids retrofitting two modules.
+
+- [ ] **Extract test fixtures to `tests/conftest.py` or `tests/_helpers.py`.** Phase 2's `_make_dataset_mock`, `_success_calls`, and the `dataset_ctx` import-inside-patch idiom should generalize. Phase 3 will need an equivalent `_make_feature_mock`; `_success_calls(mock_audit, name)` is generic. Do NOT yet move the integration-test catalog fixture (`demo_catalog`, `_server_reachable`) — wait until you're about to copy-paste it into `tests/test_integration_feature.py`, then factor.
+
+- [ ] **Promote `_DATASET_TOOLS` exact-equality test to a per-domain pattern.** `tests/test_plugin.py:51` already foresees this. Split into per-domain frozensets (`_DATASET_TOOLS`, `_FEATURE_TOOLS`) and assert `actual == set().union(*all_domain_tools)` — exact equality across the whole surface, not subset. Forces test/coverage.md sync.
+
 **Phase entry checklist (run at the start of each domain phase 3-5):**
 
 - [ ] Per-concept analysis (Task 3.1, mirrors Task 2.1) — survey `DerivaML` feature surface, survey old `deriva-mcp/tools/feature.py`, cross-reference against core, propose tool list, update `docs/coverage.md`. Source files for the survey:
@@ -1409,7 +1417,7 @@ git commit -m "test(integration): dataset round-trip"
     - `/Users/carl/GitHub/DerivaML/deriva-mcp/src/deriva_mcp/tools/feature.py`
 - [ ] Per-tool TDD loop (mirrors Task 2.2) for each tool identified — same template, substituting `feature` for `dataset` throughout file paths and module names.
 - [ ] Wire `feature` registration into `plugin.register` (mirrors Task 2.3).
-- [ ] Add a feature round-trip integration test in `tests/test_integration.py` (mirrors Task 2.4).
+- [ ] Add a feature round-trip integration test in `tests/test_integration_feature.py` (mirrors Task 2.4). When the second integration test file lands, factor `demo_catalog`, `_server_reachable`, `deriva_host` to `tests/conftest.py`; keep `pytestmark` per-file (it can't usefully live in conftest).
 
 **Phase Definition of Done (from spec):**
 
