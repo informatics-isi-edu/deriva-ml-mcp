@@ -73,29 +73,33 @@ values just talks to different catalogs.
 THE FOUR ML DOMAINS
 -------------------
 The 39 tools are organized into four domain modules. Pick the domain
-first, then the verb:
+first, then the verb. All actual tool names are prefixed
+``deriva_ml_<verb>`` (e.g. the ``create`` verb under ``dataset`` is
+the ``deriva_ml_create_dataset`` tool). The bare verbs below name the
+concept; prepend ``deriva_ml_`` (and append the noun where natural)
+for the wire name.
 
     dataset    -- 17 tools. Curated bundles of catalog rows (image
                   collections, training subsets, splits). Verbs:
                   list / get / create / add_members / delete_members /
                   update_types / increment_version / cache /
-                  denormalize / split / deriva_ml_get_dataset_spec / deriva_ml_bag_info.
+                  denormalize / split / get_dataset_spec / bag_info.
 
     feature    -- 6 tools. Per-row labels, scores, and asset attachments
                   attached to a target table. Verbs: list / get /
-                  deriva_ml_list_feature_values / create / delete /
-                  deriva_ml_add_feature_values.
+                  list_feature_values / create / delete /
+                  add_feature_values.
 
     workflow   -- 5 tools. Registered runnable artefacts (script + Git
                   URL + checksum + workflow_type). Verbs: list / get /
-                  deriva_ml_find_workflow_by_url / create / update.
+                  find_workflow_by_url / create / update.
 
     execution  -- 11 tools. A single run of a workflow against datasets
                   and assets. Carries the lifecycle state machine.
-                  Verbs: list / get / deriva_ml_find_workflow_executions /
-                  deriva_ml_list_execution_children / deriva_ml_list_execution_parents /
+                  Verbs: list / get / find_workflow_executions /
+                  list_execution_children / list_execution_parents /
                   create / start / commit / abort /
-                  deriva_ml_create_execution_dataset / deriva_ml_add_nested_execution.
+                  create_execution_dataset / add_nested_execution.
 
 DISCOVERY: PREFER RESOURCES AND RAG OVER PAGINATED TOOL SCANS
 -------------------------------------------------------------
