@@ -247,9 +247,7 @@ def register(ctx: PluginContext) -> None:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
                 if preflight_count:
-                    total = len(
-                        list(ml.find_datasets(deleted=include_deleted))
-                    )
+                    total = len(list(ml.find_datasets(deleted=include_deleted)))
                     return json.dumps(
                         {
                             "total_count": total,

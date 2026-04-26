@@ -1,0 +1,533 @@
+"""Unit tests for resources/ml.py (9 ML-domain MCP resources).
+
+Resources are read-only and emit no audit on success or failure. The
+fixture wires ``mock_ml`` into the resources/ml.py registration call so
+each test can stub the deriva-ml call surface independently.
+
+Coverage target: at least 18 tests (2 per resource * 9 resources). List
+resources also get a ``truncated`` test; detail resources get a 404 path.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+
+@pytest.fixture()
+def resource_ctx(ctx, mock_ml):
+    """Register resources/ml.py with mock_ml as the DerivaML stand-in.
+
+    Patches at the use-site (``deriva_ml_mcp.resources.ml.get_ml``) and
+    imports the module *inside* the patch block so registration sees the
+    mock.
+    """
+    with patch("deriva_ml_mcp.resources.ml.get_ml", return_value=mock_ml):
+        from deriva_ml_mcp.resources import ml as ml_resources
+
+        ml_resources.register(ctx)
+        yield ctx
+
+
+# ---------------------------------------------------------------------------
+# Test helpers
+# ---------------------------------------------------------------------------
+
+
+_DATASETS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/datasets"
+_DATASET_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}"
+_DATASET_MEMBERS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/members"
+_WORKFLOWS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/workflows"
+_WORKFLOW_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{workflow_rid}"
+_EXECUTIONS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/executions"
+_EXECUTION_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}"
+_FEATURES_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}"
+_REGISTRIES_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/registries"
+
+
+def _make_dataset_mock(
+    rid: str,
+    description: str = "",
+    dataset_types: list[str] | None = None,
+    current_version: str = "0.1.0",
+    chaise_url: str = "https://example.org/chaise",
+) -> MagicMock:
+    ds = MagicMock()
+    ds.dataset_rid = rid
+    ds.description = description
+    ds.dataset_types = dataset_types or []
+    ds.current_version = current_version
+    ds.get_chaise_url.return_value = chaise_url
+    return ds
+
+
+def _make_workflow_mock(
+    rid: str = "1-WF",
+    name: str = "MyPipeline",
+    workflow_type: list[str] | None = None,
+    url: str = "https://github.com/example/repo",
+    checksum: str = "abc123",
+    version: str = "1.0.0",
+    description: str = "",
+) -> MagicMock:
+    wf = MagicMock()
+    wf.rid = rid
+    wf.name = name
+    wf.workflow_type = workflow_type or ["Model_Training"]
+    wf.url = url
+    wf.checksum = checksum
+    wf.version = version
+    wf.description = description
+    return wf
+
+
+def _make_execution_record_mock(
+    rid: str = "1-EXEC",
+    workflow_rid: str = "1-WF",
+    description: str = "",
+) -> MagicMock:
+    from deriva_ml.execution.execution import ExecutionStatus
+
+    record = MagicMock()
+    record.execution_rid = rid
+    record.workflow_rid = workflow_rid
+    workflow = MagicMock()
+    workflow.rid = workflow_rid
+    record.workflow = workflow
+    record.status = ExecutionStatus.Stopped
+    record.description = description
+    record.start_time = datetime(2026, 1, 1, 12, 0, 0)
+    record.stop_time = datetime(2026, 1, 1, 12, 30, 0)
+    record.duration = "0:30:00"
+    record.list_input_datasets.return_value = []
+    record.list_assets.return_value = []
+    return record
+
+
+def _make_feature_mock(
+    feature_name: str,
+    target_table: str = "Image",
+    feature_table: str = "Execution_Image_Quality",
+) -> MagicMock:
+    feature = MagicMock()
+    feature.feature_name = feature_name
+    feature.target_table = MagicMock()
+    feature.target_table.name = target_table
+    feature.feature_table = MagicMock()
+    feature.feature_table.name = feature_table
+    feature.term_columns = []
+    feature.asset_columns = []
+    feature.value_columns = []
+    return feature
+
+
+def _make_vocab_term_mock(name: str, description: str = "") -> MagicMock:
+    term = MagicMock()
+    term.name = name
+    term.description = description
+    term.synonyms = []
+    term.rid = f"VRID-{name}"
+    return term
+
+
+# ---------------------------------------------------------------------------
+# Resource registration smoke test
+# ---------------------------------------------------------------------------
+
+
+def test_register_adds_nine_resources(resource_ctx, capturing_mcp):
+    """resources/ml.py.register() must register exactly 9 URIs."""
+    expected = {
+        "deriva://catalog/{hostname}/{catalog_id}/ml/datasets",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/members",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/workflows",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{workflow_rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/executions",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/registries",
+    }
+    actual = set(capturing_mcp.resources.keys())
+    assert actual == expected, (
+        f"missing: {sorted(expected - actual)}; extra: {sorted(actual - expected)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# ml/datasets
+# ---------------------------------------------------------------------------
+
+
+async def test_ml_datasets_success(resource_ctx, capturing_mcp, mock_ml):
+    mock_ml.find_datasets.return_value = [
+        _make_dataset_mock("1-AAAA", "first", ["Training"], "1.0.0"),
+        _make_dataset_mock("1-BBBB", "second", ["Testing"], "1.1.0"),
+    ]
+    out = json.loads(await capturing_mcp.resources[_DATASETS_URI](hostname="h", catalog_id="1"))
+    assert out["count"] == 2
+    assert out["truncated"] is False
+    assert {d["rid"] for d in out["datasets"]} == {"1-AAAA", "1-BBBB"}
+
+
+async def test_ml_datasets_truncated_at_max_limit(resource_ctx, capturing_mcp, mock_ml):
+    """1001 datasets truncates to 1000 and sets ``truncated=True``."""
+    mock_ml.find_datasets.return_value = [_make_dataset_mock(f"1-{i:04d}") for i in range(1001)]
+    out = json.loads(await capturing_mcp.resources[_DATASETS_URI](hostname="h", catalog_id="1"))
+    assert out["count"] == 1000
+    assert out["truncated"] is True
+    assert out["next_after_rid"] == "1-0999"
+
+
+async def test_ml_datasets_error_path_is_silent(resource_ctx, capturing_mcp, mock_ml):
+    """Errors return ``{"error": ...}`` and emit NO audit (resource is read-only)."""
+    mock_ml.find_datasets.side_effect = RuntimeError("kaboom")
+    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+        out = json.loads(await capturing_mcp.resources[_DATASETS_URI](hostname="h", catalog_id="1"))
+    assert out == {"error": "kaboom"}
+    assert mock_audit.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# ml/dataset/{dataset_rid}
+# ---------------------------------------------------------------------------
+
+
+async def test_ml_dataset_detail_includes_version_history(resource_ctx, capturing_mcp, mock_ml):
+    ds = _make_dataset_mock("1-AAAA", "desc", ["Training"], "1.0.0")
+    history_entry = MagicMock()
+    history_entry.dataset_version = "1.0.0"
+    history_entry.snapshot = "snap1"
+    history_entry.description = "v1"
+    history_entry.execution_rid = "EXEC-1"
+    ds.dataset_history.return_value = [history_entry]
+    mock_ml.lookup_dataset.return_value = ds
+
+    out = json.loads(
+        await capturing_mcp.resources[_DATASET_DETAIL_URI](
+            hostname="h", catalog_id="1", dataset_rid="1-AAAA"
+        )
+    )
+    assert out["rid"] == "1-AAAA"
+    assert out["chaise_url"] == "https://example.org/chaise"
+    assert out["version_history"] == [
+        {
+            "version": "1.0.0",
+            "snapshot": "snap1",
+            "description": "v1",
+            "execution_rid": "EXEC-1",
+        }
+    ]
+
+
+async def test_ml_dataset_detail_not_found(resource_ctx, capturing_mcp, mock_ml):
+    """A missing RID returns ``{"error": ...}`` with no audit."""
+    mock_ml.lookup_dataset.side_effect = RuntimeError("Dataset not found")
+    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+        out = json.loads(
+            await capturing_mcp.resources[_DATASET_DETAIL_URI](
+                hostname="h", catalog_id="1", dataset_rid="missing"
+            )
+        )
+    assert out == {"error": "Dataset not found"}
+    assert mock_audit.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# ml/dataset/{dataset_rid}/members
+# ---------------------------------------------------------------------------
+
+
+async def test_ml_dataset_members_success(resource_ctx, capturing_mcp, mock_ml):
+    ds = _make_dataset_mock("1-AAAA")
+    ds.list_dataset_members.return_value = {
+        "Image": [{"RID": "i1"}, {"RID": "i2"}, {"RID": "i3"}],
+        "Subject": [{"RID": "s1"}],
+    }
+    mock_ml.lookup_dataset.return_value = ds
+    out = json.loads(
+        await capturing_mcp.resources[_DATASET_MEMBERS_URI](
+            hostname="h", catalog_id="1", dataset_rid="1-AAAA"
+        )
+    )
+    assert out["dataset_rid"] == "1-AAAA"
+    assert out["summary"] == {"Image": 3, "Subject": 1}
+    assert out["total_count"] == 4
+    assert out["truncated"] is False
+    assert sorted(out["tables"]) == ["Image", "Subject"]
+    rids = {m["rid"] for m in out["members"]}
+    assert rids == {"i1", "i2", "i3", "s1"}
+
+
+async def test_ml_dataset_members_truncated(resource_ctx, capturing_mcp, mock_ml):
+    """When >1000 members across tables, the flattened list is capped."""
+    ds = _make_dataset_mock("1-AAAA")
+    ds.list_dataset_members.return_value = {
+        "Image": [{"RID": f"i{i}"} for i in range(1500)],
+    }
+    mock_ml.lookup_dataset.return_value = ds
+    out = json.loads(
+        await capturing_mcp.resources[_DATASET_MEMBERS_URI](
+            hostname="h", catalog_id="1", dataset_rid="1-AAAA"
+        )
+    )
+    assert out["total_count"] == 1500
+    assert len(out["members"]) == 1000
+    assert out["truncated"] is True
+
+
+async def test_ml_dataset_members_error_path(resource_ctx, capturing_mcp, mock_ml):
+    mock_ml.lookup_dataset.side_effect = RuntimeError("nope")
+    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+        out = json.loads(
+            await capturing_mcp.resources[_DATASET_MEMBERS_URI](
+                hostname="h", catalog_id="1", dataset_rid="bad"
+            )
+        )
+    assert out == {"error": "nope"}
+    assert mock_audit.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# ml/workflows
+# ---------------------------------------------------------------------------
+
+
+async def test_ml_workflows_success(resource_ctx, capturing_mcp, mock_ml):
+    mock_ml.find_workflows.return_value = [
+        _make_workflow_mock(rid="1-AAA", name="A"),
+        _make_workflow_mock(rid="1-BBB", name="B"),
+    ]
+    out = json.loads(await capturing_mcp.resources[_WORKFLOWS_URI](hostname="h", catalog_id="1"))
+    assert out["count"] == 2
+    assert {w["rid"] for w in out["workflows"]} == {"1-AAA", "1-BBB"}
+    assert out["truncated"] is False
+
+
+async def test_ml_workflows_error_path(resource_ctx, capturing_mcp, mock_ml):
+    mock_ml.find_workflows.side_effect = RuntimeError("kaboom")
+    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+        out = json.loads(
+            await capturing_mcp.resources[_WORKFLOWS_URI](hostname="h", catalog_id="1")
+        )
+    assert out == {"error": "kaboom"}
+    assert mock_audit.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# ml/workflow/{workflow_rid}
+# ---------------------------------------------------------------------------
+
+
+async def test_ml_workflow_detail_success(resource_ctx, capturing_mcp, mock_ml):
+    mock_ml.lookup_workflow.return_value = _make_workflow_mock(rid="1-WF", name="Pipe")
+    out = json.loads(
+        await capturing_mcp.resources[_WORKFLOW_DETAIL_URI](
+            hostname="h", catalog_id="1", workflow_rid="1-WF"
+        )
+    )
+    assert out["rid"] == "1-WF"
+    assert out["name"] == "Pipe"
+    assert out["url"] == "https://github.com/example/repo"
+    mock_ml.lookup_workflow.assert_called_once_with("1-WF")
+
+
+async def test_ml_workflow_detail_not_found(resource_ctx, capturing_mcp, mock_ml):
+    mock_ml.lookup_workflow.side_effect = RuntimeError("Workflow not found")
+    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+        out = json.loads(
+            await capturing_mcp.resources[_WORKFLOW_DETAIL_URI](
+                hostname="h", catalog_id="1", workflow_rid="missing"
+            )
+        )
+    assert out == {"error": "Workflow not found"}
+    assert mock_audit.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# ml/executions
+# ---------------------------------------------------------------------------
+
+
+async def test_ml_executions_success(resource_ctx, capturing_mcp, mock_ml):
+    mock_ml.find_executions.return_value = [
+        _make_execution_record_mock(rid="1-AAA"),
+        _make_execution_record_mock(rid="1-BBB"),
+    ]
+    out = json.loads(await capturing_mcp.resources[_EXECUTIONS_URI](hostname="h", catalog_id="1"))
+    assert out["count"] == 2
+    assert {e["rid"] for e in out["executions"]} == {"1-AAA", "1-BBB"}
+    assert out["truncated"] is False
+
+
+async def test_ml_executions_error_path(resource_ctx, capturing_mcp, mock_ml):
+    mock_ml.find_executions.side_effect = RuntimeError("boom")
+    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+        out = json.loads(
+            await capturing_mcp.resources[_EXECUTIONS_URI](hostname="h", catalog_id="1")
+        )
+    assert out == {"error": "boom"}
+    assert mock_audit.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# ml/execution/{execution_rid}
+# ---------------------------------------------------------------------------
+
+
+async def test_ml_execution_detail_includes_inputs_outputs_metadata(
+    resource_ctx, capturing_mcp, mock_ml
+):
+    """Detail bundles inputs, outputs, metadata, and (null) experiment."""
+    record = _make_execution_record_mock(rid="1-EXEC", workflow_rid="1-WF")
+
+    # Stub one input dataset.
+    input_ds = MagicMock()
+    input_ds.dataset_rid = "1-DS"
+    input_ds.current_version = "1.0.0"
+    record.list_input_datasets.return_value = [input_ds]
+
+    # Stub one input asset and one output asset.
+    input_asset = MagicMock()
+    input_asset.asset_rid = "1-IN"
+    input_asset.filename = "in.txt"
+    output_asset = MagicMock()
+    output_asset.asset_rid = "1-OUT"
+    output_asset.filename = "out.txt"
+
+    def _list_assets(asset_role: str | None = None):
+        if asset_role == "Input":
+            return [input_asset]
+        if asset_role == "Output":
+            return [output_asset]
+        return [input_asset, output_asset]
+
+    record.list_assets.side_effect = _list_assets
+    mock_ml.lookup_execution.return_value = record
+
+    out = json.loads(
+        await capturing_mcp.resources[_EXECUTION_DETAIL_URI](
+            hostname="h", catalog_id="1", execution_rid="1-EXEC"
+        )
+    )
+    assert out["rid"] == "1-EXEC"
+    assert out["status"] == "Stopped"
+    assert out["inputs"] == {
+        "datasets": [{"rid": "1-DS", "version": "1.0.0"}],
+        "assets": [{"rid": "1-IN", "filename": "in.txt"}],
+    }
+    assert out["outputs"] == {
+        "assets": [{"rid": "1-OUT", "filename": "out.txt"}],
+    }
+    # Metadata bucket includes hydra_config key (currently null until upstream API).
+    assert "hydra_config" in out["metadata"]
+    assert out["metadata"]["hydra_config"] is None
+    # experiment key always present (None until upstream detection API).
+    assert out["experiment"] is None
+
+
+async def test_ml_execution_detail_not_found(resource_ctx, capturing_mcp, mock_ml):
+    mock_ml.lookup_execution.side_effect = RuntimeError("Execution not found")
+    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+        out = json.loads(
+            await capturing_mcp.resources[_EXECUTION_DETAIL_URI](
+                hostname="h", catalog_id="1", execution_rid="missing"
+            )
+        )
+    assert out == {"error": "Execution not found"}
+    assert mock_audit.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# ml/features/{table_name}
+# ---------------------------------------------------------------------------
+
+
+async def test_ml_features_for_table_success(resource_ctx, capturing_mcp, mock_ml):
+    mock_ml.find_features.return_value = [
+        _make_feature_mock(
+            "Quality", target_table="Image", feature_table="Execution_Image_Quality"
+        ),
+        _make_feature_mock("Tag", target_table="Image", feature_table="Execution_Image_Tag"),
+    ]
+    out = json.loads(
+        await capturing_mcp.resources[_FEATURES_URI](
+            hostname="h", catalog_id="1", table_name="Image"
+        )
+    )
+    assert out["count"] == 2
+    assert {f["feature_name"] for f in out["features"]} == {"Quality", "Tag"}
+    mock_ml.find_features.assert_called_once_with(table="Image")
+
+
+async def test_ml_features_for_table_error_path(resource_ctx, capturing_mcp, mock_ml):
+    mock_ml.find_features.side_effect = RuntimeError("nope")
+    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+        out = json.loads(
+            await capturing_mcp.resources[_FEATURES_URI](
+                hostname="h", catalog_id="1", table_name="Image"
+            )
+        )
+    assert out == {"error": "nope"}
+    assert mock_audit.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# ml/registries
+# ---------------------------------------------------------------------------
+
+
+async def test_ml_registries_bundles_four_vocabularies(resource_ctx, capturing_mcp, mock_ml):
+    """Registries snapshot returns the four ML vocabularies as parallel lists."""
+
+    def _terms_for(table_name):
+        if table_name == "Dataset_Type":
+            return [_make_vocab_term_mock("Training"), _make_vocab_term_mock("Testing")]
+        if table_name == "Workflow_Type":
+            return [_make_vocab_term_mock("Model_Training")]
+        if table_name == "Asset_Type":
+            return [_make_vocab_term_mock("Image")]
+        if table_name == "Execution_Status":
+            return [_make_vocab_term_mock("Created"), _make_vocab_term_mock("Running")]
+        return []
+
+    mock_ml.list_vocabulary_terms.side_effect = _terms_for
+
+    out = json.loads(await capturing_mcp.resources[_REGISTRIES_URI](hostname="h", catalog_id="1"))
+    assert {t["name"] for t in out["dataset_types"]} == {"Training", "Testing"}
+    assert {t["name"] for t in out["workflow_types"]} == {"Model_Training"}
+    assert {t["name"] for t in out["asset_types"]} == {"Image"}
+    assert {t["name"] for t in out["execution_statuses"]} == {"Created", "Running"}
+
+
+async def test_ml_registries_missing_vocab_yields_empty_list(resource_ctx, capturing_mcp, mock_ml):
+    """A vocab table that raises (e.g. doesn't exist) maps to ``[]`` -- best-effort."""
+
+    def _terms_for(table_name):
+        if table_name == "Dataset_Type":
+            return [_make_vocab_term_mock("Training")]
+        raise RuntimeError(f"table {table_name} not found")
+
+    mock_ml.list_vocabulary_terms.side_effect = _terms_for
+
+    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+        out = json.loads(
+            await capturing_mcp.resources[_REGISTRIES_URI](hostname="h", catalog_id="1")
+        )
+    # The successful vocab still lands; the failed ones are silently empty.
+    assert out["dataset_types"] == [
+        {
+            "name": "Training",
+            "description": "",
+            "synonyms": [],
+            "rid": "VRID-Training",
+        }
+    ]
+    assert out["workflow_types"] == []
+    assert out["asset_types"] == []
+    assert out["execution_statuses"] == []
+    # No audit on the per-vocab failures (resource is read-only).
+    assert mock_audit.call_count == 0

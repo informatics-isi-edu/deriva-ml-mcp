@@ -357,9 +357,7 @@ def register(ctx: PluginContext) -> None:
                 ml = get_ml(hostname, catalog_id)
                 if preflight_count:
                     status_enum = ExecutionStatus(status) if status else None
-                    total = len(
-                        list(ml.find_executions(workflow=workflow_rid, status=status_enum))
-                    )
+                    total = len(list(ml.find_executions(workflow=workflow_rid, status=status_enum)))
                     return json.dumps(
                         {
                             "total_count": total,
