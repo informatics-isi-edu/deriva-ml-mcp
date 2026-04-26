@@ -69,9 +69,27 @@ _WORKFLOW_TOOLS = frozenset(
     }
 )
 
-# Union of all per-domain tool sets. Phase 4 registers dataset + feature
-# + workflow; Phase 5+ adds ``| _EXECUTION_TOOLS``, etc.
-_ALL_REGISTERED_TOOLS = _DATASET_TOOLS | _FEATURE_TOOLS | _WORKFLOW_TOOLS
+_EXECUTION_TOOLS = frozenset(
+    {
+        # Read-only tools
+        "list_executions",
+        "get_execution",
+        "find_workflow_executions",
+        "list_execution_children",
+        "list_execution_parents",
+        # Mutation tools
+        "create_execution",
+        "start_execution",
+        "commit_execution",
+        "abort_execution",
+        "create_execution_dataset",
+        "add_nested_execution",
+    }
+)
+
+# Union of all per-domain tool sets. Phase 5 registers dataset + feature
+# + workflow + execution.
+_ALL_REGISTERED_TOOLS = _DATASET_TOOLS | _FEATURE_TOOLS | _WORKFLOW_TOOLS | _EXECUTION_TOOLS
 
 
 def test_register_runs_without_error(ctx):

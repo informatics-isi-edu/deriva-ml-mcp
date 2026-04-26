@@ -165,7 +165,12 @@ async def test_workflow_round_trip(
     hostname, catalog_id = demo_mutation_catalog
     tools = integration_workflow_tools.tools
 
-    # 1. Baseline: empty catalog.
+    # 1. Baseline: capture pre-existing count. The
+    #    ``demo_mutation_catalog`` fixture is session-scoped and shared
+    #    with ``test_integration_execution.py`` — that file's two tests
+    #    create their own workflows during the same session, so by the
+    #    time this test runs, the catalog may already contain workflow
+    #    rows. We track the baseline rather than asserting zero.
     list_out = json.loads(await tools["list_workflows"](hostname=hostname, catalog_id=catalog_id))
     assert "workflows" in list_out
     assert "count" in list_out
@@ -174,8 +179,6 @@ async def test_workflow_round_trip(
     assert isinstance(list_out["workflows"], list)
     baseline_count = list_out["count"]
     assert baseline_count == len(list_out["workflows"])
-    # Demo catalog with populate=False ships zero workflows.
-    assert baseline_count == 0
     assert list_out["truncated"] is False
     assert list_out["next_after_rid"] is None
 
