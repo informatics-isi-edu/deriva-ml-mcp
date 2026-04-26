@@ -23,12 +23,14 @@ from deriva_mcp_core import deriva_call
 from deriva_mcp_core.telemetry import audit_event
 from deriva_ml.feature import FeatureRecord
 
-# Note on testing audit_event: see _patch_feature_audit() in
-# tests/test_feature.py. Single-patch facade is impossible due to
-# Python's `from X import name` import binding semantics — tests must
-# patch BOTH `deriva_ml_mcp.tools.feature.audit_event` (this module's
-# success-path emission) and `deriva_ml_mcp._helpers.audit_event` (the
-# failure-path emission inside `_error_envelope`).
+# Note on testing audit_event: see `make_patch_audit("feature")` in
+# `tests/conftest.py` (the canonical factory; bound per-file as
+# `_patch_feature_audit = make_patch_audit("feature")`). Single-patch
+# facade is impossible due to Python's `from X import name` import
+# binding semantics — tests must patch BOTH
+# `deriva_ml_mcp.tools.feature.audit_event` (this module's success-path
+# emission) and `deriva_ml_mcp._helpers.audit_event` (the failure-path
+# emission inside `_error_envelope`).
 from deriva_ml_mcp._helpers import (
     _MAX_LIMIT,
     _error_envelope,

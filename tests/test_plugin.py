@@ -57,9 +57,21 @@ _FEATURE_TOOLS = frozenset(
     }
 )
 
-# Union of all per-domain tool sets. Phase 3 registers dataset + feature;
-# Phase 4+ adds ``| _WORKFLOW_TOOLS``, ``| _EXECUTION_TOOLS``, etc.
-_ALL_REGISTERED_TOOLS = _DATASET_TOOLS | _FEATURE_TOOLS
+_WORKFLOW_TOOLS = frozenset(
+    {
+        # Read-only tools
+        "list_workflows",
+        "get_workflow",
+        "find_workflow_by_url",
+        # Mutation tools
+        "create_workflow",
+        "update_workflow",
+    }
+)
+
+# Union of all per-domain tool sets. Phase 4 registers dataset + feature
+# + workflow; Phase 5+ adds ``| _EXECUTION_TOOLS``, etc.
+_ALL_REGISTERED_TOOLS = _DATASET_TOOLS | _FEATURE_TOOLS | _WORKFLOW_TOOLS
 
 
 def test_register_runs_without_error(ctx):

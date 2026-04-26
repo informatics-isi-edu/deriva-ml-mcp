@@ -16,8 +16,9 @@ from __future__ import annotations
 import os
 import socket
 from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from deriva_mcp_core.plugin.api import PluginContext, _set_plugin_context
@@ -52,6 +53,51 @@ def _success_calls(mock_audit: Any, event_name: str) -> list:
         '1-AAAA'
     """
     return [c for c in mock_audit.call_args_list if c.args and c.args[0] == event_name]
+
+
+def make_patch_audit(module_name: str):
+    """Build a dual-patch context manager for a domain module's audit_event.
+
+    Each domain tool module imports ``audit_event`` from
+    ``deriva_mcp_core.telemetry`` directly (success-path emission). The
+    failure path goes through ``_error_envelope`` in ``_helpers``, which
+    has its own bound name. To capture both with one mock, we patch BOTH
+    ``deriva_ml_mcp.tools.<module_name>.audit_event`` and
+    ``deriva_ml_mcp._helpers.audit_event`` to the same MagicMock.
+
+    Why two patches: Python's ``from X import name`` binds ``name`` in
+    the importing module's namespace at import time, so patching only
+    the source module wouldn't redirect calls in modules that already
+    bound the name. See ``_helpers.py`` docstring for the canonical
+    explanation.
+
+    Args:
+        module_name: Bare domain module name (e.g. ``"dataset"``,
+            ``"feature"``, ``"workflow"``). Used to construct the import
+            path ``deriva_ml_mcp.tools.<module_name>.audit_event``.
+
+    Returns:
+        A no-arg context manager. Entering yields a single
+        ``MagicMock`` that has been substituted into both bind sites.
+
+    Example:
+        >>> _patch_workflow_audit = make_patch_audit("workflow")
+        >>> with _patch_workflow_audit() as mock_audit:  # doctest: +SKIP
+        ...     # ... invoke a workflow tool ...
+        ...     pass
+        >>> # mock_audit captures both success and failure-path audits
+    """
+    target = f"deriva_ml_mcp.tools.{module_name}.audit_event"
+
+    @contextmanager
+    def _patch():
+        with (
+            patch(target) as mock_audit,
+            patch("deriva_ml_mcp._helpers.audit_event", new=mock_audit),
+        ):
+            yield mock_audit
+
+    return _patch
 
 
 class _CapturingMCP:
@@ -187,6 +233,50 @@ def demo_catalog(deriva_host: str) -> Iterator[tuple[str, str]]:
         deriva_host,
         domain_schema="demo-schema",
         project_name="ml-mcp-int-test",
+        populate=False,
+        create_features=False,
+        create_datasets=False,
+        on_exit_delete=False,
+    )
+    try:
+        yield deriva_host, str(catalog.catalog_id)
+    finally:
+        destroy_demo_catalog(catalog)
+
+
+@pytest.fixture(scope="session")
+def demo_mutation_catalog(deriva_host: str) -> Iterator[tuple[str, str]]:
+    """Dedicated demo catalog for write-side integration tests.
+
+    Distinct from ``demo_catalog`` so mutation tests (workflow create,
+    and — once Phase 5 lands — execution create) cannot pollute the
+    read-only fixture. Read-side tests assert empty-catalog invariants
+    (e.g. ``count == 0``) that would break if a workflow row were
+    created in the same catalog earlier in the session.
+
+    Same shape as ``demo_catalog`` (empty schema, no populated rows
+    or datasets) — only the identity differs. Session-scoped, so the
+    ~10s catalog provisioning cost is paid once for the whole mutation
+    test surface.
+
+    Args:
+        deriva_host: Hostname injected by the ``deriva_host`` fixture.
+
+    Yields:
+        ``(hostname, catalog_id)`` tuple. ``catalog_id`` is stringified
+        because tool signatures take it as ``str``.
+
+    Example:
+        >>> def test_workflow_round_trip(demo_mutation_catalog):  # doctest: +SKIP
+        ...     host, catalog_id = demo_mutation_catalog
+        ...     # ... call create_workflow, update_workflow, etc. ...
+    """
+    from deriva_ml.demo_catalog import create_demo_catalog, destroy_demo_catalog
+
+    catalog = create_demo_catalog(
+        deriva_host,
+        domain_schema="demo-schema",
+        project_name="ml-mcp-int-mut",
         populate=False,
         create_features=False,
         create_datasets=False,
