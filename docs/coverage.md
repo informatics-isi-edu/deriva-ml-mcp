@@ -180,30 +180,24 @@ These 52 old `deriva-mcp` tools were never analyzed in the per-domain phases (2-
 
 ## Upstream gaps (Phase 6 RAG)
 
-Two `deriva-mcp-core` limitations are tracked here so the ML plugin doesn't
-work around them locally. Filed as upstream issues during Phase 6.6:
+One open `deriva-mcp-core` limitation. The other (issue #1) was filed during
+Phase 6.6 and landed upstream in commit
+[`0aef9fc`](https://github.com/informatics-isi-edu/deriva-mcp-core/commit/0aef9fc)
+during the v1.0 polish sprint -- `rag_search` now filters `data:` sources by
+user_id symmetrically with the schema-source filter, closing the cross-user
+read leak. The plugin no longer carries a TODO marker for it.
 
-1. **`rag_search` does not filter `data:` sources by user_id**
-   ([deriva-mcp-core#1](https://github.com/informatics-isi-edu/deriva-mcp-core/issues/1)).
-   The schema-source filter at `rag/tools.py:405-412` is asymmetric -- it gates
-   `schema:` chunks via the calling user's `_user_schema_hashes` entry, but
-   `data:` and `enriched:` chunks are returned verbatim regardless of
-   source-name `user_id`. The ML plugin partitions writes correctly via
-   `data_source_name(host, cat, user_id)`, but until the symmetric filter
-   lands upstream, any user with read access to the vector store can match
-   against another user's chunks by source name.
+Still open:
 
-2. **`index_table_data` hardcodes `doc_type="catalog-data"`**
-   ([deriva-mcp-core#2](https://github.com/informatics-isi-edu/deriva-mcp-core/issues/2);
-   `rag/data.py` lines 138, 142). Plugins cannot tag per-user catalog chunks
-   with a domain-specific doc_type, so `rag_search(doc_type="ml-dataset")`
-   cannot distinguish Dataset chunks from Workflow or Execution chunks. The
-   rendered Markdown header (`## Dataset: <RID>`) still tags chunks
-   inline for the LLM. Fix is a one-line `doc_type` parameter addition
-   upstream.
-
-Both fixes are mechanical. The plugin uses `# TODO(upstream-rag-userfilter)`
-and `# TODO(upstream-rag-doctype)` markers at the affected call sites.
+- **`index_table_data` hardcodes `doc_type="catalog-data"`**
+  ([deriva-mcp-core#2](https://github.com/informatics-isi-edu/deriva-mcp-core/issues/2);
+  `rag/data.py` lines 138, 142). Plugins cannot tag per-user catalog chunks
+  with a domain-specific doc_type, so `rag_search(doc_type="ml-dataset")`
+  cannot distinguish Dataset chunks from Workflow or Execution chunks. The
+  rendered Markdown header (`## Dataset: <RID>`) still tags chunks
+  inline for the LLM. Fix is a one-line `doc_type` parameter addition
+  upstream. The plugin marks the gap with `# TODO(upstream-rag-doctype)` at
+  the `index_table_data` call site in `resources/rag.py`.
 
 ## Validation (Phase 7+)
 

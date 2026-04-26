@@ -37,12 +37,6 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-# TODO(upstream-rag-userfilter): tracked as deriva-mcp-core#1
-# (https://github.com/informatics-isi-edu/deriva-mcp-core/issues/1).
-# rag_search must filter data: sources by user_id (symmetric to the
-# existing schema-source filter). Until it lands, any user with read
-# access to the vector store can match against another user's chunks by
-# source name. See docs/coverage.md "Upstream gaps (Phase 6 RAG)".
 from deriva_mcp_core.context import resolve_user_identity
 from deriva_mcp_core.rag import get_rag_store
 from deriva_mcp_core.rag.data import RowSerializer, index_table_data
