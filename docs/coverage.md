@@ -58,6 +58,91 @@ for column meanings, disposition definitions, and maintenance rules.
 
 | old_uri | old_module | disposition | new_uri | new_module | notes |
 |---|---|---|---|---|---|
+| deriva://server/version | resources.py | dropped-to-core | deriva://server/status | (core) | Core's `deriva://server/status` already returns version + auth + RAG state |
+| deriva://config/deriva-ml-template | resources.py | deferred | (none) | (none) | Hydra-zen Python template; belongs in `deriva-skills` (consumer of these patterns), not as an MCP resource. Phase 6+ follow-up via prompts |
+| deriva://config/dataset-spec-template | resources.py | deferred | (none) | (none) | Hydra-zen Python template; same disposition as `config/deriva-ml-template` |
+| deriva://config/execution-template | resources.py | deferred | (none) | (none) | Hydra-zen Python template; same disposition as `config/deriva-ml-template` |
+| deriva://config/model-template | resources.py | deferred | (none) | (none) | Hydra-zen Python template; same disposition as `config/deriva-ml-template` |
+| deriva://config/experiment-template | resources.py | deferred | (none) | (none) | Hydra-zen Python template; same disposition as `config/deriva-ml-template` |
+| deriva://config/multirun-template | resources.py | deferred | (none) | (none) | Hydra-zen Python template; same disposition as `config/deriva-ml-template` |
+| deriva://catalog/schema | resources.py | dropped-to-core | deriva://catalog/{h}/{c}/schema | (core) | Core ships full ERMrest schema JSON keyed on hostname/catalog_id |
+| deriva://catalog/vocabularies | resources.py | dropped-redundant | (none) | (none) | Iterating all vocab tables can be done with core `lookup_term` per-vocab plus the `registries` snapshot for the 4 ML vocabs. No global "all vocabs" payload needed at MCP level — it grows unboundedly |
+| deriva://catalog/datasets | resources.py | kept | deriva://catalog/{h}/{c}/ml/datasets | resources/ml.py | Lists datasets with rid/description/types/version. Same payload shape, catalog-scoped |
+| deriva://catalog/dataset-element-types | resources.py | dropped-redundant | list_dataset_element_types | tools/dataset.py | Already exposed as a tool in Phase 2; resource form is duplicate surface |
+| deriva://catalog/workflows | resources.py | kept | deriva://catalog/{h}/{c}/ml/workflows | resources/ml.py | Lists workflows with rid/name/url/type/description. Same payload, catalog-scoped |
+| deriva://catalog/workflow-types | resources.py | merged | deriva://catalog/{h}/{c}/ml/registries | resources/ml.py | Folded into the `registries` one-shot snapshot alongside dataset_types/asset_types/execution_statuses |
+| deriva://catalog/features | resources.py | dropped-redundant | list_features | tools/feature.py | `list_features` (Phase 3) returns feature names; resource form duplicates the tool |
+| deriva://catalog/tables | resources.py | dropped-to-core | deriva://catalog/{h}/{c}/tables | (core) | Core ships flat list of {schema, table, comment} for every non-system table |
+| deriva://catalog/dataset-types | resources.py | merged | deriva://catalog/{h}/{c}/ml/registries | resources/ml.py | Folded into the `registries` one-shot snapshot |
+| deriva://dataset/{dataset_rid} | resources.py | kept | deriva://catalog/{h}/{c}/ml/dataset/{dataset_rid} | resources/ml.py | Detail payload: description, types, current_version, member_counts, children, parents, version_history. Drops the old `_related_docs`/`_related_data` RAG side-channel — RAG enrichment is now caller-driven via `rag_search` |
+| deriva://dataset/{dataset_rid}/members | resources.py | kept | deriva://catalog/{h}/{c}/ml/dataset/{dataset_rid}/members | resources/ml.py | Members grouped by table with RIDs and counts. Same shape, catalog-scoped |
+| deriva://dataset/{dataset_rid}/versions | resources.py | merged | deriva://catalog/{h}/{c}/ml/dataset/{dataset_rid} | resources/ml.py | Version history is included as `version_history` key in the dataset detail payload (matches old `dataset/{rid}` behavior). No separate URI needed — full history is bounded per dataset |
+| deriva://dataset/{dataset_rid}/bag-preview | resources.py | deferred | (none) | (none) | FK-path debugging for bag exports. Specialized concern; revisit when bag-export tooling matures |
+| deriva://catalog/element-type-paths | resources.py | deferred | (none) | (none) | FK-path debugging across all element types. Same disposition as `bag-preview` |
+| deriva://table/{table_name}/features | resources.py | kept | deriva://catalog/{h}/{c}/ml/features/{table_name} | resources/ml.py | Features defined on a target table; same payload shape (name, target_table, feature_table, asset/term/value columns) |
+| deriva://feature/{table_name}/{feature_name} | resources.py | dropped-redundant | get_feature | tools/feature.py | `get_feature` (Phase 3) returns the same column-detail payload (term/asset/value cols, required_fields). The resource form is a tool duplicate |
+| deriva://feature/{table_name}/{feature_name}/values | resources.py | dropped-redundant | list_feature_values | tools/feature.py | `list_feature_values` covers the same data with selector and pagination support |
+| deriva://table/{table_name}/feature-values | resources.py | dropped-redundant | list_feature_values | tools/feature.py | `list_feature_values` (no selector) returns all rows; the per-table grouping is a client-side concern |
+| deriva://table/{table_name}/feature-values/newest | resources.py | dropped-redundant | list_feature_values | tools/feature.py | `list_feature_values(selector="newest")` covers it |
+| deriva://table/{table_name}/feature-values/first | resources.py | dropped-redundant | list_feature_values | tools/feature.py | `list_feature_values(selector="first")` covers it |
+| deriva://table/{table_name}/feature-values/majority_vote | resources.py | dropped-redundant | list_feature_values | tools/feature.py | `list_feature_values(selector="majority_vote")` covers it |
+| deriva://vocabulary/{vocab_name} | resources.py | dropped-to-core | lookup_term / list_vocabulary_terms | (core) | Per-vocab term listing belongs in core's vocab tools; the 4 ML-specific vocabs are also surfaced via `registries` |
+| deriva://vocabulary/{vocab_name}/{term_name} | resources.py | dropped-to-core | lookup_term | (core) | Single-term lookup is a core vocab tool |
+| deriva://table/{table_name}/schema | resources.py | dropped-to-core | deriva://catalog/{h}/{c}/table/{schema}/{table} | (core) | Core ships full ERMrest table definition (columns, FKs, annotations, keys) |
+| deriva://table/{table_name}/assets | resources.py | deferred | (none) | (none) | Asset listing per table. No ML-side asset tooling planned for Phase 6; revisit if asset workflows need MCP surface |
+| deriva://workflow/{workflow_rid} | resources.py | kept | deriva://catalog/{h}/{c}/ml/workflow/{workflow_rid} | resources/ml.py | Detail payload: name, type, description, url, checksum, version, is_notebook |
+| deriva://table/{table_name}/annotations | resources.py | dropped-to-core | deriva://catalog/{h}/{c}/table/{schema}/{table} | (core) | Annotations are part of the core table-definition payload |
+| deriva://table/{table_name}/column/{column_name}/annotations | resources.py | dropped-to-core | deriva://catalog/{h}/{c}/table/{schema}/{table} | (core) | Column annotations are nested in the core table-definition payload under `column_definitions` |
+| deriva://table/{table_name}/foreign-keys | resources.py | dropped-to-core | deriva://catalog/{h}/{c}/table/{schema}/{table} | (core) | Foreign keys (outbound and inbound) are part of the core table-definition payload |
+| deriva://docs/annotation-contexts | resources.py | dropped | (none) | (none) | Static reference doc about Chaise annotation contexts. Annotation tooling is core's territory; if needed, lives in core's docs subsystem, not the ML plugin |
+| deriva://docs/{suffix} (loop, 17 endpoints) | resources.py | renamed | rag_search(source="github:informatics-isi-edu/deriva-ml") | (core RAG) | The 17 docs endpoints (DerivaML overview/datasets/features/hydra-zen/notebooks/etc., ERMrest, Chaise, deriva-py guides) collapse into one GitHub-backed RAG source registered via `ctx.rag_github_source(...)` in Phase 6.3. Callers query via `rag_search` instead of one URI per topic |
+| deriva://catalog/asset-tables | resources.py | deferred | (none) | (none) | Asset-table listing. Could fold into a future `registries` extension or a dedicated assets resource. Out of Phase 6 scope |
+| deriva://catalog/assets | resources.py | deferred | (none) | (none) | Per-table asset summaries with counts. Same disposition as `catalog/asset-tables` |
+| deriva://asset/{asset_rid} | resources.py | dropped-to-core | get_record | (core) | Single-asset lookup is generic entity retrieval; core's `get_record` covers it |
+| deriva://catalog/executions | resources.py | kept | deriva://catalog/{h}/{c}/ml/executions | resources/ml.py | Recent executions (rid/workflow/status/description). Old form had a 50-row cap; new form will paginate via standard query params |
+| deriva://execution/{execution_rid} | resources.py | kept | deriva://catalog/{h}/{c}/ml/execution/{execution_rid} | resources/ml.py | Detail payload absorbs old `execution/{rid}` plus inputs+outputs+metadata as nested keys (see merged rows below) |
+| deriva://catalog/info | resources.py | dropped | (none) | (none) | Old "active connection" catalog summary. The implicit-connection model is dead; hostname/catalog_id are explicit on every resource URI now |
+| deriva://catalog/users | resources.py | dropped | (none) | (none) | Per-catalog user listing. No identified ML caller; if needed, belongs in core (catalog-level concern, not ML-domain) |
+| deriva://catalog/connections | resources.py | dropped | (none) | (none) | Old connection-singleton state. The new architecture has no implicit connections to enumerate |
+| deriva://chaise-url/{table_or_rid} | resources.py | dropped-to-core | (core) | (core) | Chaise URL synthesis is a generic catalog concern, not ML-specific. If core ships a `chaise_url` tool/resource, it lives there |
+| deriva://rid/{rid} | resources.py | dropped-to-core | (core) | (core) | RID resolution to {schema, table, url} is a generic catalog concern; belongs alongside core's catalog tools |
+| deriva://cite/{rid} | resources.py | dropped-to-core | cite | (core) | The `cite` tool already exists in the core MCP surface; no resource form needed |
+| deriva://registry/{hostname} | resources.py | dropped-to-core | list_catalog_registry | (core) | Server-level catalog/alias discovery is core's territory; tool form already exists |
+| deriva://alias/{hostname}/{alias_name} | resources.py | dropped-to-core | (core) | (core) | Per-alias metadata; same disposition as `registry/{hostname}` |
+| deriva://execution/{execution_rid}/inputs | resources.py | merged | deriva://catalog/{h}/{c}/ml/execution/{execution_rid} | resources/ml.py | Input datasets and assets returned as `inputs` key in the execution detail payload |
+| deriva://execution/{execution_rid}/outputs | resources.py | merged | deriva://catalog/{h}/{c}/ml/execution/{execution_rid} | resources/ml.py | Output assets grouped by table returned as `outputs` key in the execution detail payload |
+| deriva://execution/{execution_rid}/metadata | resources.py | merged | deriva://catalog/{h}/{c}/ml/execution/{execution_rid} | resources/ml.py | Auto-created metadata files (Deriva_Config, Hydra_Config, Execution_Config, Runtime_Env) returned as `metadata` key in the execution detail payload |
+| deriva://experiment/{execution_rid} | resources.py | merged | deriva://catalog/{h}/{c}/ml/execution/{execution_rid} | resources/ml.py | Experiment is just an execution with Hydra config; the summary fields fold into the execution detail payload's `experiment` key when present |
+| deriva://catalog/experiments | resources.py | dropped-redundant | deriva://catalog/{h}/{c}/ml/executions | resources/ml.py | An "experiment" is an execution with Hydra config; callers can filter the executions list. No separate URI |
+| deriva://storage/summary | resources.py | dropped | (none) | (none) | Local filesystem state (~/.deriva-ml/), not catalog state. Out of MCP scope |
+| deriva://storage/cache | resources.py | dropped | (none) | (none) | Local filesystem cache stats; same disposition as `storage/summary` |
+| deriva://storage/execution-dirs | resources.py | dropped | (none) | (none) | Local filesystem execution directories; same disposition as `storage/summary` |
+| deriva://cache/results | resources.py | dropped | (none) | (none) | Per-connection result cache from the dead connection-singleton era; no successor concept in the new architecture |
+
+## Upstream gaps (Phase 6 RAG)
+
+Two `deriva-mcp-core` limitations are tracked here so the ML plugin doesn't
+work around them locally. Issues to be filed during Phase 6.6.
+
+1. **`rag_search` does not filter `data:` sources by user_id.** The
+   schema-source filter at `rag/tools.py:405-412` is asymmetric -- it gates
+   `schema:` chunks via the calling user's `_user_schema_hashes` entry, but
+   `data:` and `enriched:` chunks are returned verbatim regardless of
+   source-name `user_id`. The ML plugin partitions writes correctly via
+   `data_source_name(host, cat, user_id)`, but until the symmetric filter
+   lands upstream, any user with read access to the vector store can match
+   against another user's chunks by source name.
+
+2. **`index_table_data` hardcodes `doc_type="catalog-data"`** (`rag/data.py`
+   lines 138, 142). Plugins cannot tag per-user catalog chunks with a
+   domain-specific doc_type, so `rag_search(doc_type="ml-dataset")` cannot
+   distinguish Dataset chunks from Workflow or Execution chunks. The
+   rendered Markdown header (`## Dataset: <RID>`) still tags chunks
+   inline for the LLM. Fix is a one-line `doc_type` parameter addition
+   upstream.
+
+Both fixes are mechanical. The plugin uses `# TODO(upstream-rag-userfilter)`
+and `# TODO(upstream-rag-doctype)` markers at the affected call sites.
 
 ## Validation (Phase 7+)
 
