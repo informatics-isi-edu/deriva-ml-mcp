@@ -1521,6 +1521,22 @@ Phase-specific notes for the analysis pass:
 
 Integration round trip: register a workflow → create an execution → start it → finish it → look up by RID. Then exercise the **deferred Phase 3 DoD #2 mutation round trip** (create_workflow → create_execution → add_feature_values → list_feature_values verifies the values landed) — closes the integration coverage gap from Phase 3.
 
+### Conventions inherited from Phase 5 (execution tools)
+
+Surfaced during Phase 5; apply to Phase 6+ tool/resource authors:
+
+- **No-op idempotent paths skip the audit row.** Until Phase 5, the convention was "every `mutates=True` tool emits an `audit_event` on success or failure." Phase 5 introduces a third case: when a tool detects the requested state transition is already complete (e.g. `start_execution` called on a Running execution; `abort_execution` called on an Aborted execution), the tool short-circuits with a success-shaped response BUT skips the audit emission. Rationale: nothing changed, so there's nothing to audit. Tests should explicitly assert `mock_audit.call_count == 0` on these paths. Canonical examples: `tools/execution.py::start_execution` (lines 637-645), `tools/execution.py::abort_execution` (lines 795-802).
+
+- **Summarizer protocol for upstream dataclasses with potentially-large fields.** When a tool's response includes data from an upstream dataclass that may carry large lists or free-text errors (e.g. `commit_execution`'s `UploadReport` carries `errors: list[str]`), use a private `_summarize_X(report)` helper that:
+  1. Extracts the bounded fields verbatim (counts, statuses, RIDs).
+  2. Caps any list-typed field at a small N (e.g. 10 entries) AND adds a companion `_truncated: bool` field so callers can detect the cap.
+  3. Audit kwargs receive ONLY the bounded counters (never the truncated lists or free-text errors). The full diagnostics live in the JSON response; the audit captures only what's groupable.
+  Canonical example: `tools/execution.py::_summarize_upload_report`.
+
+- **State-machine constants beside the tool that uses them.** When a tool gates behavior on enum membership, define module-level frozensets (e.g. `_START_REJECT_STATES`, `_COMMIT_ALLOWED_STATES`) with explanatory comments, instead of inlining membership checks. Phase 6 resources that surface "what transitions are valid from here?" can reuse these constants.
+
+- **Polymorphic getattr-based renderers.** When the same renderer needs to handle 2+ shapes that don't share a protocol (e.g. `Execution` and `ExecutionRecord` both expose `rid`, `workflow_rid`, `status` but aren't related by inheritance), use `getattr(record, "field", None)` defensively and document the polymorphism in the renderer's docstring. The tradeoff (typo silently returns None) is acceptable for renderers; flag with an inline comment so it's discoverable. Canonical example: `tools/execution.py::_summarize_execution`.
+
 ---
 
 ## Phase 6 — Resources
