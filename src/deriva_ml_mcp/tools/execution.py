@@ -167,12 +167,12 @@ def _list_executions_impl(
 
 
 def _get_execution_detail_impl(ml: Any, execution_rid: str) -> dict[str, Any]:
-    """Build the execution detail payload (summary + inputs + outputs + metadata).
+    """Build the execution detail payload (summary + inputs + outputs + experiment).
 
     Used by the ``deriva://catalog/{h}/{c}/ml/execution/{rid}`` resource.
-    Aggregates input datasets, asset I/O grouped by role, and a
-    metadata bucket with ``hydra_config`` (when present), and an
-    optional ``experiment`` key.
+    Aggregates input datasets, asset I/O grouped by role, and an
+    optional ``experiment`` key for executions that are Hydra-driven
+    experiments.
 
     The deriva-ml ``ExecutionRecord`` exposes:
 
@@ -180,9 +180,16 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> dict[str, Any]:
     - ``list_assets(asset_role="Input"|"Output"|None)`` -> list of Asset
       objects
 
-    Hydra config and other metadata files don't have a generic API on
-    ExecutionRecord; the ``experiment`` key is stubbed as ``None`` for
-    now (see TODO).
+    The ``metadata`` key is omitted entirely until deriva-ml provides a
+    generic enumerator for ``Execution_Metadata`` files (Hydra config,
+    Deriva config, etc. are stored as Asset rows joined through
+    ``Execution_Metadata`` -- not addressable through ``list_assets``'s
+    ``asset_role`` filter, which only handles Input/Output). The
+    ``experiment`` key is omitted when the execution has no
+    ``Experiment`` row (the common case); when present it surfaces the
+    cheap accessor fields (``name`` / ``config_choices`` /
+    ``model_config``) but NOT the full hydra_config dict (potentially
+    large -- callers wanting it should fetch the metadata asset).
 
     Args:
         ml: A connected ``deriva_ml.DerivaML`` instance.
@@ -191,7 +198,8 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> dict[str, Any]:
     Returns:
         Dict with ``rid``, ``workflow_rid``, ``status``, ``description``,
         ``start_time``, ``stop_time``, ``duration``, ``inputs``,
-        ``outputs``, ``metadata``, ``experiment``.
+        ``outputs``. The ``experiment`` key is present only when the
+        execution is an Experiment.
     """
     record = ml.lookup_execution(execution_rid)
     payload = _summarize_execution(record)
@@ -239,21 +247,30 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> dict[str, Any]:
     }
 
     # TODO(deriva-ml-execution-metadata-api): no generic API on
-    # ExecutionRecord to enumerate Execution_Metadata files
-    # (Deriva_Config / Execution_Config / Hydra_Config / Runtime_Env).
-    # Surface what we can and leave the others empty.
-    payload["metadata"] = {
-        "deriva_config": None,
-        "execution_config": None,
-        "hydra_config": None,
-        "runtime_env": None,
-    }
+    # ExecutionRecord to enumerate Execution_Metadata files by role
+    # (Deriva_Config / Execution_Config / Hydra_Config / Runtime_Env --
+    # they're stored as Asset rows joined through Execution_Metadata,
+    # not under list_assets's asset_role filter which only handles
+    # Input/Output). Until an upstream enumerator exists, omit the
+    # metadata key entirely rather than emit four hard-coded nulls
+    # that promise a contract we can't deliver. The Experiment-bound
+    # hydra_config below covers the most common reader use case.
 
-    # TODO(deriva-ml-experiment-detection): no clean predicate on
-    # ExecutionRecord to tell whether an execution is an "experiment"
-    # (i.e., has a Hydra config attached). Always return None until
-    # an upstream API exists.
-    payload["experiment"] = None
+    # Experiment: try lookup_experiment(execution_rid). The deriva-ml
+    # API raises if the execution has no Experiment row; treat that as
+    # "not an experiment" and omit the key. When present, surface the
+    # cheap fields (name + config_choices + model_config) but NOT the
+    # full hydra_config payload -- it can be 10-100 KB and a caller
+    # wanting it should fetch the metadata asset directly.
+    try:
+        exp = ml.lookup_experiment(execution_rid)
+        payload["experiment"] = {
+            "name": getattr(exp, "name", None),
+            "config_choices": getattr(exp, "config_choices", {}) or {},
+            "model_config": getattr(exp, "model_config", {}) or {},
+        }
+    except Exception:  # noqa: BLE001 -- absent experiment is the common case
+        pass
 
     return payload
 
