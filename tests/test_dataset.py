@@ -1,4 +1,4 @@
-"""Unit tests for dataset domain tools (Batches 1 & 2: read + mutate)."""
+"""Unit tests for dataset domain tools (Batches 1, 2 & 3: read, mutate, complex)."""
 
 from __future__ import annotations
 
@@ -1166,8 +1166,11 @@ async def test_cache_dataset_falls_back_to_current_version(dataset_ctx, capturin
 
 
 async def test_cache_dataset_exclude_tables_converted_to_set(dataset_ctx, capturing_mcp, mock_ml):
+    """exclude_tables converts list -> set for DatasetSpec, AND propagates
+    into the success audit so operators can see which tables were skipped
+    (M-8 fix from Batch 3 review)."""
     mock_ml.cache_dataset.return_value = _bag_info_payload()
-    with patch("deriva_ml_mcp.tools.dataset.audit_event"):
+    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
         await capturing_mcp.tools["cache_dataset"](
             hostname="h",
             catalog_id="1",
@@ -1177,6 +1180,10 @@ async def test_cache_dataset_exclude_tables_converted_to_set(dataset_ctx, captur
         )
     (spec_arg,) = mock_ml.cache_dataset.call_args.args
     assert spec_arg.exclude_tables == {"Big_Asset", "Other"}
+    # Audit captures the excluded tables for operator visibility.
+    success = _success_calls(mock_audit, "deriva_ml_cache_dataset")
+    assert success
+    assert success[0].kwargs["exclude_tables"] == ["Big_Asset", "Other"]
 
 
 async def test_cache_dataset_error_path(dataset_ctx, capturing_mcp, mock_ml):
@@ -1371,6 +1378,76 @@ async def test_denormalize_dataset_error_path(dataset_ctx, capturing_mcp, mock_m
     assert out == {"error": "schema error"}
 
 
+async def test_denormalize_dataset_refuses_oversize_fetch_without_preflight(
+    dataset_ctx, capturing_mcp, mock_ml
+):
+    """If the estimated row count is > 10x the requested limit, the tool
+    refuses to drain the generator and routes the caller through preflight
+    instead. Prevents accidental OOM on huge denormalized joins (I-1 fix
+    from Batch 3 review)."""
+    ds = _make_dataset_mock("1-AAAA")
+    # Estimate is 100,000 rows, caller asked for limit=10 — refuse.
+    ds.describe_denormalized.return_value = _describe_payload(total_rows=100_000)
+    mock_ml.lookup_dataset.return_value = ds
+
+    out = json.loads(
+        await capturing_mcp.tools["denormalize_dataset"](
+            hostname="h",
+            catalog_id="1",
+            include_tables=["Image"],
+            dataset_rid="1-AAAA",
+            limit=10,
+        )
+    )
+
+    assert out["mode"] == "dataset_preflight_required"
+    assert out["estimated_row_count"] == 100_000
+    assert out["requested_limit"] == 10
+    assert out["entities_fetched"] is False
+    assert "preflight_count=True" in out["action_required"]
+    # Critically: the generator was NOT drained.
+    ds.get_denormalized_as_dict.assert_not_called()
+
+
+async def test_denormalize_dataset_islice_bounds_generator_consumption(
+    dataset_ctx, capturing_mcp, mock_ml
+):
+    """The implementation uses itertools.islice(gen, capped+1) so a huge
+    generator is never fully materialized. Verify by checking that the
+    rows returned match what islice would yield, not a sort over the
+    full generator output."""
+    ds = _make_dataset_mock("1-AAAA")
+    # Estimated count is small enough that the oversize gate is not
+    # triggered (50 < 10 * 5 = 50 → strictly greater is the gate, so
+    # 49 passes through). Use 49 to slip under the threshold for limit=5.
+    ds.describe_denormalized.return_value = _describe_payload(total_rows=49)
+    # Build a generator that would be expensive to fully materialize:
+    # yield 1000 rows in RID order. islice(gen, 6) takes only the first 6.
+    consumed = {"n": 0}
+
+    def gen():
+        for i in range(1000):
+            consumed["n"] += 1
+            yield {"Image.RID": f"1-IMG{i:04d}"}
+
+    ds.get_denormalized_as_dict.return_value = gen()
+    mock_ml.lookup_dataset.return_value = ds
+
+    out = json.loads(
+        await capturing_mcp.tools["denormalize_dataset"](
+            hostname="h",
+            catalog_id="1",
+            include_tables=["Image"],
+            dataset_rid="1-AAAA",
+            limit=5,
+        )
+    )
+
+    # Returned page is a real page of 5; islice consumed at most 6.
+    assert out["returned_count"] == 5
+    assert consumed["n"] <= 6, f"generator consumed {consumed['n']} times (expected ≤ 6)"
+
+
 # ---------------------------------------------------------------------------
 # split_dataset
 # ---------------------------------------------------------------------------
@@ -1435,12 +1512,21 @@ async def test_split_dataset_basic_success(dataset_ctx, capturing_mcp, mock_ml):
     assert audit_kwargs["training_count"] == 80
     assert audit_kwargs["testing_count"] == 20
     assert audit_kwargs["validation_count"] is None
-    assert audit_kwargs["dry_run"] is False
+    # dry_run is intentionally NOT in the audit payload — non-dry-run runs
+    # are the only ones that audit at all (the I-3 fix from Batch 3 review:
+    # dry_run skips auditing entirely), so the field is implicit.
+    assert "dry_run" not in audit_kwargs
     # No free-text description in the audit payload.
     assert "split_description" not in audit_kwargs
 
 
 async def test_split_dataset_dry_run(dataset_ctx, capturing_mcp, mock_ml):
+    """dry_run=True must NOT emit a success audit (I-3 fix from review).
+
+    Audit logs are reserved for actual state changes; a dry_run computes
+    the split assignment without creating any catalog datasets, so there
+    is nothing to audit. The response still carries dry_run=True so the
+    caller has full visibility."""
     payload = _split_result_payload(dry_run=True)
     result_obj = MagicMock()
     result_obj.model_dump.return_value = payload
@@ -1458,8 +1544,12 @@ async def test_split_dataset_dry_run(dataset_ctx, capturing_mcp, mock_ml):
         )
     assert out["dry_run"] is True
     assert mock_split.call_args.kwargs["dry_run"] is True
+    # NO success audit for dry_run.
     success = _success_calls(mock_audit, "deriva_ml_split_dataset")
-    assert success[0].kwargs["dry_run"] is True
+    assert success == []
+    # And no failure audit either (the run succeeded).
+    failed = _success_calls(mock_audit, "deriva_ml_split_dataset_failed")
+    assert failed == []
 
 
 async def test_split_dataset_stratified_three_way(dataset_ctx, capturing_mcp, mock_ml):

@@ -1,18 +1,27 @@
 """Dataset domain tools for deriva-ml-mcp.
 
-Read-only operations on datasets: list, lookup, browse members,
-walk relations, inspect bag size, generate spec configs.
+Read-only tools: list, lookup, browse members, walk relations, inspect
+bag size, list element types, generate spec configs.
 
 Mutation tools: create, delete, add/remove members, update types,
-register element types, increment version. All mutation tools wrap
-their I/O in ``with deriva_call():`` and emit audit events on both
-success (``deriva_ml_<op>``) and failure (``deriva_ml_<op>_failed``).
+register element types, increment version.
+
+Complex tools: cache_dataset (warm local cache), denormalize_dataset
+(catalog-shape vs dataset-described view, with paged row preview),
+split_dataset (sklearn-style train/test/val split with provenance).
+
+Every tool wraps DERIVA I/O in ``with deriva_call():`` and routes errors
+through ``_error_envelope`` (mutation tools also emit success/failure
+audit events; reads only log on failure).
 """
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
+from collections.abc import Callable
+from functools import partial
 from typing import TYPE_CHECKING, Any, Literal
 
 from deriva_mcp_core import deriva_call
@@ -38,13 +47,16 @@ def _error_envelope(
     operation: str,
     hostname: str,
     catalog_id: str,
+    audit: bool = True,
     response_fields: dict[str, Any] | None = None,
     **audit_fields: Any,
 ) -> str:
-    """Standard mutation-tool error response.
+    """Standard tool error response.
 
-    Logs the exception with traceback, emits a ``<operation>_failed``
-    audit event, and returns a JSON envelope the LLM can act on.
+    Always logs the exception with traceback (operators get the stack
+    trace without it leaking into the JSON return shape). For mutation
+    tools, also emits a ``<operation>_failed`` audit event so failures
+    show up in the audit log alongside successes.
 
     Args:
         exc: The exception that triggered the error path.
@@ -53,6 +65,11 @@ def _error_envelope(
             -> audit event ``"deriva_ml_create_dataset_failed"``.
         hostname: The Deriva hostname (passed to audit_event).
         catalog_id: The catalog ID (passed to audit_event).
+        audit: If True (default), emit the failure audit event. Set
+            False for read-only tools — failures are still logged with
+            traceback, but no audit row is written. The convention is
+            "audit logs are for state changes; reads neither succeed
+            nor fail in the audit-log sense."
         response_fields: Optional extra keys to merge into the JSON
             error response (in addition to ``"error"``). Use for
             partial-state visibility — e.g. for a tool that does N
@@ -60,7 +77,8 @@ def _error_envelope(
             the LLM can reason about what was actually mutated before
             the failure.
         **audit_fields: Additional keyword fields included in the
-            audit event payload (e.g. ``dataset_rid``).
+            audit event payload (e.g. ``dataset_rid``). Ignored when
+            ``audit=False``.
 
     Returns:
         JSON string. Default shape is ``{"error": str(exc)}``; with
@@ -77,13 +95,14 @@ def _error_envelope(
         exc,
         exc_info=True,
     )
-    audit_event(
-        f"deriva_ml_{operation}_failed",
-        hostname=hostname,
-        catalog_id=catalog_id,
-        error_type=type(exc).__name__,
-        **audit_fields,
-    )
+    if audit:
+        audit_event(
+            f"deriva_ml_{operation}_failed",
+            hostname=hostname,
+            catalog_id=catalog_id,
+            error_type=type(exc).__name__,
+            **audit_fields,
+        )
     payload: dict[str, Any] = {"error": str(exc)}
     if response_fields:
         payload.update(response_fields)
@@ -113,15 +132,18 @@ def _paginate(
     *,
     after_rid: str | None,
     limit: int,
-    rid_key: str = "rid",
+    key: Callable[[Any], str],
 ) -> tuple[list[Any], bool, str | None]:
-    """Apply cursor pagination to a sorted list keyed by RID.
+    """Apply cursor pagination to a sorted list using a caller-supplied key fn.
 
     Args:
-        items: Source list, sorted by the RID key in ascending order.
-        after_rid: Skip items with RID <= after_rid.
+        items: Source list, sorted by ``key`` in ascending order.
+        after_rid: Skip items where ``key(item) <= after_rid``.
         limit: Page size (already capped by caller).
-        rid_key: Attribute or dict key used to read the RID from each item.
+        key: Function that extracts the comparable RID from one item.
+            Use ``functools.partial(_read_rid, rid_key="...")`` for
+            object/dict items with a known RID attribute, or ``_row_rid``
+            for denormalized rows whose RID column is auto-detected.
 
     Returns:
         Tuple of (page, truncated, next_after_rid).
@@ -135,10 +157,10 @@ def _paginate(
         both layers.
     """
     if after_rid is not None:
-        items = [it for it in items if _read_rid(it, rid_key) > after_rid]
+        items = [it for it in items if key(it) > after_rid]
     page = items[:limit]
     truncated = len(page) == limit
-    next_after_rid = _read_rid(page[-1], rid_key) if page and truncated else None
+    next_after_rid = key(page[-1]) if page and truncated else None
     return page, truncated, next_after_rid
 
 
@@ -153,50 +175,36 @@ def _read_rid(item: Any, rid_key: str) -> str:
     return str(getattr(item, rid_key))
 
 
-def _row_rid(row: dict[str, Any]) -> str:
-    """Extract the RID from a denormalized-row dict for cursor pagination.
+def _row_rid_for(row_per: str | None) -> Callable[[dict[str, Any]], str]:
+    """Build a callable that extracts the RID from a denormalized-row dict.
 
-    Denormalizer rows use ``Table.column`` keys (e.g. ``Image.RID``). Plain
-    ``RID`` is also supported as a fallback for unprefixed shapes.
-
-    Args:
-        row: A single denormalized row from
-            ``Dataset.get_denormalized_as_dict``.
-
-    Returns:
-        The RID as a string. Empty string when no RID-like key is present
-        (sorts first; pagination still terminates correctly).
-    """
-    if "RID" in row:
-        return str(row["RID"])
-    for key, value in row.items():
-        if key == "RID" or key.endswith(".RID"):
-            return str(value)
-    return ""
-
-
-def _paginate_rows(
-    rows: list[dict[str, Any]],
-    *,
-    after_rid: str | None,
-    limit: int,
-) -> tuple[list[dict[str, Any]], bool, str | None]:
-    """Cursor-paginate a list of denormalized rows by their RID-bearing key.
+    Denormalizer rows use ``Table.column`` keys (e.g. ``Image.RID``).
+    When ``row_per`` is known, prefer the unambiguous ``f"{row_per}.RID"``
+    column. Otherwise fall back to the first key matching ``RID`` or
+    ``*.RID`` in iteration order (which by denormalizer convention is
+    the anchor table's RID, but not guaranteed for multi-table joins
+    without a known anchor).
 
     Args:
-        rows: Source rows, sorted by their RID-bearing key in ascending order.
-        after_rid: Skip rows with RID <= ``after_rid``.
-        limit: Page size (already capped by caller).
+        row_per: The row-per anchor table name, or ``None`` if unknown.
 
     Returns:
-        Tuple of (page, truncated, next_after_rid).
+        A function ``row -> rid_str``. Returns empty string if no
+        RID-like key is present (sorts first; pagination terminates).
     """
-    if after_rid is not None:
-        rows = [r for r in rows if _row_rid(r) > after_rid]
-    page = rows[:limit]
-    truncated = len(page) == limit
-    next_after_rid = _row_rid(page[-1]) if page and truncated else None
-    return page, truncated, next_after_rid
+    preferred = f"{row_per}.RID" if row_per else None
+
+    def extract(row: dict[str, Any]) -> str:
+        if preferred and preferred in row:
+            return str(row[preferred])
+        if "RID" in row:
+            return str(row["RID"])
+        for key, value in row.items():
+            if key == "RID" or key.endswith(".RID"):
+                return str(value)
+        return ""
+
+    return extract
 
 
 def register(ctx: PluginContext) -> None:
@@ -278,7 +286,10 @@ def register(ctx: PluginContext) -> None:
 
             capped = min(max(limit, 0), _MAX_LIMIT)
             page, truncated, next_after = _paginate(
-                datasets, after_rid=after_rid, limit=capped, rid_key="dataset_rid"
+                datasets,
+                after_rid=after_rid,
+                limit=capped,
+                key=partial(_read_rid, rid_key="dataset_rid"),
             )
             return json.dumps(
                 {
@@ -289,7 +300,14 @@ def register(ctx: PluginContext) -> None:
                 }
             )
         except Exception as exc:
-            return json.dumps({"error": str(exc)})
+            # Read-only tool: log+return without an audit row (I-2 fix).
+            return _error_envelope(
+                exc,
+                operation="list_datasets",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
 
     @ctx.tool(mutates=False)
     async def get_dataset(
@@ -339,7 +357,14 @@ def register(ctx: PluginContext) -> None:
                     ]
             return json.dumps(summary)
         except Exception as exc:
-            return json.dumps({"error": str(exc)})
+            # Read-only tool: log+return without an audit row (I-2 fix).
+            return _error_envelope(
+                exc,
+                operation="get_dataset",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
 
     @ctx.tool(mutates=False)
     async def list_dataset_members(
@@ -442,7 +467,10 @@ def register(ctx: PluginContext) -> None:
 
             capped = min(max(limit, 0), _MAX_LIMIT)
             page, truncated, next_after = _paginate(
-                rows, after_rid=after_rid, limit=capped, rid_key="RID"
+                rows,
+                after_rid=after_rid,
+                limit=capped,
+                key=partial(_read_rid, rid_key="RID"),
             )
             return json.dumps(
                 {
@@ -454,7 +482,14 @@ def register(ctx: PluginContext) -> None:
                 }
             )
         except Exception as exc:
-            return json.dumps({"error": str(exc)})
+            # Read-only tool: log+return without an audit row (I-2 fix).
+            return _error_envelope(
+                exc,
+                operation="list_dataset_members",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
 
     @ctx.tool(mutates=False)
     async def list_dataset_relations(
@@ -534,7 +569,7 @@ def register(ctx: PluginContext) -> None:
                         parents,
                         after_rid=effective_after_rid,
                         limit=capped,
-                        rid_key="dataset_rid",
+                        key=partial(_read_rid, rid_key="dataset_rid"),
                     )
                     result["parents"] = [_summarize_dataset(p) for p in page]
                     result["parents_truncated"] = truncated
@@ -548,7 +583,7 @@ def register(ctx: PluginContext) -> None:
                         children,
                         after_rid=effective_after_rid,
                         limit=capped,
-                        rid_key="dataset_rid",
+                        key=partial(_read_rid, rid_key="dataset_rid"),
                     )
                     result["children"] = [_summarize_dataset(c) for c in page]
                     result["children_truncated"] = truncated
@@ -558,7 +593,14 @@ def register(ctx: PluginContext) -> None:
 
             return json.dumps(result)
         except Exception as exc:
-            return json.dumps({"error": str(exc)})
+            # Read-only tool: log+return without an audit row (I-2 fix).
+            return _error_envelope(
+                exc,
+                operation="list_dataset_relations",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
 
     @ctx.tool(mutates=False)
     async def list_dataset_element_types(
@@ -596,7 +638,14 @@ def register(ctx: PluginContext) -> None:
                 }
             )
         except Exception as exc:
-            return json.dumps({"error": str(exc)})
+            # Read-only tool: log+return without an audit row (I-2 fix).
+            return _error_envelope(
+                exc,
+                operation="list_dataset_element_types",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
 
     @ctx.tool(mutates=False)
     async def bag_info(
@@ -645,7 +694,14 @@ def register(ctx: PluginContext) -> None:
                 info = ml.bag_info(spec)
             return json.dumps(info, default=str)
         except Exception as exc:
-            return json.dumps({"error": str(exc)})
+            # Read-only tool: log+return without an audit row (I-2 fix).
+            return _error_envelope(
+                exc,
+                operation="bag_info",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
 
     @ctx.tool(mutates=False)
     async def get_dataset_spec(
@@ -710,7 +766,14 @@ def register(ctx: PluginContext) -> None:
                 }
             )
         except Exception as exc:
-            return json.dumps({"error": str(exc)})
+            # Read-only tool: log+return without an audit row (I-2 fix).
+            return _error_envelope(
+                exc,
+                operation="get_dataset_spec",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
 
     # ------------------------------------------------------------------
     # Mutation tools (Batch 2). Each emits audit_event on success and
@@ -1322,6 +1385,7 @@ def register(ctx: PluginContext) -> None:
                 dataset_rid=dataset_rid,
                 version=used_version,
                 materialize=materialize,
+                exclude_tables=exclude_tables or [],
             )
             return json.dumps(
                 {
@@ -1445,14 +1509,57 @@ def register(ctx: PluginContext) -> None:
                     via=via,
                     version=version,
                 )
+                # Resolve effective row_per from desc when caller didn't supply
+                # one, so cursor pagination uses the unambiguous
+                # f"{row_per}.RID" column (M-1 fix from the Batch 3 review).
+                row_per_effective: str | None = row_per or desc.get("row_per")
+                # Bounded materialization: if the caller asked for rows
+                # without preflighting, refuse to drain the generator
+                # when the estimated row count is wildly larger than the
+                # requested limit. Forces the caller back through
+                # preflight_count=True before fetching pages of an
+                # otherwise-OOM-able join (I-1 fix from the Batch 3
+                # review). Threshold: 10x the requested limit.
                 rows: list[dict[str, Any]] | None
                 if capped > 0 and not preflight_count:
+                    estimated = desc.get("estimated_row_count", {}).get("total")
+                    if estimated is not None and estimated > 10 * capped:
+                        return json.dumps(
+                            {
+                                "mode": "dataset_preflight_required",
+                                "dataset_rid": dataset_rid,
+                                "estimated_row_count": estimated,
+                                "requested_limit": capped,
+                                "entities_fetched": False,
+                                "action_required": (
+                                    f"Estimated {estimated} rows is more than "
+                                    f"10x the requested limit ({capped}). "
+                                    "Call again with preflight_count=True to "
+                                    "confirm the count, then choose a larger "
+                                    "limit or accept the cost before retrying."
+                                ),
+                            },
+                            default=str,
+                        )
+                    # itertools.islice puts a hard upper bound on
+                    # generator materialization; we read at most
+                    # (capped + 1) rows just to learn whether a next
+                    # page exists. Note: this means after_rid filters
+                    # on the FIRST capped+1 yielded rows, not the
+                    # global sorted set. For a sorted-by-RID generator
+                    # this is correct; for unsorted output the caller
+                    # gets a sliced page that may not match a strict
+                    # global ordering. DerivaML's denormalizer yields
+                    # in row_per order which is RID-stable in practice.
                     rows = list(
-                        ds.get_denormalized_as_dict(
-                            include_tables,
-                            row_per=row_per,
-                            via=via,
-                            version=version,
+                        itertools.islice(
+                            ds.get_denormalized_as_dict(
+                                include_tables,
+                                row_per=row_per,
+                                via=via,
+                                version=version,
+                            ),
+                            capped + 1,
                         )
                     )
                 else:
@@ -1460,16 +1567,25 @@ def register(ctx: PluginContext) -> None:
 
             if preflight_count:
                 total = desc.get("estimated_row_count", {}).get("total")
+                action: str
+                if total is None:
+                    action = (
+                        "describe_denormalized returned no row-count estimate; "
+                        "cannot suggest a safe limit. Try a small limit (e.g. 10) "
+                        "to start."
+                    )
+                else:
+                    action = (
+                        f"Estimated {total} rows for the denormalized view. "
+                        "Choose a limit and call again with preflight_count=False."
+                    )
                 return json.dumps(
                     {
                         "mode": "dataset_preflight",
                         "dataset_rid": dataset_rid,
                         "total_count": total,
                         "entities_fetched": False,
-                        "action_required": (
-                            f"Estimated {total} rows for the denormalized view. "
-                            "Choose a limit and call again with preflight_count=False."
-                        ),
+                        "action_required": action,
                     },
                     default=str,
                 )
@@ -1486,9 +1602,10 @@ def register(ctx: PluginContext) -> None:
                 )
 
             # Sort + paginate rows by their RID-bearing column.
-            sorted_rows = sorted(rows, key=lambda r: _row_rid(r))
-            page, truncated, next_after = _paginate_rows(
-                sorted_rows, after_rid=after_rid, limit=capped
+            row_rid = _row_rid_for(row_per_effective)
+            sorted_rows = sorted(rows, key=row_rid)
+            page, truncated, next_after = _paginate(
+                sorted_rows, after_rid=after_rid, limit=capped, key=row_rid
             )
             return json.dumps(
                 {
@@ -1504,7 +1621,14 @@ def register(ctx: PluginContext) -> None:
                 default=str,
             )
         except Exception as exc:
-            return json.dumps({"error": str(exc)})
+            # Read-only tool: log+return without an audit row (I-2 fix).
+            return _error_envelope(
+                exc,
+                operation="denormalize_dataset",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
 
     @ctx.tool(mutates=True)
     async def split_dataset(
@@ -1615,22 +1739,26 @@ def register(ctx: PluginContext) -> None:
                 )
                 payload = result.model_dump()
 
-            training = payload.get("training") or {}
-            testing = payload.get("testing") or {}
-            validation = payload.get("validation") or {}
-            audit_event(
-                "deriva_ml_split_dataset",
-                hostname=hostname,
-                catalog_id=catalog_id,
-                source_dataset_rid=source_dataset_rid,
-                strategy=payload.get("strategy"),
-                element_table=payload.get("element_table"),
-                seed=seed,
-                dry_run=dry_run,
-                training_count=training.get("count") if training else None,
-                testing_count=testing.get("count") if testing else None,
-                validation_count=validation.get("count") if validation else None,
-            )
+            # dry_run doesn't mutate catalog state, so no audit row.
+            # Convention: audit logs are for state changes only. The
+            # response carries dry_run=True so callers see the mode.
+            # (I-3 fix from Batch 3 review.)
+            if not dry_run:
+                training = payload.get("training") or {}
+                testing = payload.get("testing") or {}
+                validation = payload.get("validation") or {}
+                audit_event(
+                    "deriva_ml_split_dataset",
+                    hostname=hostname,
+                    catalog_id=catalog_id,
+                    source_dataset_rid=source_dataset_rid,
+                    strategy=payload.get("strategy"),
+                    element_table=payload.get("element_table"),
+                    seed=seed,
+                    training_count=training.get("count") if training else None,
+                    testing_count=testing.get("count") if testing else None,
+                    validation_count=validation.get("count") if validation else None,
+                )
             return json.dumps({"status": "success", **payload}, default=str)
         except Exception as exc:
             return _error_envelope(
