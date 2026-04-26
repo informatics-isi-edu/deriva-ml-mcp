@@ -1178,27 +1178,74 @@ def register(ctx: PluginContext) -> None:
 
 - [ ] **Step 2: Update the smoke test**
 
-Replace `test_register_registers_no_tools_in_phase_0` with a positive assertion:
+Replace `test_register_registers_no_tools_in_phase_0` with two positive assertions:
 
 ```python
+# At module top: list every tool name from coverage.md rows where disposition
+# is kept/renamed/merged/split AND new_module == 'tools/dataset.py'.
+_DATASET_TOOLS = frozenset({...})
+
+
 def test_dataset_tools_registered(ctx, capturing_mcp):
-    """All dataset tools from Task 2.1 must be registered after register()."""
+    """All dataset tools registered, AND no unexpected tools sneak in."""
     register(ctx)
-    expected = {
-        # list every tool name from coverage.md's dataset rows where
-        # disposition is kept/renamed/merged/split AND new_module ==
-        # 'tools/dataset.py'
-        ...
-    }
-    assert expected.issubset(capturing_mcp.tools.keys())
+    actual = set(capturing_mcp.tools.keys())
+    missing = _DATASET_TOOLS - actual
+    unexpected = actual - _DATASET_TOOLS
+    assert not missing, f"missing tools: {sorted(missing)}"
+    assert not unexpected, (
+        "unregistered new tools (update _DATASET_TOOLS and coverage.md): "
+        f"{sorted(unexpected)}"
+    )
 
 
 def test_all_registered_tools_have_explicit_mutates(ctx, capturing_mcp):
-    """Every registered tool must have mutates= set (core enforces this)."""
-    register(ctx)
-    for name, kwargs in capturing_mcp.tool_kwargs.items():
-        assert "mutates" in kwargs, f"{name} missing mutates="
+    """Catches a tool that bypasses ctx.tool by calling mcp.tool() directly.
+
+    NOTE: do NOT use the obvious-looking ``capturing_mcp.tool_kwargs``
+    iteration. ``deriva-mcp-core``'s ``PluginContext.tool`` consumes and
+    strips the ``mutates`` kwarg before forwarding to FastMCP, so the
+    capturing fixture never sees the value. The "I forgot mutates=" bug
+    is already caught by core (raises TypeError at registration time,
+    so register(ctx) fails outright -> caught by
+    test_register_runs_without_error). What this test catches is
+    different: a tool that registers via @some_mcp.tool() directly
+    (skipping ctx.tool and core's validation entirely).
+
+    Implementation: wrap ctx.tool for the duration of register(ctx) so we
+    can record the mutates value per tool name in a side dict.
+    """
+    seen_mutates: dict[str, bool] = {}
+    original_tool = ctx.tool
+
+    def capturing_tool(*args, mutates, **kwargs):
+        decorator = original_tool(*args, mutates=mutates, **kwargs)
+
+        def wrapper(fn):
+            seen_mutates[fn.__name__] = mutates
+            return decorator(fn)
+
+        return wrapper
+
+    ctx.tool = capturing_tool  # type: ignore[method-assign]
+    try:
+        register(ctx)
+    finally:
+        ctx.tool = original_tool  # type: ignore[method-assign]
+
+    missing = [name for name in capturing_mcp.tools if name not in seen_mutates]
+    assert not missing, f"tools missing explicit mutates=: {missing}"
+    assert all(isinstance(v, bool) for v in seen_mutates.values()), (
+        f"mutates= must be bool; got: {seen_mutates}"
+    )
 ```
+
+(Phase 3+ note: when feature/workflow/execution tools register through
+the same entry point, split `_DATASET_TOOLS` into per-domain frozensets
+(`_FEATURE_TOOLS`, etc.) and check each domain separately. The
+`test_all_registered_tools_have_explicit_mutates` test is already
+forward-compatible — it catches new tools across all domains as they're
+added.)
 
 - [ ] **Step 3: Run all tests**
 
@@ -1701,7 +1748,7 @@ Spec coverage check, against `docs/superpowers/specs/2026-04-24-deriva-ml-mcp-de
 
 - `register(ctx)` signature is consistent across `plugin.py`, every `tools/*.py`, and `resources/ml.py`.
 - `get_ml(hostname, catalog_id)` signature appears identically in Task 1.2 implementation, Task 2.2 tool template, and Task 6.2 resource template.
-- `_CapturingMCP.tool_kwargs` introduced in Task 0.3 conftest is referenced in Task 2.3's `test_all_registered_tools_have_explicit_mutates`.
+- `_CapturingMCP.tool_kwargs` introduced in Task 0.3 conftest is available for tests that need to capture decorator kwargs other than `mutates` (which is consumed and stripped by `PluginContext.tool` before forwarding to FastMCP — see Task 2.3 for the wrapper-based pattern that captures it instead).
 
 **Placeholder scan:**
 
