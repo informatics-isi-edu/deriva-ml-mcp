@@ -7,7 +7,7 @@ from importlib import metadata
 from deriva_ml_mcp.plugin import register
 
 # Per-domain frozensets of registered tools. Each new domain phase
-# (feature, workflow, execution) adds one of these and OR-unions it
+# (workflow, execution) adds one of these and OR-unions it
 # into ``_ALL_REGISTERED_TOOLS`` below. The exact-equality check in
 # ``test_all_registered_tools_exact`` then catches both:
 #
@@ -15,7 +15,7 @@ from deriva_ml_mcp.plugin import register
 #   - tools registered without an updated ``coverage.md`` row.
 #
 # Update protocol when adding a new domain:
-#   1. Add ``_FEATURE_TOOLS = frozenset({...})`` (etc.) here.
+#   1. Add ``_WORKFLOW_TOOLS = frozenset({...})`` (etc.) here.
 #   2. Add it to the ``_ALL_REGISTERED_TOOLS`` union below.
 #   3. ``test_all_registered_tools_exact`` keeps its shape; no rename.
 
@@ -44,9 +44,22 @@ _DATASET_TOOLS = frozenset(
     }
 )
 
-# Union of all per-domain tool sets. Today only dataset is registered;
-# Phase 3+ adds ``| _FEATURE_TOOLS``, ``| _WORKFLOW_TOOLS``, etc.
-_ALL_REGISTERED_TOOLS = _DATASET_TOOLS
+_FEATURE_TOOLS = frozenset(
+    {
+        # Read-only tools
+        "list_features",
+        "get_feature",
+        "list_feature_values",
+        # Mutation tools
+        "create_feature",
+        "delete_feature",
+        "add_feature_values",
+    }
+)
+
+# Union of all per-domain tool sets. Phase 3 registers dataset + feature;
+# Phase 4+ adds ``| _WORKFLOW_TOOLS``, ``| _EXECUTION_TOOLS``, etc.
+_ALL_REGISTERED_TOOLS = _DATASET_TOOLS | _FEATURE_TOOLS
 
 
 def test_register_runs_without_error(ctx):
