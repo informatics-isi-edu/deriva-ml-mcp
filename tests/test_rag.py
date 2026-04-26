@@ -399,6 +399,35 @@ def test_hook_short_circuits_when_rag_store_is_none() -> None:
     fake_index.assert_not_called()
 
 
+def test_dataset_hook_partitions_per_user() -> None:
+    """Two consecutive calls under different identities partition by user_id.
+
+    The contract under test: same hostname/catalog_id, two different
+    callers, two distinct ``user_id`` values forwarded into
+    ``index_table_data`` -- one per call. This pins the per-user
+    partitioning that keeps user A's rows out of user B's index.
+    """
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    rows = [{"rid": "1-DSAA", "name": "shared"}]
+    fake_index = AsyncMock()
+
+    with (
+        patch.object(rag_module, "_fetch_dataset_rows", return_value=rows),
+        patch.object(
+            rag_module, "resolve_user_identity", side_effect=["userA", "userB"]
+        ),
+        patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
+        patch.object(rag_module, "index_table_data", new=fake_index),
+    ):
+        _run(rag_module._on_catalog_connect_dataset("h.example", "1", "hash", {}))
+        _run(rag_module._on_catalog_connect_dataset("h.example", "1", "hash", {}))
+
+    assert fake_index.call_count == 2
+    assert fake_index.call_args_list[0].kwargs["user_id"] == "userA"
+    assert fake_index.call_args_list[1].kwargs["user_id"] == "userB"
+
+
 # ---------------------------------------------------------------------------
 # 7. Plugin wiring guard -- not registered in plugin.py yet (Phase 6.4)
 # ---------------------------------------------------------------------------
