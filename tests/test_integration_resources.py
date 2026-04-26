@@ -317,7 +317,9 @@ async def test_resource_ml_registries_returns_all_four_vocabs(
     assert len(out["workflow_types"]) > 0, "demo catalog should seed Workflow_Type terms"
     assert len(out["execution_statuses"]) > 0, "demo catalog should seed Execution_Status terms"
     # Spot-check term shape on the first workflow type.
+    # Compact name+rid shape per v1.0 polish 4 (was: name+description+
+    # synonyms+rid; trimmed to keep registries snapshot under ~1 KB).
     sample = out["workflow_types"][0]
-    assert set(sample.keys()) == {"name", "description", "synonyms", "rid"}
+    assert set(sample.keys()) == {"name", "rid"}
     assert isinstance(sample["name"], str) and sample["name"]
-    assert isinstance(sample["synonyms"], list)
+    assert isinstance(sample["rid"], str) and sample["rid"]

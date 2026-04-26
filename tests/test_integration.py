@@ -110,7 +110,9 @@ async def test_dataset_read_round_trip(
     hostname, catalog_id = demo_catalog
     tools = integration_dataset_tools.tools
 
-    list_out = json.loads(await tools["list_datasets"](hostname=hostname, catalog_id=catalog_id))
+    list_out = json.loads(
+        await tools["deriva_ml_list_datasets"](hostname=hostname, catalog_id=catalog_id)
+    )
     assert "datasets" in list_out
     assert "count" in list_out
     assert "truncated" in list_out
@@ -122,14 +124,18 @@ async def test_dataset_read_round_trip(
     assert list_out["count"] == 0  # empty catalog (populate=False)
 
     preflight_out = json.loads(
-        await tools["list_datasets"](hostname=hostname, catalog_id=catalog_id, preflight_count=True)
+        await tools["deriva_ml_list_datasets"](
+            hostname=hostname, catalog_id=catalog_id, preflight_count=True
+        )
     )
     assert preflight_out["entities_fetched"] is False
     assert preflight_out["total_count"] == 0
     assert "action_required" in preflight_out
 
     elements_out = json.loads(
-        await tools["list_dataset_element_types"](hostname=hostname, catalog_id=catalog_id)
+        await tools["deriva_ml_list_dataset_element_types"](
+            hostname=hostname, catalog_id=catalog_id
+        )
     )
     assert "element_types" in elements_out
     assert "count" in elements_out

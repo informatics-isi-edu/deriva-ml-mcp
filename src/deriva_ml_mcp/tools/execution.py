@@ -1,11 +1,11 @@
 """Execution domain tools for deriva-ml-mcp.
 
-Read tools: ``list_executions``, ``get_execution``,
-``find_workflow_executions``, ``list_execution_children``,
-``list_execution_parents``.
-Mutation tools: ``create_execution``, ``start_execution``,
-``commit_execution``, ``abort_execution``, ``create_execution_dataset``,
-``add_nested_execution``.
+Read tools: ``deriva_ml_list_executions``, ``deriva_ml_get_execution``,
+``deriva_ml_find_workflow_executions``, ``deriva_ml_list_execution_children``,
+``deriva_ml_list_execution_parents``.
+Mutation tools: ``deriva_ml_create_execution``, ``deriva_ml_start_execution``,
+``deriva_ml_commit_execution``, ``deriva_ml_abort_execution``, ``deriva_ml_create_execution_dataset``,
+``deriva_ml_add_nested_execution``.
 
 Every tool wraps DERIVA I/O in ``with deriva_call():`` and routes errors
 through ``_error_envelope`` (mutation tools also emit success/failure
@@ -13,8 +13,8 @@ audit events; reads only log on failure).
 
 State-machine note. The ``Execution`` lifecycle is:
 ``Created -> Running -> Stopped -> Pending_Upload -> Uploaded`` with
-``Aborted`` / ``Failed`` as alternative terminals. ``start_execution``,
-``commit_execution``, and ``abort_execution`` are idempotent on the
+``Aborted`` / ``Failed`` as alternative terminals. ``deriva_ml_start_execution``,
+``deriva_ml_commit_execution``, and ``deriva_ml_abort_execution`` are idempotent on the
 target state — they no-op (and skip audit) when the execution is already
 where the call would put it.
 """
@@ -52,10 +52,19 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-# Terminal states from which start_execution / commit_execution refuse
-# to advance. Aborted / Uploaded / Failed are unconditionally terminal;
-# Pending_Upload is terminal for start (work is past the algorithmic
-# phase) but not for commit (commit's whole purpose is to drain it).
+# States from which start_execution / commit_execution refuse to advance.
+#
+# start_execution: Created or Running are the only valid prior states
+# (Running is the idempotent no-op). Everything else is rejected -- once
+# work has stopped (Stopped/Pending_Upload/Uploaded) or failed/aborted,
+# the execution cannot be re-entered for new computation.
+#
+# commit_execution: drains staged work and uploads. Created and Running
+# are pre-stop; Stopped and Pending_Upload are mid-pipeline; Uploaded is
+# the additive-upload entry point per deriva-ml 3d21f55 (calling
+# upload_execution_outputs on an Uploaded execution that has new
+# pending manifest entries cycles Uploaded -> Pending_Upload -> Uploaded;
+# a call with no pending entries is a clean no-op).
 _START_REJECT_STATES = {
     ExecutionStatus.Stopped,
     ExecutionStatus.Failed,
@@ -69,6 +78,7 @@ _COMMIT_ALLOWED_STATES = {
     ExecutionStatus.Running,
     ExecutionStatus.Stopped,
     ExecutionStatus.Pending_Upload,
+    ExecutionStatus.Uploaded,
 }
 
 
@@ -157,12 +167,12 @@ def _list_executions_impl(
 
 
 def _get_execution_detail_impl(ml: Any, execution_rid: str) -> dict[str, Any]:
-    """Build the execution detail payload (summary + inputs + outputs + metadata).
+    """Build the execution detail payload (summary + inputs + outputs + experiment).
 
     Used by the ``deriva://catalog/{h}/{c}/ml/execution/{rid}`` resource.
-    Aggregates input datasets, asset I/O grouped by role, and a
-    metadata bucket with ``hydra_config`` (when present), and an
-    optional ``experiment`` key.
+    Aggregates input datasets, asset I/O grouped by role, and an
+    optional ``experiment`` key for executions that are Hydra-driven
+    experiments.
 
     The deriva-ml ``ExecutionRecord`` exposes:
 
@@ -170,9 +180,16 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> dict[str, Any]:
     - ``list_assets(asset_role="Input"|"Output"|None)`` -> list of Asset
       objects
 
-    Hydra config and other metadata files don't have a generic API on
-    ExecutionRecord; the ``experiment`` key is stubbed as ``None`` for
-    now (see TODO).
+    The ``metadata`` key is omitted entirely until deriva-ml provides a
+    generic enumerator for ``Execution_Metadata`` files (Hydra config,
+    Deriva config, etc. are stored as Asset rows joined through
+    ``Execution_Metadata`` -- not addressable through ``list_assets``'s
+    ``asset_role`` filter, which only handles Input/Output). The
+    ``experiment`` key is omitted when the execution has no
+    ``Experiment`` row (the common case); when present it surfaces the
+    cheap accessor fields (``name`` / ``config_choices`` /
+    ``model_config``) but NOT the full hydra_config dict (potentially
+    large -- callers wanting it should fetch the metadata asset).
 
     Args:
         ml: A connected ``deriva_ml.DerivaML`` instance.
@@ -181,7 +198,8 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> dict[str, Any]:
     Returns:
         Dict with ``rid``, ``workflow_rid``, ``status``, ``description``,
         ``start_time``, ``stop_time``, ``duration``, ``inputs``,
-        ``outputs``, ``metadata``, ``experiment``.
+        ``outputs``. The ``experiment`` key is present only when the
+        execution is an Experiment.
     """
     record = ml.lookup_execution(execution_rid)
     payload = _summarize_execution(record)
@@ -229,21 +247,30 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> dict[str, Any]:
     }
 
     # TODO(deriva-ml-execution-metadata-api): no generic API on
-    # ExecutionRecord to enumerate Execution_Metadata files
-    # (Deriva_Config / Execution_Config / Hydra_Config / Runtime_Env).
-    # Surface what we can and leave the others empty.
-    payload["metadata"] = {
-        "deriva_config": None,
-        "execution_config": None,
-        "hydra_config": None,
-        "runtime_env": None,
-    }
+    # ExecutionRecord to enumerate Execution_Metadata files by role
+    # (Deriva_Config / Execution_Config / Hydra_Config / Runtime_Env --
+    # they're stored as Asset rows joined through Execution_Metadata,
+    # not under list_assets's asset_role filter which only handles
+    # Input/Output). Until an upstream enumerator exists, omit the
+    # metadata key entirely rather than emit four hard-coded nulls
+    # that promise a contract we can't deliver. The Experiment-bound
+    # hydra_config below covers the most common reader use case.
 
-    # TODO(deriva-ml-experiment-detection): no clean predicate on
-    # ExecutionRecord to tell whether an execution is an "experiment"
-    # (i.e., has a Hydra config attached). Always return None until
-    # an upstream API exists.
-    payload["experiment"] = None
+    # Experiment: try lookup_experiment(execution_rid). The deriva-ml
+    # API raises if the execution has no Experiment row; treat that as
+    # "not an experiment" and omit the key. When present, surface the
+    # cheap fields (name + config_choices + model_config) but NOT the
+    # full hydra_config payload -- it can be 10-100 KB and a caller
+    # wanting it should fetch the metadata asset directly.
+    try:
+        exp = ml.lookup_experiment(execution_rid)
+        payload["experiment"] = {
+            "name": getattr(exp, "name", None),
+            "config_choices": getattr(exp, "config_choices", {}) or {},
+            "model_config": getattr(exp, "model_config", {}) or {},
+        }
+    except Exception:  # noqa: BLE001 -- absent experiment is the common case
+        pass
 
     return payload
 
@@ -259,7 +286,7 @@ def _summarize_upload_dict(
     ``Execution.upload_execution_outputs`` returns ``dict[str,
     list[AssetFilePath]]`` (asset table -> uploaded files), not an
     ``UploadReport``. We render it into the same JSON shape callers
-    expect from ``commit_execution`` so the response surface stays
+    expect from ``deriva_ml_commit_execution`` so the response surface stays
     stable across upstream API styles.
 
     Args:
@@ -310,7 +337,7 @@ def register(ctx: PluginContext) -> None:
     # ------------------------------------------------------------------
 
     @ctx.tool(mutates=False)
-    async def list_executions(
+    async def deriva_ml_list_executions(
         hostname: str,
         catalog_id: str,
         workflow_rid: str | None = None,
@@ -387,7 +414,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def get_execution(
+    async def deriva_ml_get_execution(
         hostname: str,
         catalog_id: str,
         execution_rid: str,
@@ -429,7 +456,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def find_workflow_executions(
+    async def deriva_ml_find_workflow_executions(
         hostname: str,
         catalog_id: str,
         workflow_rid: str,
@@ -440,7 +467,7 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """Find all executions of a specific workflow.
 
-        Distinct from ``list_executions(workflow_rid=...)`` to surface
+        Distinct from ``deriva_ml_list_executions(workflow_rid=...)`` to surface
         the workflow-centric query as a first-class tool — the LLM
         intent ("show me runs of this workflow") differs from the
         general "browse executions" intent.
@@ -455,7 +482,7 @@ def register(ctx: PluginContext) -> None:
             preflight_count: If True, return only total count.
 
         Returns:
-            Same shape as ``list_executions``.
+            Same shape as ``deriva_ml_list_executions``.
 
         Raises:
             RuntimeError: Wrapped, propagated from
@@ -513,7 +540,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def list_execution_children(
+    async def deriva_ml_list_execution_children(
         hostname: str,
         catalog_id: str,
         execution_rid: str,
@@ -573,7 +600,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def list_execution_parents(
+    async def deriva_ml_list_execution_parents(
         hostname: str,
         catalog_id: str,
         execution_rid: str,
@@ -581,7 +608,7 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """List parent executions of a child.
 
-        Symmetric to ``list_execution_children``. ``recurse=True`` walks
+        Symmetric to ``deriva_ml_list_execution_children``. ``recurse=True`` walks
         the whole ancestry chain.
 
         Args:
@@ -632,7 +659,7 @@ def register(ctx: PluginContext) -> None:
     # ------------------------------------------------------------------
 
     @ctx.tool(mutates=True)
-    async def create_execution(
+    async def deriva_ml_create_execution(
         hostname: str,
         catalog_id: str,
         workflow_rid: str,
@@ -644,7 +671,7 @@ def register(ctx: PluginContext) -> None:
         """Register a new execution against an existing workflow.
 
         Dataset and asset inputs are passed through as RID strings.
-        Upstream ``create_execution`` accepts ``"RID@version"`` shorthand
+        Upstream ``deriva_ml_create_execution`` accepts ``"RID@version"`` shorthand
         for datasets (coerced via ``DatasetSpec.from_shorthand``) and
         bare RID strings for assets (wrapped in ``AssetSpec``).
 
@@ -744,7 +771,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def start_execution(
+    async def deriva_ml_start_execution(
         hostname: str,
         catalog_id: str,
         execution_rid: str,
@@ -827,7 +854,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def commit_execution(
+    async def deriva_ml_commit_execution(
         hostname: str,
         catalog_id: str,
         execution_rid: str,
@@ -875,7 +902,8 @@ def register(ctx: PluginContext) -> None:
                         {
                             "error": (
                                 f"cannot commit execution in state {state_name}; "
-                                "only Created, Running, Stopped, or Pending_Upload are valid"
+                                "only Created, Running, Stopped, Pending_Upload, "
+                                "or Uploaded (additive upload) are valid"
                             )
                         }
                     )
@@ -900,7 +928,7 @@ def register(ctx: PluginContext) -> None:
                 # (called from _upload_execution_dirs after asset upload).
                 # The newer upload_outputs / upload_pending lease engine
                 # only handles pending_rows and skips the feature_records
-                # SQLite table — so it would leave ``add_feature_values``
+                # SQLite table — so it would leave ``deriva_ml_add_feature_values``
                 # data unflushed. Until upstream unifies the two paths,
                 # commit_execution must use upload_execution_outputs to
                 # get a real end-to-end commit.
@@ -939,7 +967,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def abort_execution(
+    async def deriva_ml_abort_execution(
         hostname: str,
         catalog_id: str,
         execution_rid: str,
@@ -1012,7 +1040,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def create_execution_dataset(
+    async def deriva_ml_create_execution_dataset(
         hostname: str,
         catalog_id: str,
         execution_rid: str,
@@ -1084,7 +1112,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def add_nested_execution(
+    async def deriva_ml_add_nested_execution(
         hostname: str,
         catalog_id: str,
         parent_execution_rid: str,

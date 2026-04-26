@@ -103,7 +103,9 @@ async def test_feature_read_round_trip(
     tools = integration_feature_tools.tools
 
     # Page mode against an empty schema: zero features, no pagination.
-    page_out = json.loads(await tools["list_features"](hostname=hostname, catalog_id=catalog_id))
+    page_out = json.loads(
+        await tools["deriva_ml_list_features"](hostname=hostname, catalog_id=catalog_id)
+    )
     assert "features" in page_out
     assert "count" in page_out
     assert "truncated" in page_out
@@ -116,7 +118,9 @@ async def test_feature_read_round_trip(
 
     # Preflight mode: no entities fetched, total_count present and zero.
     preflight_out = json.loads(
-        await tools["list_features"](hostname=hostname, catalog_id=catalog_id, preflight_count=True)
+        await tools["deriva_ml_list_features"](
+            hostname=hostname, catalog_id=catalog_id, preflight_count=True
+        )
     )
     assert preflight_out["entities_fetched"] is False
     assert isinstance(preflight_out["total_count"], int)

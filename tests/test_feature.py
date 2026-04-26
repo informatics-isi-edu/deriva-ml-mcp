@@ -92,7 +92,9 @@ async def test_list_features_success(feature_ctx, capturing_mcp, mock_ml):
     )
     mock_ml.find_features.return_value = [f1, f2]
 
-    out = json.loads(await capturing_mcp.tools["list_features"](hostname="h", catalog_id="1"))
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_list_features"](hostname="h", catalog_id="1")
+    )
 
     assert out["count"] == 2
     assert out["truncated"] is False
@@ -109,7 +111,9 @@ async def test_list_features_success(feature_ctx, capturing_mcp, mock_ml):
 async def test_list_features_filters_by_table(feature_ctx, capturing_mcp, mock_ml):
     """``table=`` is forwarded to find_features."""
     mock_ml.find_features.return_value = []
-    await capturing_mcp.tools["list_features"](hostname="h", catalog_id="1", table="Image")
+    await capturing_mcp.tools["deriva_ml_list_features"](
+        hostname="h", catalog_id="1", table="Image"
+    )
     mock_ml.find_features.assert_called_once_with(table="Image")
 
 
@@ -118,7 +122,7 @@ async def test_list_features_preflight(feature_ctx, capturing_mcp, mock_ml):
         _make_feature_mock(feature_name=f"F{i}", feature_table_name=f"FT{i:04d}") for i in range(7)
     ]
     out = json.loads(
-        await capturing_mcp.tools["list_features"](
+        await capturing_mcp.tools["deriva_ml_list_features"](
             hostname="h", catalog_id="1", preflight_count=True
         )
     )
@@ -130,7 +134,9 @@ async def test_list_features_preflight(feature_ctx, capturing_mcp, mock_ml):
 async def test_list_features_error_path(feature_ctx, capturing_mcp, mock_ml):
     mock_ml.find_features.side_effect = RuntimeError("schema down")
     with _patch_feature_audit() as mock_audit:
-        out = json.loads(await capturing_mcp.tools["list_features"](hostname="h", catalog_id="1"))
+        out = json.loads(
+            await capturing_mcp.tools["deriva_ml_list_features"](hostname="h", catalog_id="1")
+        )
     assert out == {"error": "schema down"}
     # Read tool: no audit on failure.
     assert mock_audit.call_count == 0
@@ -158,7 +164,7 @@ async def test_get_feature_success(feature_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_feature.return_value = f
 
     out = json.loads(
-        await capturing_mcp.tools["get_feature"](
+        await capturing_mcp.tools["deriva_ml_get_feature"](
             hostname="h", catalog_id="1", table="Image", feature_name="Quality"
         )
     )
@@ -178,7 +184,7 @@ async def test_get_feature_error_path(feature_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_feature.side_effect = RuntimeError("no such feature")
     with _patch_feature_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["get_feature"](
+            await capturing_mcp.tools["deriva_ml_get_feature"](
                 hostname="h", catalog_id="1", table="Image", feature_name="Missing"
             )
         )
@@ -206,7 +212,7 @@ async def test_list_feature_values_success_no_selector(feature_ctx, capturing_mc
     mock_ml.feature_values.return_value = iter(recs)
 
     out = json.loads(
-        await capturing_mcp.tools["list_feature_values"](
+        await capturing_mcp.tools["deriva_ml_list_feature_values"](
             hostname="h", catalog_id="1", table="Image", feature_name="Quality"
         )
     )
@@ -220,7 +226,7 @@ async def test_list_feature_values_success_no_selector(feature_ctx, capturing_mc
 async def test_list_feature_values_selector_newest(feature_ctx, capturing_mcp, mock_ml):
     """selector='newest' resolves to FeatureRecord.select_newest staticmethod."""
     mock_ml.feature_values.return_value = iter([_make_record_mock("1-AAAA")])
-    await capturing_mcp.tools["list_feature_values"](
+    await capturing_mcp.tools["deriva_ml_list_feature_values"](
         hostname="h",
         catalog_id="1",
         table="Image",
@@ -254,7 +260,7 @@ async def test_list_feature_values_other_simple_selectors(
     callable). The tool's selector dispatch should handle both shapes.
     """
     mock_ml.feature_values.return_value = iter([_make_record_mock("1-AAAA")])
-    await capturing_mcp.tools["list_feature_values"](
+    await capturing_mcp.tools["deriva_ml_list_feature_values"](
         hostname="h",
         catalog_id="1",
         table="Image",
@@ -274,7 +280,7 @@ async def test_list_feature_values_selector_by_workflow_requires_arg(
 ):
     """Validation: selector='by_workflow' without selector_workflow returns error."""
     out = json.loads(
-        await capturing_mcp.tools["list_feature_values"](
+        await capturing_mcp.tools["deriva_ml_list_feature_values"](
             hostname="h",
             catalog_id="1",
             table="Image",
@@ -291,7 +297,7 @@ async def test_list_feature_values_selector_by_workflow_requires_arg(
 async def test_list_feature_values_selector_by_execution(feature_ctx, capturing_mcp, mock_ml):
     """selector='by_execution' calls the FeatureRecord factory and forwards it."""
     mock_ml.feature_values.return_value = iter([])
-    await capturing_mcp.tools["list_feature_values"](
+    await capturing_mcp.tools["deriva_ml_list_feature_values"](
         hostname="h",
         catalog_id="1",
         table="Image",
@@ -310,7 +316,7 @@ async def test_list_feature_values_dataset_scope(feature_ctx, capturing_mcp, moc
     mock_ml.lookup_dataset.return_value = ds
 
     out = json.loads(
-        await capturing_mcp.tools["list_feature_values"](
+        await capturing_mcp.tools["deriva_ml_list_feature_values"](
             hostname="h",
             catalog_id="1",
             table="Image",
@@ -328,7 +334,7 @@ async def test_list_feature_values_dataset_scope(feature_ctx, capturing_mcp, moc
 async def test_list_feature_values_preflight(feature_ctx, capturing_mcp, mock_ml):
     mock_ml.feature_values.return_value = iter([_make_record_mock(f"1-{i:04d}") for i in range(4)])
     out = json.loads(
-        await capturing_mcp.tools["list_feature_values"](
+        await capturing_mcp.tools["deriva_ml_list_feature_values"](
             hostname="h",
             catalog_id="1",
             table="Image",
@@ -345,7 +351,7 @@ async def test_list_feature_values_error_path(feature_ctx, capturing_mcp, mock_m
     mock_ml.feature_values.side_effect = RuntimeError("ermrest down")
     with _patch_feature_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["list_feature_values"](
+            await capturing_mcp.tools["deriva_ml_list_feature_values"](
                 hostname="h", catalog_id="1", table="Image", feature_name="Quality"
             )
         )
@@ -371,7 +377,7 @@ async def test_create_feature_success(feature_ctx, capturing_mcp, mock_ml):
 
     with _patch_feature_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["create_feature"](
+            await capturing_mcp.tools["deriva_ml_create_feature"](
                 hostname="h",
                 catalog_id="1",
                 target_table="Image",
@@ -404,7 +410,7 @@ async def test_create_feature_failure_emits_failed_audit(feature_ctx, capturing_
     mock_ml.create_feature.side_effect = RuntimeError("invalid term table")
     with _patch_feature_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["create_feature"](
+            await capturing_mcp.tools["deriva_ml_create_feature"](
                 hostname="h",
                 catalog_id="1",
                 target_table="Image",
@@ -433,7 +439,7 @@ async def test_delete_feature_success(feature_ctx, capturing_mcp, mock_ml):
 
     with _patch_feature_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["delete_feature"](
+            await capturing_mcp.tools["deriva_ml_delete_feature"](
                 hostname="h", catalog_id="1", table="Image", feature_name="Quality"
             )
         )
@@ -452,7 +458,7 @@ async def test_delete_feature_not_found_no_audit(feature_ctx, capturing_mcp, moc
 
     with _patch_feature_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["delete_feature"](
+            await capturing_mcp.tools["deriva_ml_delete_feature"](
                 hostname="h", catalog_id="1", table="Image", feature_name="Missing"
             )
         )
@@ -466,7 +472,7 @@ async def test_delete_feature_failure_emits_failed_audit(feature_ctx, capturing_
     mock_ml.delete_feature.side_effect = RuntimeError("permission denied")
     with _patch_feature_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["delete_feature"](
+            await capturing_mcp.tools["deriva_ml_delete_feature"](
                 hostname="h", catalog_id="1", table="Image", feature_name="Quality"
             )
         )
@@ -502,7 +508,7 @@ async def test_add_feature_values_success(feature_ctx, capturing_mcp, mock_ml):
 
     with _patch_feature_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["add_feature_values"](
+            await capturing_mcp.tools["deriva_ml_add_feature_values"](
                 hostname="h",
                 catalog_id="1",
                 table="Image",
@@ -538,7 +544,7 @@ async def test_add_feature_values_empty_entries_validation_error(
     """Empty entries -> arg-validation error, no audit, no upstream call."""
     with _patch_feature_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["add_feature_values"](
+            await capturing_mcp.tools["deriva_ml_add_feature_values"](
                 hostname="h",
                 catalog_id="1",
                 table="Image",
@@ -566,7 +572,7 @@ async def test_add_feature_values_record_construction_fails(feature_ctx, capturi
 
     with _patch_feature_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["add_feature_values"](
+            await capturing_mcp.tools["deriva_ml_add_feature_values"](
                 hostname="h",
                 catalog_id="1",
                 table="Image",
@@ -605,7 +611,7 @@ async def test_add_feature_values_running_state_skips_context_manager(
 
     with _patch_feature_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["add_feature_values"](
+            await capturing_mcp.tools["deriva_ml_add_feature_values"](
                 hostname="h",
                 catalog_id="1",
                 table="Image",
@@ -648,7 +654,7 @@ async def test_add_feature_values_terminal_state_validation_error(
 
     with _patch_feature_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["add_feature_values"](
+            await capturing_mcp.tools["deriva_ml_add_feature_values"](
                 hostname="h",
                 catalog_id="1",
                 table="Image",
@@ -676,7 +682,7 @@ async def test_add_feature_values_upstream_failure(feature_ctx, capturing_mcp, m
 
     with _patch_feature_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["add_feature_values"](
+            await capturing_mcp.tools["deriva_ml_add_feature_values"](
                 hostname="h",
                 catalog_id="1",
                 table="Image",

@@ -71,6 +71,38 @@ Inherited from `deriva-mcp-core`'s plugin authoring guide
 - Every `mutates=True` tool emits `audit_event(...)` on both success and failure.
 - Audit event names use the `<plugin>_<operation>` convention: `deriva_ml_<op>`
   on success, `deriva_ml_<op>_failed` on failure.
+- All tool names are prefixed `deriva_ml_<verb>` (e.g. `deriva_ml_create_dataset`).
+  Tool names, audit event names, and prompt names use the same convention so
+  searches and log greps line up cleanly. Sibling-plugin collisions are
+  prevented by construction.
+
+## Tool / Resource Dual-Mode Policy
+
+For every read-only ML domain object (dataset, workflow, execution, feature),
+the plugin ships **both** a paginated tool *and* a fixed-shape resource:
+
+| Use case | Reach for |
+|---|---|
+| Filtered scan (status=Failed, workflow=X, page through 5K rows) | `deriva_ml_list_<x>` tool with `limit` / `after_rid` / domain filters |
+| "What's in this catalog right now?" snapshot for the LLM to ground on | `deriva://catalog/{h}/{c}/ml/<x>s` resource (capped at 1000) |
+| One known RID, full detail | `deriva://catalog/{h}/{c}/ml/<x>/{rid}` resource |
+| Semantic discovery ("workflows that train CNN models") | `rag_search(doc_type="ml-docs"|"catalog-data")` |
+
+Resources are intentionally not parameterized beyond the URI template — they
+have no query string. They are cheap, cacheable, audit-free reads. Tools carry
+the filter / sort / pagination surface and the audit-on-failure path.
+
+When adding a new read endpoint:
+
+- If it's a fixed-shape "give me X by Y" with no filters, ship as a resource.
+- If it benefits from `limit` / `after_rid` / domain filters, ship as a tool.
+- If both, ship both — they MUST share the data-fetch helper (`_<verb>_impl`
+  in the relevant `tools/<domain>.py`) so the resource and tool responses can
+  never drift in shape.
+
+This was decided after the v1.0 reviews surfaced dataset/workflow/execution
+read endpoints landing as both tools (paginated) and resources (snapshot).
+Don't replay the debate — write the helper once, register it twice.
 
 ## Coverage Report
 

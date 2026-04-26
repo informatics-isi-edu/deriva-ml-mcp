@@ -66,7 +66,7 @@ async def test_list_workflows_success(workflow_ctx, capturing_mcp, mock_ml):
         _make_workflow_mock(rid="1-AAA", name="A"),
         _make_workflow_mock(rid="1-BBB", name="B"),
     ]
-    result = await capturing_mcp.tools["list_workflows"](hostname="h", catalog_id="1")
+    result = await capturing_mcp.tools["deriva_ml_list_workflows"](hostname="h", catalog_id="1")
     payload = json.loads(result)
     assert payload["count"] == 2
     assert payload["workflows"][0]["rid"] == "1-AAA"
@@ -77,7 +77,7 @@ async def test_list_workflows_success(workflow_ctx, capturing_mcp, mock_ml):
 
 async def test_list_workflows_preflight(workflow_ctx, capturing_mcp, mock_ml):
     mock_ml.find_workflows.return_value = [_make_workflow_mock(rid=f"1-{i:03d}") for i in range(7)]
-    result = await capturing_mcp.tools["list_workflows"](
+    result = await capturing_mcp.tools["deriva_ml_list_workflows"](
         hostname="h", catalog_id="1", preflight_count=True
     )
     payload = json.loads(result)
@@ -90,7 +90,7 @@ async def test_list_workflows_pagination_cap_and_cursor(workflow_ctx, capturing_
     mock_ml.find_workflows.return_value = [_make_workflow_mock(rid=f"1-{i:03d}") for i in range(5)]
     # Limit=2: first page yields 1-000, 1-001.
     page1 = json.loads(
-        await capturing_mcp.tools["list_workflows"](hostname="h", catalog_id="1", limit=2)
+        await capturing_mcp.tools["deriva_ml_list_workflows"](hostname="h", catalog_id="1", limit=2)
     )
     assert [w["rid"] for w in page1["workflows"]] == ["1-000", "1-001"]
     assert page1["truncated"] is True
@@ -98,7 +98,7 @@ async def test_list_workflows_pagination_cap_and_cursor(workflow_ctx, capturing_
 
     # Use cursor to fetch the next page.
     page2 = json.loads(
-        await capturing_mcp.tools["list_workflows"](
+        await capturing_mcp.tools["deriva_ml_list_workflows"](
             hostname="h", catalog_id="1", limit=2, after_rid="1-001"
         )
     )
@@ -110,7 +110,7 @@ async def test_list_workflows_pagination_cap_and_cursor(workflow_ctx, capturing_
 async def test_list_workflows_error_path(workflow_ctx, capturing_mcp, mock_ml):
     mock_ml.find_workflows.side_effect = RuntimeError("kaboom")
     with _patch_workflow_audit() as mock_audit:
-        result = await capturing_mcp.tools["list_workflows"](hostname="h", catalog_id="1")
+        result = await capturing_mcp.tools["deriva_ml_list_workflows"](hostname="h", catalog_id="1")
     payload = json.loads(result)
     assert "error" in payload
     assert "kaboom" in payload["error"]
@@ -127,7 +127,7 @@ async def test_get_workflow_success(workflow_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_workflow.return_value = _make_workflow_mock(
         rid="1-WF", name="MyPipeline", description="trains models"
     )
-    result = await capturing_mcp.tools["get_workflow"](
+    result = await capturing_mcp.tools["deriva_ml_get_workflow"](
         hostname="h", catalog_id="1", workflow_rid="1-WF"
     )
     payload = json.loads(result)
@@ -141,7 +141,7 @@ async def test_get_workflow_success(workflow_ctx, capturing_mcp, mock_ml):
 async def test_get_workflow_error_path(workflow_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_workflow.side_effect = RuntimeError("not found")
     with _patch_workflow_audit() as mock_audit:
-        result = await capturing_mcp.tools["get_workflow"](
+        result = await capturing_mcp.tools["deriva_ml_get_workflow"](
             hostname="h", catalog_id="1", workflow_rid="missing"
         )
     payload = json.loads(result)
@@ -159,7 +159,7 @@ async def test_find_workflow_by_url_success(workflow_ctx, capturing_mcp, mock_ml
     mock_ml.lookup_workflow_by_url.return_value = _make_workflow_mock(
         rid="1-WF", url="https://github.com/example/repo/blob/abc/main.py"
     )
-    result = await capturing_mcp.tools["find_workflow_by_url"](
+    result = await capturing_mcp.tools["deriva_ml_find_workflow_by_url"](
         hostname="h",
         catalog_id="1",
         url_or_checksum="https://github.com/example/repo/blob/abc/main.py",
@@ -175,7 +175,7 @@ async def test_find_workflow_by_url_success(workflow_ctx, capturing_mcp, mock_ml
 async def test_find_workflow_by_url_not_found(workflow_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_workflow_by_url.side_effect = DerivaMLException("not found")
     with _patch_workflow_audit() as mock_audit:
-        result = await capturing_mcp.tools["find_workflow_by_url"](
+        result = await capturing_mcp.tools["deriva_ml_find_workflow_by_url"](
             hostname="h", catalog_id="1", url_or_checksum="nope"
         )
     payload = json.loads(result)
@@ -197,7 +197,7 @@ async def test_create_workflow_success_emits_audit(workflow_ctx, capturing_mcp, 
     mock_ml.create_workflow.return_value = new_wf
     mock_ml._add_workflow.return_value = "1-NEW"
     with _patch_workflow_audit() as mock_audit:
-        result = await capturing_mcp.tools["create_workflow"](
+        result = await capturing_mcp.tools["deriva_ml_create_workflow"](
             hostname="h",
             catalog_id="1",
             name="MyPipeline",
@@ -237,7 +237,7 @@ async def test_create_workflow_dedup_exists(workflow_ctx, capturing_mcp, mock_ml
     mock_ml.lookup_workflow_by_url.return_value = existing
     url = "https://github.com/example/repo/blob/abc/main.py"
     with _patch_workflow_audit() as mock_audit:
-        result = await capturing_mcp.tools["create_workflow"](
+        result = await capturing_mcp.tools["deriva_ml_create_workflow"](
             hostname="h",
             catalog_id="1",
             name="MyPipeline",
@@ -274,7 +274,7 @@ async def test_create_workflow_dedup_uses_checksum_when_provided(
     existing = _make_workflow_mock(rid="1-OLD-CHECKSUM-MATCH")
     mock_ml.lookup_workflow_by_url.return_value = existing
     with _patch_workflow_audit() as mock_audit:
-        result = await capturing_mcp.tools["create_workflow"](
+        result = await capturing_mcp.tools["deriva_ml_create_workflow"](
             hostname="h",
             catalog_id="1",
             name="MyPipeline",
@@ -302,7 +302,7 @@ async def test_create_workflow_failure_emits_failed_audit(workflow_ctx, capturin
     mock_ml.lookup_workflow_by_url.side_effect = DerivaMLException("no match")
     mock_ml.create_workflow.side_effect = RuntimeError("vocab term unknown")
     with _patch_workflow_audit() as mock_audit:
-        result = await capturing_mcp.tools["create_workflow"](
+        result = await capturing_mcp.tools["deriva_ml_create_workflow"](
             hostname="h",
             catalog_id="1",
             name="MyPipeline",
@@ -329,7 +329,7 @@ async def test_update_workflow_description_only_emits_audit(workflow_ctx, captur
     wf = _make_workflow_mock(rid="1-WF")
     mock_ml.lookup_workflow.return_value = wf
     with _patch_workflow_audit() as mock_audit:
-        result = await capturing_mcp.tools["update_workflow"](
+        result = await capturing_mcp.tools["deriva_ml_update_workflow"](
             hostname="h",
             catalog_id="1",
             workflow_rid="1-WF",
@@ -355,7 +355,7 @@ async def test_update_workflow_workflow_type_only_emits_audit(workflow_ctx, capt
     wf = _make_workflow_mock(rid="1-WF")
     mock_ml.lookup_workflow.return_value = wf
     with _patch_workflow_audit() as mock_audit:
-        result = await capturing_mcp.tools["update_workflow"](
+        result = await capturing_mcp.tools["deriva_ml_update_workflow"](
             hostname="h",
             catalog_id="1",
             workflow_rid="1-WF",
@@ -374,7 +374,7 @@ async def test_update_workflow_workflow_type_only_emits_audit(workflow_ctx, capt
 
 async def test_update_workflow_validation_both_none(workflow_ctx, capturing_mcp, mock_ml):
     with _patch_workflow_audit() as mock_audit:
-        result = await capturing_mcp.tools["update_workflow"](
+        result = await capturing_mcp.tools["deriva_ml_update_workflow"](
             hostname="h", catalog_id="1", workflow_rid="1-WF"
         )
     payload = json.loads(result)
@@ -387,7 +387,7 @@ async def test_update_workflow_validation_both_none(workflow_ctx, capturing_mcp,
 
 async def test_update_workflow_validation_empty_list(workflow_ctx, capturing_mcp, mock_ml):
     with _patch_workflow_audit() as mock_audit:
-        result = await capturing_mcp.tools["update_workflow"](
+        result = await capturing_mcp.tools["deriva_ml_update_workflow"](
             hostname="h",
             catalog_id="1",
             workflow_rid="1-WF",
@@ -403,7 +403,7 @@ async def test_update_workflow_validation_empty_list(workflow_ctx, capturing_mcp
 async def test_update_workflow_failure_emits_failed_audit(workflow_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_workflow.side_effect = RuntimeError("workflow not found")
     with _patch_workflow_audit() as mock_audit:
-        result = await capturing_mcp.tools["update_workflow"](
+        result = await capturing_mcp.tools["deriva_ml_update_workflow"](
             hostname="h",
             catalog_id="1",
             workflow_rid="1-MISSING",

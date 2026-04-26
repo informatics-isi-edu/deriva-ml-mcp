@@ -1,7 +1,7 @@
 """Workflow domain tools for deriva-ml-mcp.
 
-Read tools: ``list_workflows``, ``get_workflow``, ``find_workflow_by_url``.
-Mutation tools: ``create_workflow``, ``update_workflow``.
+Read tools: ``deriva_ml_list_workflows``, ``deriva_ml_get_workflow``, ``deriva_ml_find_workflow_by_url``.
+Mutation tools: ``deriva_ml_create_workflow``, ``deriva_ml_update_workflow``.
 
 Every tool wraps DERIVA I/O in ``with deriva_call():`` and routes errors
 through ``_error_envelope`` (mutation tools also emit success/failure
@@ -136,7 +136,7 @@ def register(ctx: PluginContext) -> None:
     """
 
     @ctx.tool(mutates=False)
-    async def list_workflows(
+    async def deriva_ml_list_workflows(
         hostname: str,
         catalog_id: str,
         limit: int = 100,
@@ -206,7 +206,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def get_workflow(
+    async def deriva_ml_get_workflow(
         hostname: str,
         catalog_id: str,
         workflow_rid: str,
@@ -249,7 +249,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def find_workflow_by_url(
+    async def deriva_ml_find_workflow_by_url(
         hostname: str,
         catalog_id: str,
         url_or_checksum: str,
@@ -304,7 +304,7 @@ def register(ctx: PluginContext) -> None:
     # ------------------------------------------------------------------
 
     @ctx.tool(mutates=True)
-    async def create_workflow(
+    async def deriva_ml_create_workflow(
         hostname: str,
         catalog_id: str,
         name: str,
@@ -428,7 +428,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def update_workflow(
+    async def deriva_ml_update_workflow(
         hostname: str,
         catalog_id: str,
         workflow_rid: str,

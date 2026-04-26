@@ -58,17 +58,24 @@ if TYPE_CHECKING:
 
 
 def _vocab_terms(ml: Any, vocab_name: str) -> list[dict[str, Any]]:
-    """Read all terms from one vocabulary table as plain dicts.
+    """Read all terms from one vocabulary table as compact dicts.
+
+    Returns ``name`` + ``rid`` only, by design. The full description and
+    synonym lists are available via core's ``get_term`` tool or via
+    ``rag_search`` if the LLM needs them; bundling them into the
+    registries snapshot would make this resource ~12 KB per fetch
+    (4 vocabularies x ~20 terms x ~150-byte descriptions) for a payload
+    that the LLM reads on every "what types are available" question.
 
     Args:
         ml: A connected ``deriva_ml.DerivaML`` instance.
         vocab_name: Vocabulary table name (e.g. ``"Dataset_Type"``).
 
     Returns:
-        List of dicts ``[{"name", "description", "synonyms", "rid"},
-        ...]``. Empty list if the vocab table is missing or has no
-        terms; suppresses upstream errors so a missing vocab does not
-        nuke the whole registries snapshot.
+        List of dicts ``[{"name", "rid"}, ...]``. Empty list if the
+        vocab table is missing or has no terms; suppresses upstream
+        errors so a missing vocab does not nuke the whole registries
+        snapshot.
     """
     try:
         terms = ml.list_vocabulary_terms(vocab_name)
@@ -77,8 +84,6 @@ def _vocab_terms(ml: Any, vocab_name: str) -> list[dict[str, Any]]:
     return [
         {
             "name": getattr(t, "name", None),
-            "description": getattr(t, "description", None),
-            "synonyms": list(getattr(t, "synonyms", []) or []),
             "rid": getattr(t, "rid", None),
         }
         for t in terms
@@ -106,7 +111,7 @@ def register(ctx: PluginContext) -> None:
 
         Returns ``{"datasets": [...], "count", "truncated",
         "next_after_rid"}``. When ``truncated`` is True, switch to the
-        ``list_datasets`` tool for full cursor pagination.
+        ``deriva_ml_list_datasets`` tool for full cursor pagination.
         """
         try:
             with deriva_call():
@@ -155,7 +160,7 @@ def register(ctx: PluginContext) -> None:
         Returns per-table counts, the full table list, and a flattened
         ``members`` list of ``{table, rid}`` capped at 1000 rows. When
         ``truncated`` is True (the catalog has more than 1000 members),
-        use the ``list_dataset_members`` tool with pagination.
+        use the ``deriva_ml_list_dataset_members`` tool with pagination.
         """
         try:
             with deriva_call():
@@ -175,7 +180,7 @@ def register(ctx: PluginContext) -> None:
     async def ml_workflows(hostname: str, catalog_id: str) -> str:
         """Snapshot of all workflows in the catalog (up to 1000 rows).
 
-        When ``truncated`` is True, use the ``list_workflows`` tool for
+        When ``truncated`` is True, use the ``deriva_ml_list_workflows`` tool for
         cursor-paginated access.
         """
         try:
@@ -213,7 +218,7 @@ def register(ctx: PluginContext) -> None:
     async def ml_executions(hostname: str, catalog_id: str) -> str:
         """Snapshot of all executions in the catalog (up to 1000 rows).
 
-        When ``truncated`` is True, use the ``list_executions`` tool for
+        When ``truncated`` is True, use the ``deriva_ml_list_executions`` tool for
         cursor-paginated access (it also supports filtering by workflow
         and status).
         """
@@ -265,7 +270,7 @@ def register(ctx: PluginContext) -> None:
     async def ml_features_for_table(hostname: str, catalog_id: str, table_name: str) -> str:
         """Features defined on the given target table (up to 1000 rows).
 
-        When ``truncated`` is True, use the ``list_features`` tool with
+        When ``truncated`` is True, use the ``deriva_ml_list_features`` tool with
         pagination.
         """
         try:

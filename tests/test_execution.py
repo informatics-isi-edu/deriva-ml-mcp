@@ -86,7 +86,7 @@ async def test_list_executions_success(execution_ctx, capturing_mcp, mock_ml):
         _make_execution_record_mock(rid="1-AAA", workflow_rid="1-WF"),
         _make_execution_record_mock(rid="1-BBB", workflow_rid="1-WF"),
     ]
-    result = await capturing_mcp.tools["list_executions"](hostname="h", catalog_id="1")
+    result = await capturing_mcp.tools["deriva_ml_list_executions"](hostname="h", catalog_id="1")
     payload = json.loads(result)
     assert payload["count"] == 2
     assert payload["executions"][0]["rid"] == "1-AAA"
@@ -99,7 +99,7 @@ async def test_list_executions_preflight(execution_ctx, capturing_mcp, mock_ml):
     mock_ml.find_executions.return_value = [
         _make_execution_record_mock(rid=f"1-{i:03d}") for i in range(5)
     ]
-    result = await capturing_mcp.tools["list_executions"](
+    result = await capturing_mcp.tools["deriva_ml_list_executions"](
         hostname="h", catalog_id="1", preflight_count=True
     )
     payload = json.loads(result)
@@ -113,14 +113,16 @@ async def test_list_executions_pagination_cap_and_cursor(execution_ctx, capturin
         _make_execution_record_mock(rid=f"1-{i:03d}") for i in range(5)
     ]
     page1 = json.loads(
-        await capturing_mcp.tools["list_executions"](hostname="h", catalog_id="1", limit=2)
+        await capturing_mcp.tools["deriva_ml_list_executions"](
+            hostname="h", catalog_id="1", limit=2
+        )
     )
     assert [e["rid"] for e in page1["executions"]] == ["1-000", "1-001"]
     assert page1["truncated"] is True
     assert page1["next_after_rid"] == "1-001"
 
     page2 = json.loads(
-        await capturing_mcp.tools["list_executions"](
+        await capturing_mcp.tools["deriva_ml_list_executions"](
             hostname="h", catalog_id="1", limit=2, after_rid="1-001"
         )
     )
@@ -130,7 +132,9 @@ async def test_list_executions_pagination_cap_and_cursor(execution_ctx, capturin
 async def test_list_executions_error_path(execution_ctx, capturing_mcp, mock_ml):
     mock_ml.find_executions.side_effect = RuntimeError("kaboom")
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["list_executions"](hostname="h", catalog_id="1")
+        result = await capturing_mcp.tools["deriva_ml_list_executions"](
+            hostname="h", catalog_id="1"
+        )
     payload = json.loads(result)
     assert "error" in payload
     assert "kaboom" in payload["error"]
@@ -140,7 +144,9 @@ async def test_list_executions_error_path(execution_ctx, capturing_mcp, mock_ml)
 
 async def test_list_executions_status_filter_passes_enum(execution_ctx, capturing_mcp, mock_ml):
     mock_ml.find_executions.return_value = []
-    await capturing_mcp.tools["list_executions"](hostname="h", catalog_id="1", status="Running")
+    await capturing_mcp.tools["deriva_ml_list_executions"](
+        hostname="h", catalog_id="1", status="Running"
+    )
     # The tool is responsible for converting str -> ExecutionStatus.
     args, kwargs = mock_ml.find_executions.call_args
     assert kwargs["status"] == ExecutionStatus.Running
@@ -158,7 +164,7 @@ async def test_get_execution_success(execution_ctx, capturing_mcp, mock_ml):
         status=ExecutionStatus.Stopped,
         description="some run",
     )
-    result = await capturing_mcp.tools["get_execution"](
+    result = await capturing_mcp.tools["deriva_ml_get_execution"](
         hostname="h", catalog_id="1", execution_rid="1-EXEC"
     )
     payload = json.loads(result)
@@ -172,7 +178,7 @@ async def test_get_execution_success(execution_ctx, capturing_mcp, mock_ml):
 async def test_get_execution_error_path(execution_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_execution.side_effect = RuntimeError("not found")
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["get_execution"](
+        result = await capturing_mcp.tools["deriva_ml_get_execution"](
             hostname="h", catalog_id="1", execution_rid="missing"
         )
     payload = json.loads(result)
@@ -191,7 +197,7 @@ async def test_find_workflow_executions_success(execution_ctx, capturing_mcp, mo
         _make_execution_record_mock(rid="1-AAA", workflow_rid="1-WF"),
         _make_execution_record_mock(rid="1-BBB", workflow_rid="1-WF"),
     ]
-    result = await capturing_mcp.tools["find_workflow_executions"](
+    result = await capturing_mcp.tools["deriva_ml_find_workflow_executions"](
         hostname="h", catalog_id="1", workflow_rid="1-WF"
     )
     payload = json.loads(result)
@@ -204,7 +210,7 @@ async def test_find_workflow_executions_success(execution_ctx, capturing_mcp, mo
 async def test_find_workflow_executions_error_path(execution_ctx, capturing_mcp, mock_ml):
     mock_ml.find_executions.side_effect = RuntimeError("kaboom")
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["find_workflow_executions"](
+        result = await capturing_mcp.tools["deriva_ml_find_workflow_executions"](
             hostname="h", catalog_id="1", workflow_rid="1-WF"
         )
     payload = json.loads(result)
@@ -225,7 +231,7 @@ async def test_list_execution_children_success(execution_ctx, capturing_mcp, moc
     ]
     mock_ml.lookup_execution.return_value = parent
 
-    result = await capturing_mcp.tools["list_execution_children"](
+    result = await capturing_mcp.tools["deriva_ml_list_execution_children"](
         hostname="h", catalog_id="1", execution_rid="1-PARENT"
     )
     payload = json.loads(result)
@@ -240,7 +246,7 @@ async def test_list_execution_children_recurse_true(execution_ctx, capturing_mcp
     parent = _make_execution_record_mock(rid="1-PARENT")
     parent.list_execution_children.return_value = []
     mock_ml.lookup_execution.return_value = parent
-    result = await capturing_mcp.tools["list_execution_children"](
+    result = await capturing_mcp.tools["deriva_ml_list_execution_children"](
         hostname="h", catalog_id="1", execution_rid="1-PARENT", recurse=True
     )
     payload = json.loads(result)
@@ -251,7 +257,7 @@ async def test_list_execution_children_recurse_true(execution_ctx, capturing_mcp
 async def test_list_execution_children_error_path(execution_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_execution.side_effect = RuntimeError("missing")
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["list_execution_children"](
+        result = await capturing_mcp.tools["deriva_ml_list_execution_children"](
             hostname="h", catalog_id="1", execution_rid="1-PARENT"
         )
     payload = json.loads(result)
@@ -271,7 +277,7 @@ async def test_list_execution_parents_success(execution_ctx, capturing_mcp, mock
     ]
     mock_ml.lookup_execution.return_value = child
 
-    result = await capturing_mcp.tools["list_execution_parents"](
+    result = await capturing_mcp.tools["deriva_ml_list_execution_parents"](
         hostname="h", catalog_id="1", execution_rid="1-CHILD"
     )
     payload = json.loads(result)
@@ -284,7 +290,7 @@ async def test_list_execution_parents_success(execution_ctx, capturing_mcp, mock
 async def test_list_execution_parents_error_path(execution_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_execution.side_effect = RuntimeError("missing")
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["list_execution_parents"](
+        result = await capturing_mcp.tools["deriva_ml_list_execution_parents"](
             hostname="h", catalog_id="1", execution_rid="1-CHILD"
         )
     payload = json.loads(result)
@@ -301,7 +307,7 @@ async def test_create_execution_success_emits_audit(execution_ctx, capturing_mcp
     new_exec = _make_execution_mock(execution_rid="1-NEW")
     mock_ml.create_execution.return_value = new_exec
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["create_execution"](
+        result = await capturing_mcp.tools["deriva_ml_create_execution"](
             hostname="h",
             catalog_id="1",
             workflow_rid="1-WF",
@@ -327,7 +333,7 @@ async def test_create_execution_dry_run_skips_audit(execution_ctx, capturing_mcp
     new_exec = _make_execution_mock(execution_rid="DRY-RUN-RID")
     mock_ml.create_execution.return_value = new_exec
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["create_execution"](
+        result = await capturing_mcp.tools["deriva_ml_create_execution"](
             hostname="h",
             catalog_id="1",
             workflow_rid="1-WF",
@@ -347,7 +353,7 @@ async def test_create_execution_with_datasets_and_assets(execution_ctx, capturin
     new_exec = _make_execution_mock(execution_rid="1-NEW")
     mock_ml.create_execution.return_value = new_exec
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["create_execution"](
+        result = await capturing_mcp.tools["deriva_ml_create_execution"](
             hostname="h",
             catalog_id="1",
             workflow_rid="1-WF",
@@ -371,7 +377,7 @@ async def test_create_execution_with_datasets_and_assets(execution_ctx, capturin
 async def test_create_execution_failure_emits_failed_audit(execution_ctx, capturing_mcp, mock_ml):
     mock_ml.create_execution.side_effect = RuntimeError("workflow missing")
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["create_execution"](
+        result = await capturing_mcp.tools["deriva_ml_create_execution"](
             hostname="h", catalog_id="1", workflow_rid="1-WF"
         )
     payload = json.loads(result)
@@ -390,7 +396,7 @@ async def test_start_execution_success_emits_audit(execution_ctx, capturing_mcp,
     execution = _make_execution_mock(execution_rid="1-EXEC", status=ExecutionStatus.Created)
     mock_ml.resume_execution.return_value = execution
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["start_execution"](
+        result = await capturing_mcp.tools["deriva_ml_start_execution"](
             hostname="h", catalog_id="1", execution_rid="1-EXEC"
         )
     payload = json.loads(result)
@@ -408,7 +414,7 @@ async def test_start_execution_idempotent_when_already_running(
     execution = _make_execution_mock(execution_rid="1-EXEC", status=ExecutionStatus.Running)
     mock_ml.resume_execution.return_value = execution
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["start_execution"](
+        result = await capturing_mcp.tools["deriva_ml_start_execution"](
             hostname="h", catalog_id="1", execution_rid="1-EXEC"
         )
     payload = json.loads(result)
@@ -423,7 +429,7 @@ async def test_start_execution_rejects_terminal_state(execution_ctx, capturing_m
     execution = _make_execution_mock(execution_rid="1-EXEC", status=ExecutionStatus.Uploaded)
     mock_ml.resume_execution.return_value = execution
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["start_execution"](
+        result = await capturing_mcp.tools["deriva_ml_start_execution"](
             hostname="h", catalog_id="1", execution_rid="1-EXEC"
         )
     payload = json.loads(result)
@@ -437,7 +443,7 @@ async def test_start_execution_rejects_terminal_state(execution_ctx, capturing_m
 async def test_start_execution_failure_emits_failed_audit(execution_ctx, capturing_mcp, mock_ml):
     mock_ml.resume_execution.side_effect = RuntimeError("missing")
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["start_execution"](
+        result = await capturing_mcp.tools["deriva_ml_start_execution"](
             hostname="h", catalog_id="1", execution_rid="1-EXEC"
         )
     payload = json.loads(result)
@@ -481,7 +487,7 @@ async def test_commit_execution_success_emits_audit(execution_ctx, capturing_mcp
     )
     mock_ml.resume_execution.return_value = execution
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["commit_execution"](
+        result = await capturing_mcp.tools["deriva_ml_commit_execution"](
             hostname="h", catalog_id="1", execution_rid="1-EXEC"
         )
     payload = json.loads(result)
@@ -511,7 +517,7 @@ async def test_commit_execution_retry_failed_true(execution_ctx, capturing_mcp, 
     execution.upload_execution_outputs.return_value = _make_uploaded_dict({})
     mock_ml.resume_execution.return_value = execution
     with _patch_execution_audit() as mock_audit:
-        await capturing_mcp.tools["commit_execution"](
+        await capturing_mcp.tools["deriva_ml_commit_execution"](
             hostname="h", catalog_id="1", execution_rid="1-EXEC", retry_failed=True
         )
     # Already past Running, no execution_stop call.
@@ -521,10 +527,36 @@ async def test_commit_execution_retry_failed_true(execution_ctx, capturing_mcp, 
     assert success[0].kwargs["retry_failed"] is True
 
 
+async def test_commit_execution_additive_upload_from_uploaded(
+    execution_ctx, capturing_mcp, mock_ml
+):
+    # Per deriva-ml 3d21f55, an Uploaded execution can have additional
+    # outputs registered after its initial commit. commit_execution must
+    # accept Uploaded as a valid prior state -- upload_execution_outputs
+    # cycles Uploaded -> Pending_Upload -> Uploaded internally when there
+    # are new pending entries, or no-ops when there aren't. The MCP tool
+    # must not reject this path with a state-machine error.
+    execution = _make_execution_mock(execution_rid="1-EXEC", status=ExecutionStatus.Uploaded)
+    _attach_pending_features(execution, count=0)
+    execution.upload_execution_outputs.return_value = _make_uploaded_dict({})
+    mock_ml.resume_execution.return_value = execution
+    with _patch_execution_audit() as mock_audit:
+        result = await capturing_mcp.tools["deriva_ml_commit_execution"](
+            hostname="h", catalog_id="1", execution_rid="1-EXEC"
+        )
+    payload = json.loads(result)
+    assert "error" not in payload
+    # Already past Running, no execution_stop call (mirrors Pending_Upload path).
+    execution.execution_stop.assert_not_called()
+    execution.upload_execution_outputs.assert_called_once_with()
+    success = _success_calls(mock_audit, "deriva_ml_commit_execution")
+    assert success, "additive-upload path must still emit success audit"
+
+
 async def test_commit_execution_failure_emits_failed_audit(execution_ctx, capturing_mcp, mock_ml):
     mock_ml.resume_execution.side_effect = RuntimeError("offline")
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["commit_execution"](
+        result = await capturing_mcp.tools["deriva_ml_commit_execution"](
             hostname="h", catalog_id="1", execution_rid="1-EXEC"
         )
     payload = json.loads(result)
@@ -542,7 +574,7 @@ async def test_abort_execution_success_emits_audit(execution_ctx, capturing_mcp,
     execution = _make_execution_mock(execution_rid="1-EXEC", status=ExecutionStatus.Running)
     mock_ml.resume_execution.return_value = execution
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["abort_execution"](
+        result = await capturing_mcp.tools["deriva_ml_abort_execution"](
             hostname="h", catalog_id="1", execution_rid="1-EXEC", reason="cancel by user"
         )
     payload = json.loads(result)
@@ -561,7 +593,7 @@ async def test_abort_execution_idempotent_when_already_aborted(
     execution = _make_execution_mock(execution_rid="1-EXEC", status=ExecutionStatus.Aborted)
     mock_ml.resume_execution.return_value = execution
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["abort_execution"](
+        result = await capturing_mcp.tools["deriva_ml_abort_execution"](
             hostname="h", catalog_id="1", execution_rid="1-EXEC"
         )
     payload = json.loads(result)
@@ -574,7 +606,7 @@ async def test_abort_execution_idempotent_when_already_aborted(
 async def test_abort_execution_failure_emits_failed_audit(execution_ctx, capturing_mcp, mock_ml):
     mock_ml.resume_execution.side_effect = RuntimeError("missing")
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["abort_execution"](
+        result = await capturing_mcp.tools["deriva_ml_abort_execution"](
             hostname="h", catalog_id="1", execution_rid="1-EXEC"
         )
     payload = json.loads(result)
@@ -596,7 +628,7 @@ async def test_create_execution_dataset_success_emits_audit(execution_ctx, captu
     mock_ml.resume_execution.return_value = execution
 
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["create_execution_dataset"](
+        result = await capturing_mcp.tools["deriva_ml_create_execution_dataset"](
             hostname="h",
             catalog_id="1",
             execution_rid="1-EXEC",
@@ -619,7 +651,7 @@ async def test_create_execution_dataset_failure_emits_failed_audit(
 ):
     mock_ml.resume_execution.side_effect = RuntimeError("missing")
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["create_execution_dataset"](
+        result = await capturing_mcp.tools["deriva_ml_create_execution_dataset"](
             hostname="h", catalog_id="1", execution_rid="1-EXEC"
         )
     payload = json.loads(result)
@@ -637,7 +669,7 @@ async def test_add_nested_execution_success_emits_audit(execution_ctx, capturing
     parent = _make_execution_mock(execution_rid="1-PARENT", status=ExecutionStatus.Running)
     mock_ml.resume_execution.return_value = parent
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["add_nested_execution"](
+        result = await capturing_mcp.tools["deriva_ml_add_nested_execution"](
             hostname="h",
             catalog_id="1",
             parent_execution_rid="1-PARENT",
@@ -662,7 +694,7 @@ async def test_add_nested_execution_failure_emits_failed_audit(
 ):
     mock_ml.resume_execution.side_effect = RuntimeError("missing")
     with _patch_execution_audit() as mock_audit:
-        result = await capturing_mcp.tools["add_nested_execution"](
+        result = await capturing_mcp.tools["deriva_ml_add_nested_execution"](
             hostname="h",
             catalog_id="1",
             parent_execution_rid="1-PARENT",

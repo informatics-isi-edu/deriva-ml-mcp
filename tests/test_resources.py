@@ -378,10 +378,8 @@ async def test_ml_executions_error_path(resource_ctx, capturing_mcp, mock_ml):
 # ---------------------------------------------------------------------------
 
 
-async def test_ml_execution_detail_includes_inputs_outputs_metadata(
-    resource_ctx, capturing_mcp, mock_ml
-):
-    """Detail bundles inputs, outputs, metadata, and (null) experiment."""
+async def test_ml_execution_detail_includes_inputs_outputs(resource_ctx, capturing_mcp, mock_ml):
+    """Detail bundles inputs and outputs; experiment key absent when no experiment."""
     record = _make_execution_record_mock(rid="1-EXEC", workflow_rid="1-WF")
 
     # Stub one input dataset.
@@ -407,6 +405,8 @@ async def test_ml_execution_detail_includes_inputs_outputs_metadata(
 
     record.list_assets.side_effect = _list_assets
     mock_ml.lookup_execution.return_value = record
+    # Most executions are not experiments -- lookup_experiment raises.
+    mock_ml.lookup_experiment.side_effect = RuntimeError("Execution has no Experiment")
 
     out = json.loads(
         await capturing_mcp.resources[_EXECUTION_DETAIL_URI](
@@ -422,11 +422,42 @@ async def test_ml_execution_detail_includes_inputs_outputs_metadata(
     assert out["outputs"] == {
         "assets": [{"rid": "1-OUT", "filename": "out.txt"}],
     }
-    # Metadata bucket includes hydra_config key (currently null until upstream API).
-    assert "hydra_config" in out["metadata"]
-    assert out["metadata"]["hydra_config"] is None
-    # experiment key always present (None until upstream detection API).
-    assert out["experiment"] is None
+    # No metadata bucket (omit-when-no-upstream-API; see TODO in
+    # _get_execution_detail_impl).
+    assert "metadata" not in out
+    # No experiment key when the execution is not an Experiment.
+    assert "experiment" not in out
+
+
+async def test_ml_execution_detail_includes_experiment_when_present(
+    resource_ctx, capturing_mcp, mock_ml
+):
+    """When the execution IS an Experiment, the key surfaces name + config."""
+    record = _make_execution_record_mock(rid="1-EXP", workflow_rid="1-WF")
+    record.list_input_datasets.return_value = []
+    record.list_assets.return_value = []
+    mock_ml.lookup_execution.return_value = record
+
+    # Stub the Experiment shape: name + config_choices + model_config (cheap
+    # accessors per Experiment.__init__; no hydra_config download).
+    experiment = MagicMock()
+    experiment.name = "lr-sweep-trial-3"
+    experiment.config_choices = {"model": "resnet50", "optimizer": "adam"}
+    experiment.model_config = {"lr": 0.001, "batch_size": 32}
+    mock_ml.lookup_experiment.return_value = experiment
+
+    out = json.loads(
+        await capturing_mcp.resources[_EXECUTION_DETAIL_URI](
+            hostname="h", catalog_id="1", execution_rid="1-EXP"
+        )
+    )
+    assert "experiment" in out
+    assert out["experiment"]["name"] == "lr-sweep-trial-3"
+    assert out["experiment"]["config_choices"] == {"model": "resnet50", "optimizer": "adam"}
+    assert out["experiment"]["model_config"] == {"lr": 0.001, "batch_size": 32}
+    # We deliberately do NOT surface the full hydra_config dict (can be 10-100 KB);
+    # the resource exposes the cheap accessors only.
+    assert "hydra_config" not in out["experiment"]
 
 
 async def test_ml_execution_detail_not_found(resource_ctx, capturing_mcp, mock_ml):
@@ -518,14 +549,20 @@ async def test_ml_registries_missing_vocab_yields_empty_list(resource_ctx, captu
             await capturing_mcp.resources[_REGISTRIES_URI](hostname="h", catalog_id="1")
         )
     # The successful vocab still lands; the failed ones are silently empty.
+    # Compact shape: name + rid only (description/synonyms deliberately
+    # omitted to keep the snapshot under ~1 KB; see _vocab_terms docstring).
     assert out["dataset_types"] == [
         {
             "name": "Training",
-            "description": "",
-            "synonyms": [],
             "rid": "VRID-Training",
         }
     ]
+    # Verify description and synonyms are NOT in the payload (token economy:
+    # this resource is read on every "what types are available" question;
+    # a 12 KB payload would dominate context for routine vocab checks).
+    term = out["dataset_types"][0]
+    assert "description" not in term
+    assert "synonyms" not in term
     assert out["workflow_types"] == []
     assert out["asset_types"] == []
     assert out["execution_statuses"] == []

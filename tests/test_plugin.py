@@ -22,68 +22,68 @@ from deriva_ml_mcp.plugin import register
 _DATASET_TOOLS = frozenset(
     {
         # Read-only tools
-        "list_datasets",
-        "get_dataset",
-        "list_dataset_members",
-        "list_dataset_relations",
-        "list_dataset_element_types",
-        "bag_info",
-        "get_dataset_spec",
+        "deriva_ml_list_datasets",
+        "deriva_ml_get_dataset",
+        "deriva_ml_list_dataset_members",
+        "deriva_ml_list_dataset_relations",
+        "deriva_ml_list_dataset_element_types",
+        "deriva_ml_bag_info",
+        "deriva_ml_get_dataset_spec",
         # Mutation tools
-        "create_dataset",
-        "delete_dataset",
-        "add_dataset_members",
-        "delete_dataset_members",
-        "update_dataset_types",
-        "add_dataset_element_type",
-        "increment_dataset_version",
+        "deriva_ml_create_dataset",
+        "deriva_ml_delete_dataset",
+        "deriva_ml_add_dataset_members",
+        "deriva_ml_delete_dataset_members",
+        "deriva_ml_update_dataset_types",
+        "deriva_ml_add_dataset_element_type",
+        "deriva_ml_increment_dataset_version",
         # Complex / local-FS tools
-        "cache_dataset",
-        "denormalize_dataset",
-        "split_dataset",
+        "deriva_ml_cache_dataset",
+        "deriva_ml_denormalize_dataset",
+        "deriva_ml_split_dataset",
     }
 )
 
 _FEATURE_TOOLS = frozenset(
     {
         # Read-only tools
-        "list_features",
-        "get_feature",
-        "list_feature_values",
+        "deriva_ml_list_features",
+        "deriva_ml_get_feature",
+        "deriva_ml_list_feature_values",
         # Mutation tools
-        "create_feature",
-        "delete_feature",
-        "add_feature_values",
+        "deriva_ml_create_feature",
+        "deriva_ml_delete_feature",
+        "deriva_ml_add_feature_values",
     }
 )
 
 _WORKFLOW_TOOLS = frozenset(
     {
         # Read-only tools
-        "list_workflows",
-        "get_workflow",
-        "find_workflow_by_url",
+        "deriva_ml_list_workflows",
+        "deriva_ml_get_workflow",
+        "deriva_ml_find_workflow_by_url",
         # Mutation tools
-        "create_workflow",
-        "update_workflow",
+        "deriva_ml_create_workflow",
+        "deriva_ml_update_workflow",
     }
 )
 
 _EXECUTION_TOOLS = frozenset(
     {
         # Read-only tools
-        "list_executions",
-        "get_execution",
-        "find_workflow_executions",
-        "list_execution_children",
-        "list_execution_parents",
+        "deriva_ml_list_executions",
+        "deriva_ml_get_execution",
+        "deriva_ml_find_workflow_executions",
+        "deriva_ml_list_execution_children",
+        "deriva_ml_list_execution_parents",
         # Mutation tools
-        "create_execution",
-        "start_execution",
-        "commit_execution",
-        "abort_execution",
-        "create_execution_dataset",
-        "add_nested_execution",
+        "deriva_ml_create_execution",
+        "deriva_ml_start_execution",
+        "deriva_ml_commit_execution",
+        "deriva_ml_abort_execution",
+        "deriva_ml_create_execution_dataset",
+        "deriva_ml_add_nested_execution",
     }
 )
 
@@ -107,6 +107,20 @@ _ML_RESOURCE_URIS = frozenset(
         "deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}",
         "deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}",
         "deriva://catalog/{hostname}/{catalog_id}/ml/registries",
+    }
+)
+
+# Names of the three MCP prompts registered by ``prompts.py``. The
+# plugin-level test below uses ``>=`` (superset) rather than equality
+# so a future fully-loaded core that registers additional prompts via
+# the same context wouldn't break this assertion -- the contract here
+# is "the ML prompts landed", not "ONLY the ML prompts are present".
+# Per-prompt name exactness is pinned in ``test_prompts.py``.
+_ML_PROMPT_NAMES = frozenset(
+    {
+        "deriva_ml_getting_started",
+        "deriva_ml_execution_lifecycle",
+        "deriva_ml_workflow_dedup",
     }
 )
 
@@ -239,6 +253,19 @@ def test_register_wires_three_catalog_connect_hooks(ctx):
     """
     register(ctx)
     assert len(ctx._catalog_connect_hooks) == 3
+
+
+def test_register_wires_three_prompts(ctx, capturing_mcp):
+    """``register(ctx)`` must wire all three ML prompts via ``prompts.register``.
+
+    Uses ``>=`` rather than ``==`` so a future fully-loaded core that
+    happens to register prompts via the same ``ctx`` wouldn't break
+    this check -- the contract is "the ML prompts landed", not "ONLY
+    the ML prompts are present". Per-prompt exact-set assertions live
+    in ``test_prompts.py``.
+    """
+    register(ctx)
+    assert set(capturing_mcp.prompts.keys()) >= _ML_PROMPT_NAMES
 
 
 def test_register_does_not_use_rag_dataset_indexer(ctx):
