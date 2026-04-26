@@ -25,7 +25,9 @@ on the failure path. Tool modules also import ``audit_event`` directly
 into their own namespace for success-path emission. Tests that need to
 capture both paths must patch BOTH the tool-module name AND
 ``deriva_ml_mcp._helpers.audit_event`` to the same mock — see
-``_patch_audit()`` in ``tests/test_dataset.py``. Python's
+``make_patch_audit(module_name)`` in ``tests/conftest.py`` (the
+canonical factory; per-domain test files bind it as
+``_patch_audit = make_patch_audit("dataset")`` etc.). Python's
 ``from X import name`` binds ``name`` in the importing module's
 namespace at import time, so a single-patch facade isn't possible
 without changing every call site to use attribute lookup.
