@@ -64,6 +64,46 @@ def _summarize_feature(feature: Any) -> dict[str, Any]:
     }
 
 
+def _list_features_impl(
+    ml: Any,
+    *,
+    table: str | None,
+    after_rid: str | None,
+    limit: int,
+) -> dict[str, Any]:
+    """Fetch + paginate features. Pure helper -- shared by tool and resource.
+
+    Pagination key is ``feature_table.name`` (features have no first-class
+    RID); ``after_rid`` is the last feature_table name from the previous
+    page.
+
+    Args:
+        ml: A connected ``deriva_ml.DerivaML`` instance.
+        table: Optional target-table filter (passes to ``find_features``).
+        after_rid: Cursor (last ``feature_table`` name from prior page).
+        limit: Max features per page (already capped by caller).
+
+    Returns:
+        Dict ``{"features": [...], "count", "truncated", "next_after_rid"}``.
+    """
+    features = sorted(
+        ml.find_features(table=table),
+        key=lambda f: f.feature_table.name,
+    )
+    page, truncated, next_after = _paginate(
+        features,
+        after_rid=after_rid,
+        limit=limit,
+        key=lambda f: f.feature_table.name,
+    )
+    return {
+        "features": [_summarize_feature(f) for f in page],
+        "count": len(page),
+        "truncated": truncated,
+        "next_after_rid": next_after,
+    }
+
+
 def register(ctx: PluginContext) -> None:
     """Register all feature domain tools with the plugin context.
 
@@ -128,39 +168,27 @@ def register(ctx: PluginContext) -> None:
         try:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
-                features = sorted(
-                    ml.find_features(table=table),
-                    key=lambda f: f.feature_table.name,
-                )
+                if preflight_count:
+                    total = len(list(ml.find_features(table=table)))
+                    return json.dumps(
+                        {
+                            "total_count": total,
+                            "entities_fetched": False,
+                            "action_required": (
+                                f"Found {total} features. Choose a limit and "
+                                "call again with preflight_count=False."
+                            ),
+                        }
+                    )
 
-            if preflight_count:
-                total = len(features)
-                return json.dumps(
-                    {
-                        "total_count": total,
-                        "entities_fetched": False,
-                        "action_required": (
-                            f"Found {total} features. Choose a limit and "
-                            "call again with preflight_count=False."
-                        ),
-                    }
+                capped = min(max(limit, 0), _MAX_LIMIT)
+                payload = _list_features_impl(
+                    ml,
+                    table=table,
+                    after_rid=after_rid,
+                    limit=capped,
                 )
-
-            capped = min(max(limit, 0), _MAX_LIMIT)
-            page, truncated, next_after = _paginate(
-                features,
-                after_rid=after_rid,
-                limit=capped,
-                key=lambda f: f.feature_table.name,
-            )
-            return json.dumps(
-                {
-                    "features": [_summarize_feature(f) for f in page],
-                    "count": len(page),
-                    "truncated": truncated,
-                    "next_after_rid": next_after,
-                }
-            )
+            return json.dumps(payload)
         except Exception as exc:
             return _error_envelope(
                 exc,
