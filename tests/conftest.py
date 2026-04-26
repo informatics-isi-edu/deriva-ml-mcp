@@ -3,10 +3,19 @@
 Mirrors the unit-test fixture pattern from
 ``deriva-mcp-core/tests/test_tools.py`` (``_CapturingMCP``) and the
 integration-test patterns from ``deriva-mcp/tests/conftest.py``.
+
+Integration-test fixtures (``deriva_host``, ``demo_catalog``) and the
+``_server_reachable()`` helper live here so multiple integration test
+files can share them. Each integration file still defines its own
+``pytestmark`` (the ``integration`` marker + ``skipif`` gate) — see
+``test_integration.py`` and ``test_integration_feature.py``.
 """
 
 from __future__ import annotations
 
+import os
+import socket
+from collections.abc import Iterator
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -104,3 +113,86 @@ def mock_ml():
     Per-test setup configures return values for the methods being exercised.
     """
     return MagicMock()
+
+
+# ---------------------------------------------------------------------------
+# Integration-test helpers and session fixtures
+# ---------------------------------------------------------------------------
+
+
+def _server_reachable() -> bool:
+    """Quick TCP probe to ``${DERIVA_HOST:-localhost}:443``.
+
+    Used by integration test modules in their ``pytestmark`` ``skipif``
+    gate. Lives here so multiple integration test files can import the
+    same helper rather than defining it independently.
+
+    Returns:
+        True if a TCP connect succeeded within 2 seconds, False otherwise.
+
+    Example:
+        >>> # In an integration test file:
+        >>> from tests.conftest import _server_reachable
+        >>> import pytest
+        >>> pytestmark = [
+        ...     pytest.mark.integration,
+        ...     pytest.mark.skipif(not _server_reachable(), reason="..."),
+        ... ]
+    """
+    host = os.environ.get("DERIVA_HOST", "localhost")
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        result = sock.connect_ex((host, 443))
+        sock.close()
+        return result == 0
+    except Exception:
+        return False
+
+
+@pytest.fixture(scope="session")
+def deriva_host() -> str:
+    """Hostname of the Deriva server under test.
+
+    Returns:
+        The value of ``$DERIVA_HOST`` if set, otherwise ``"localhost"``.
+    """
+    return os.environ.get("DERIVA_HOST", "localhost")
+
+
+@pytest.fixture(scope="session")
+def demo_catalog(deriva_host: str) -> Iterator[tuple[str, str]]:
+    """Spin up a demo catalog for the test session and tear it down after.
+
+    Session-scoped so multiple integration tests can share the same
+    empty schema-shaped catalog. Cleanup runs deterministically at
+    session end via ``destroy_demo_catalog`` rather than relying on
+    ``create_demo_catalog``'s atexit hook.
+
+    Args:
+        deriva_host: Hostname injected by the ``deriva_host`` fixture.
+
+    Yields:
+        ``(hostname, catalog_id)`` tuple. ``catalog_id`` is stringified
+        because tool signatures take it as ``str``.
+
+    Example:
+        >>> def test_smoke(demo_catalog):  # doctest: +SKIP
+        ...     host, catalog_id = demo_catalog
+        ...     # ... call tools with host + catalog_id ...
+    """
+    from deriva_ml.demo_catalog import create_demo_catalog, destroy_demo_catalog
+
+    catalog = create_demo_catalog(
+        deriva_host,
+        domain_schema="demo-schema",
+        project_name="ml-mcp-int-test",
+        populate=False,
+        create_features=False,
+        create_datasets=False,
+        on_exit_delete=False,
+    )
+    try:
+        yield deriva_host, str(catalog.catalog_id)
+    finally:
+        destroy_demo_catalog(catalog)
