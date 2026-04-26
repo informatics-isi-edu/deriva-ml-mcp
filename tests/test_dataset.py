@@ -3,9 +3,37 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from tests.conftest import _success_calls
+
+
+@contextmanager
+def _patch_audit():
+    """Patch ``audit_event`` at BOTH the dataset success site and the
+    shared-helpers failure site so tests can capture either with a
+    single mock.
+
+    Mutation tools call ``audit_event`` directly from
+    ``deriva_ml_mcp.tools.dataset`` on success and route failure
+    audits through ``deriva_ml_mcp._helpers._error_envelope`` (which
+    imports ``audit_event`` into its own namespace). Patching both
+    locations to the same mock keeps the test pattern unchanged
+    regardless of which path the call originated from.
+
+    Example:
+        >>> with _patch_audit() as mock_audit:
+        ...     # ... invoke tool ...
+        ...     pass
+    """
+    with (
+        patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit,
+        patch("deriva_ml_mcp._helpers.audit_event", new=mock_audit),
+    ):
+        yield mock_audit
 
 
 def _make_dataset_mock(
@@ -537,11 +565,6 @@ async def test_get_dataset_spec_error(dataset_ctx, capturing_mcp, mock_ml):
 # ===========================================================================
 
 
-def _success_calls(mock_audit, event_name: str):
-    """Return audit_event call records whose first positional arg matches."""
-    return [c for c in mock_audit.call_args_list if c.args and c.args[0] == event_name]
-
-
 # ---------------------------------------------------------------------------
 # create_dataset
 # ---------------------------------------------------------------------------
@@ -552,7 +575,7 @@ async def test_create_dataset_success(dataset_ctx, capturing_mcp, mock_ml):
     new_ds = _make_dataset_mock("1-NEW", "desc", ["Training"], "1.0.0")
     with (
         patch("deriva_ml_mcp.tools.dataset.Dataset") as mock_dataset_cls,
-        patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit,
+        _patch_audit() as mock_audit,
     ):
         mock_dataset_cls.create_dataset.return_value = new_ds
         out = json.loads(
@@ -602,7 +625,7 @@ async def test_create_dataset_failure_emits_failed_audit(dataset_ctx, capturing_
     """Error path: audit fires `_failed`, response has {error: ...}."""
     with (
         patch("deriva_ml_mcp.tools.dataset.Dataset") as mock_dataset_cls,
-        patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit,
+        _patch_audit() as mock_audit,
     ):
         mock_dataset_cls.create_dataset.side_effect = RuntimeError("invalid term")
         out = json.loads(
@@ -632,7 +655,7 @@ async def test_create_dataset_failure_emits_failed_audit(dataset_ctx, capturing_
 async def test_delete_dataset_success(dataset_ctx, capturing_mcp, mock_ml):
     ds = _make_dataset_mock("1-AAAA")
     mock_ml.lookup_dataset.return_value = ds
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["delete_dataset"](
                 hostname="h", catalog_id="1", dataset_rid="1-AAAA"
@@ -651,7 +674,7 @@ async def test_delete_dataset_recursive(dataset_ctx, capturing_mcp, mock_ml):
     """recurse=True is forwarded to ml.delete_dataset and recorded in audit."""
     ds = _make_dataset_mock("1-AAAA")
     mock_ml.lookup_dataset.return_value = ds
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["delete_dataset"](
                 hostname="h", catalog_id="1", dataset_rid="1-AAAA", recurse=True
@@ -665,7 +688,7 @@ async def test_delete_dataset_recursive(dataset_ctx, capturing_mcp, mock_ml):
 
 async def test_delete_dataset_error_path(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.side_effect = RuntimeError("not found")
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["delete_dataset"](
                 hostname="h", catalog_id="1", dataset_rid="missing"
@@ -686,7 +709,7 @@ async def test_delete_dataset_error_path(dataset_ctx, capturing_mcp, mock_ml):
 async def test_add_dataset_members_with_list(dataset_ctx, capturing_mcp, mock_ml):
     ds = _make_dataset_mock("1-AAAA", current_version="1.1.0")
     mock_ml.lookup_dataset.return_value = ds
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["add_dataset_members"](
                 hostname="h",
@@ -729,7 +752,7 @@ async def test_add_dataset_members_with_dict(dataset_ctx, capturing_mcp, mock_ml
 
 async def test_add_dataset_members_validates_inputs(dataset_ctx, capturing_mcp, mock_ml):
     """Both args missing -> early ValueError-style {error: ...}, no audit call."""
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["add_dataset_members"](
                 hostname="h", catalog_id="1", dataset_rid="1-AAAA"
@@ -759,7 +782,7 @@ async def test_add_dataset_members_error_path(dataset_ctx, capturing_mcp, mock_m
     ds = _make_dataset_mock("1-AAAA")
     ds.add_dataset_members.side_effect = RuntimeError("cycle detected")
     mock_ml.lookup_dataset.return_value = ds
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["add_dataset_members"](
                 hostname="h",
@@ -782,7 +805,7 @@ async def test_add_dataset_members_error_path(dataset_ctx, capturing_mcp, mock_m
 async def test_delete_dataset_members_success(dataset_ctx, capturing_mcp, mock_ml):
     ds = _make_dataset_mock("1-AAAA", current_version="1.3.0")
     mock_ml.lookup_dataset.return_value = ds
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["delete_dataset_members"](
                 hostname="h",
@@ -808,7 +831,7 @@ async def test_delete_dataset_members_error(dataset_ctx, capturing_mcp, mock_ml)
     ds = _make_dataset_mock("1-AAAA")
     ds.delete_dataset_members.side_effect = RuntimeError("rid not in dataset")
     mock_ml.lookup_dataset.return_value = ds
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["delete_dataset_members"](
                 hostname="h",
@@ -833,7 +856,7 @@ async def test_update_dataset_types_add_and_remove(dataset_ctx, capturing_mcp, m
         "1-AAAA", dataset_types=["Training", "Validation"], current_version="1.4.0"
     )
     mock_ml.lookup_dataset.return_value = ds
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["update_dataset_types"](
                 hostname="h",
@@ -894,7 +917,7 @@ async def test_update_dataset_types_error(dataset_ctx, capturing_mcp, mock_ml):
     ds = _make_dataset_mock("1-AAAA")
     ds.add_dataset_types.side_effect = RuntimeError("unknown term")
     mock_ml.lookup_dataset.return_value = ds
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["update_dataset_types"](
                 hostname="h",
@@ -934,7 +957,7 @@ async def test_update_dataset_types_partial_remove_failure_surfaces_progress(
     ds.remove_dataset_type.side_effect = remove_side_effect
     mock_ml.lookup_dataset.return_value = ds
 
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["update_dataset_types"](
                 hostname="h",
@@ -968,7 +991,7 @@ async def test_add_dataset_element_type_success(dataset_ctx, capturing_mcp, mock
     assoc = MagicMock()
     assoc.name = "Dataset_Image"
     mock_ml.add_dataset_element_type.return_value = assoc
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["add_dataset_element_type"](
                 hostname="h", catalog_id="1", table_name="Image"
@@ -988,7 +1011,7 @@ async def test_add_dataset_element_type_success(dataset_ctx, capturing_mcp, mock
 
 async def test_add_dataset_element_type_error(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.add_dataset_element_type.side_effect = RuntimeError("not a domain table")
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["add_dataset_element_type"](
                 hostname="h", catalog_id="1", table_name="Execution"
@@ -1012,7 +1035,7 @@ async def test_increment_dataset_version_success(dataset_ctx, capturing_mcp, moc
     new_ver.__str__ = lambda self: "1.3.0"
     ds.increment_dataset_version.return_value = new_ver
     mock_ml.lookup_dataset.return_value = ds
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["increment_dataset_version"](
                 hostname="h",
@@ -1067,7 +1090,7 @@ async def test_increment_dataset_version_error(dataset_ctx, capturing_mcp, mock_
     ds = _make_dataset_mock("1-AAAA")
     ds.increment_dataset_version.side_effect = RuntimeError("version conflict")
     mock_ml.lookup_dataset.return_value = ds
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["increment_dataset_version"](
                 hostname="h",
@@ -1107,7 +1130,7 @@ def _bag_info_payload() -> dict:
 async def test_cache_dataset_explicit_version(dataset_ctx, capturing_mcp, mock_ml):
     """version supplied explicitly: lookup_dataset is NOT called for fallback."""
     mock_ml.cache_dataset.return_value = _bag_info_payload()
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["cache_dataset"](
                 hostname="h",
@@ -1145,7 +1168,7 @@ async def test_cache_dataset_falls_back_to_current_version(dataset_ctx, capturin
     ds = _make_dataset_mock("1-AAAA", current_version="2.0.0")
     mock_ml.lookup_dataset.return_value = ds
     mock_ml.cache_dataset.return_value = _bag_info_payload()
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["cache_dataset"](
                 hostname="h",
@@ -1170,7 +1193,7 @@ async def test_cache_dataset_exclude_tables_converted_to_set(dataset_ctx, captur
     into the success audit so operators can see which tables were skipped
     (M-8 fix from Batch 3 review)."""
     mock_ml.cache_dataset.return_value = _bag_info_payload()
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         await capturing_mcp.tools["cache_dataset"](
             hostname="h",
             catalog_id="1",
@@ -1188,7 +1211,7 @@ async def test_cache_dataset_exclude_tables_converted_to_set(dataset_ctx, captur
 
 async def test_cache_dataset_error_path(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.cache_dataset.side_effect = RuntimeError("download failed")
-    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+    with _patch_audit() as mock_audit:
         out = json.loads(
             await capturing_mcp.tools["cache_dataset"](
                 hostname="h",
@@ -1478,7 +1501,7 @@ async def test_split_dataset_basic_success(dataset_ctx, capturing_mcp, mock_ml):
     result_obj.model_dump.return_value = payload
     with (
         patch("deriva_ml_mcp.tools.dataset._split_dataset", return_value=result_obj) as mock_split,
-        patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit,
+        _patch_audit() as mock_audit,
     ):
         out = json.loads(
             await capturing_mcp.tools["split_dataset"](
@@ -1532,7 +1555,7 @@ async def test_split_dataset_dry_run(dataset_ctx, capturing_mcp, mock_ml):
     result_obj.model_dump.return_value = payload
     with (
         patch("deriva_ml_mcp.tools.dataset._split_dataset", return_value=result_obj) as mock_split,
-        patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit,
+        _patch_audit() as mock_audit,
     ):
         out = json.loads(
             await capturing_mcp.tools["split_dataset"](
@@ -1559,7 +1582,7 @@ async def test_split_dataset_stratified_three_way(dataset_ctx, capturing_mcp, mo
     result_obj.model_dump.return_value = payload
     with (
         patch("deriva_ml_mcp.tools.dataset._split_dataset", return_value=result_obj) as mock_split,
-        patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit,
+        _patch_audit() as mock_audit,
     ):
         out = json.loads(
             await capturing_mcp.tools["split_dataset"](
@@ -1598,7 +1621,7 @@ async def test_split_dataset_error_path(dataset_ctx, capturing_mcp, mock_ml):
             "deriva_ml_mcp.tools.dataset._split_dataset",
             side_effect=ValueError("invalid stratify column"),
         ),
-        patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit,
+        _patch_audit() as mock_audit,
     ):
         out = json.loads(
             await capturing_mcp.tools["split_dataset"](

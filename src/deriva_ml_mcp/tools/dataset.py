@@ -19,8 +19,6 @@ from __future__ import annotations
 
 import itertools
 import json
-import logging
-from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -30,83 +28,17 @@ from deriva_ml.dataset.aux_classes import DatasetSpec, DatasetVersion, VersionPa
 from deriva_ml.dataset.dataset import Dataset
 from deriva_ml.dataset.split import split_dataset as _split_dataset
 
+from deriva_ml_mcp._helpers import (
+    _MAX_LIMIT,
+    _error_envelope,
+    _paginate,
+    _read_rid,
+    _row_rid_for,
+)
 from deriva_ml_mcp.ml_context import get_ml
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
-
-
-_MAX_LIMIT = 1000
-
-logger = logging.getLogger(__name__)
-
-
-def _error_envelope(
-    exc: Exception,
-    *,
-    operation: str,
-    hostname: str,
-    catalog_id: str,
-    audit: bool = True,
-    response_fields: dict[str, Any] | None = None,
-    **audit_fields: Any,
-) -> str:
-    """Standard tool error response.
-
-    Always logs the exception with traceback (operators get the stack
-    trace without it leaking into the JSON return shape). For mutation
-    tools, also emits a ``<operation>_failed`` audit event so failures
-    show up in the audit log alongside successes.
-
-    Args:
-        exc: The exception that triggered the error path.
-        operation: The audit-event base name (without the ``_failed``
-            suffix or ``deriva_ml_`` prefix). e.g. ``"create_dataset"``
-            -> audit event ``"deriva_ml_create_dataset_failed"``.
-        hostname: The Deriva hostname (passed to audit_event).
-        catalog_id: The catalog ID (passed to audit_event).
-        audit: If True (default), emit the failure audit event. Set
-            False for read-only tools — failures are still logged with
-            traceback, but no audit row is written. The convention is
-            "audit logs are for state changes; reads neither succeed
-            nor fail in the audit-log sense."
-        response_fields: Optional extra keys to merge into the JSON
-            error response (in addition to ``"error"``). Use for
-            partial-state visibility — e.g. for a tool that does N
-            sub-operations in a loop, pass ``{"completed": [...]}`` so
-            the LLM can reason about what was actually mutated before
-            the failure.
-        **audit_fields: Additional keyword fields included in the
-            audit event payload (e.g. ``dataset_rid``). Ignored when
-            ``audit=False``.
-
-    Returns:
-        JSON string. Default shape is ``{"error": str(exc)}``; with
-        ``response_fields`` it becomes ``{"error": ..., **response_fields}``.
-
-    Example (illustrative — runs only inside an except block):
-        >>> # return _error_envelope(exc, operation="create_dataset",
-        >>> #                        hostname=h, catalog_id=c, execution_rid=e)
-    """
-    logger.error(
-        "deriva_ml_%s failed: %s: %s",
-        operation,
-        type(exc).__name__,
-        exc,
-        exc_info=True,
-    )
-    if audit:
-        audit_event(
-            f"deriva_ml_{operation}_failed",
-            hostname=hostname,
-            catalog_id=catalog_id,
-            error_type=type(exc).__name__,
-            **audit_fields,
-        )
-    payload: dict[str, Any] = {"error": str(exc)}
-    if response_fields:
-        payload.update(response_fields)
-    return json.dumps(payload)
 
 
 def _summarize_dataset(ds: Any) -> dict[str, Any]:
@@ -125,86 +57,6 @@ def _summarize_dataset(ds: Any) -> dict[str, Any]:
         "dataset_types": list(ds.dataset_types) if ds.dataset_types else [],
         "current_version": str(current) if current is not None else None,
     }
-
-
-def _paginate(
-    items: list[Any],
-    *,
-    after_rid: str | None,
-    limit: int,
-    key: Callable[[Any], str],
-) -> tuple[list[Any], bool, str | None]:
-    """Apply cursor pagination to a sorted list using a caller-supplied key fn.
-
-    Args:
-        items: Source list, sorted by ``key`` in ascending order.
-        after_rid: Skip items where ``key(item) <= after_rid``.
-        limit: Page size (already capped by caller).
-        key: Function that extracts the comparable RID from one item.
-            Use ``functools.partial(_read_rid, rid_key="...")`` for
-            object/dict items with a known RID attribute, or ``_row_rid``
-            for denormalized rows whose RID column is auto-detected.
-
-    Returns:
-        Tuple of (page, truncated, next_after_rid).
-
-    Note:
-        ``truncated`` is True whenever the page returned exactly ``limit``
-        rows, even if there happen to be no more rows. This may produce a
-        false positive in the edge case where ``len(items) == limit``
-        exactly, but the convention matches deriva-mcp-core's
-        ``get_entities`` so callers can use one pagination idiom across
-        both layers.
-    """
-    if after_rid is not None:
-        items = [it for it in items if key(it) > after_rid]
-    page = items[:limit]
-    truncated = len(page) == limit
-    next_after_rid = key(page[-1]) if page and truncated else None
-    return page, truncated, next_after_rid
-
-
-def _read_rid(item: Any, rid_key: str) -> str:
-    """Read a RID from either a dict or an object."""
-    if isinstance(item, dict):
-        # Dict members may use "RID" (catalog convention) or the configured key.
-        for candidate in ("RID", rid_key):
-            if candidate in item:
-                return str(item[candidate])
-        raise KeyError(f"no RID-like key in member dict (looked for RID, {rid_key})")
-    return str(getattr(item, rid_key))
-
-
-def _row_rid_for(row_per: str | None) -> Callable[[dict[str, Any]], str]:
-    """Build a callable that extracts the RID from a denormalized-row dict.
-
-    Denormalizer rows use ``Table.column`` keys (e.g. ``Image.RID``).
-    When ``row_per`` is known, prefer the unambiguous ``f"{row_per}.RID"``
-    column. Otherwise fall back to the first key matching ``RID`` or
-    ``*.RID`` in iteration order (which by denormalizer convention is
-    the anchor table's RID, but not guaranteed for multi-table joins
-    without a known anchor).
-
-    Args:
-        row_per: The row-per anchor table name, or ``None`` if unknown.
-
-    Returns:
-        A function ``row -> rid_str``. Returns empty string if no
-        RID-like key is present (sorts first; pagination terminates).
-    """
-    preferred = f"{row_per}.RID" if row_per else None
-
-    def extract(row: dict[str, Any]) -> str:
-        if preferred and preferred in row:
-            return str(row[preferred])
-        if "RID" in row:
-            return str(row["RID"])
-        for key, value in row.items():
-            if key == "RID" or key.endswith(".RID"):
-                return str(value)
-        return ""
-
-    return extract
 
 
 def register(ctx: PluginContext) -> None:

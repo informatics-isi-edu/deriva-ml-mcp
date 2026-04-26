@@ -14,6 +14,37 @@ import pytest
 from deriva_mcp_core.plugin.api import PluginContext, _set_plugin_context
 
 
+def _success_calls(mock_audit: Any, event_name: str) -> list:
+    """Return audit_event call records whose first positional arg matches.
+
+    Generic over any ``audit_event`` MagicMock — works for dataset,
+    feature, workflow, execution, and any future domain that emits
+    ``deriva_ml_<op>`` / ``deriva_ml_<op>_failed`` audit events.
+
+    Args:
+        mock_audit: A ``MagicMock`` standing in for
+            ``deriva_mcp_core.telemetry.audit_event``.
+        event_name: The exact event name (positional arg 0) to filter
+            for, e.g. ``"deriva_ml_create_dataset"`` or
+            ``"deriva_ml_create_dataset_failed"``.
+
+    Returns:
+        List of ``unittest.mock.call`` records where ``call.args[0] ==
+        event_name``. Empty list if no matching calls were made.
+
+    Example:
+        >>> from unittest.mock import MagicMock
+        >>> m = MagicMock()
+        >>> m("deriva_ml_create_dataset", dataset_rid="1-AAAA")
+        >>> calls = _success_calls(m, "deriva_ml_create_dataset")
+        >>> len(calls)
+        1
+        >>> calls[0].kwargs["dataset_rid"]
+        '1-AAAA'
+    """
+    return [c for c in mock_audit.call_args_list if c.args and c.args[0] == event_name]
+
+
 class _CapturingMCP:
     """Minimal FastMCP stand-in that stores registered tools and resources.
 
