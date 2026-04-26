@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from deriva_mcp_core import deriva_call
 from deriva_mcp_core.telemetry import audit_event
+from deriva_ml.execution.execution import ExecutionStatus
 from deriva_ml.feature import FeatureRecord
 
 # Note on testing audit_event: see `make_patch_audit("feature")` in
@@ -569,6 +570,20 @@ def register(ctx: PluginContext) -> None:
         execution -- use the execution domain tools to create one if
         needed.
 
+        Hybrid-mode dispatch (Q1). The ``Execution`` lifecycle gates
+        what wrapping is needed:
+
+        - ``Created`` -> open ``with execution.execute():`` to advance
+          ``Created -> Running`` (and ``Running -> Stopped`` on exit).
+          Suits one-shot scripts that just want to flush some values.
+        - ``Running`` -> the LLM has explicitly called ``start_execution``
+          and is mid-pipeline. Skip the context manager (a second
+          ``Created -> Running`` transition would crash) and call
+          ``add_features`` directly. The eventual ``commit_execution``
+          will close the lifecycle.
+        - Other states (``Stopped`` / terminal) -> arg-validation error.
+          ``add_features`` on a stopped execution has no defined behaviour.
+
         Args:
             hostname: The Deriva server hostname.
             catalog_id: The catalog ID as a string.
@@ -617,8 +632,20 @@ def register(ctx: PluginContext) -> None:
                 failed_index = None
 
                 execution = ml.resume_execution(execution_rid)
-                with execution.execute():
+                # Hybrid dispatch (Q1). See docstring for the rationale.
+                current = execution.status
+                if current == ExecutionStatus.Created:
+                    with execution.execute():
+                        added = execution.add_features(records)
+                elif current == ExecutionStatus.Running:
+                    # Already inside the long-running pipeline. The
+                    # eventual commit_execution closes the lifecycle.
                     added = execution.add_features(records)
+                else:
+                    state_name = current.value if isinstance(current, ExecutionStatus) else current
+                    raise ValueError(
+                        f"cannot add feature values to execution in state {state_name}"
+                    )
             audit_event(
                 "deriva_ml_add_feature_values",
                 hostname=hostname,

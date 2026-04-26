@@ -483,6 +483,8 @@ async def test_delete_feature_failure_emits_failed_audit(feature_ctx, capturing_
 
 async def test_add_feature_values_success(feature_ctx, capturing_mcp, mock_ml):
     """Happy path: builds records, runs them through execution.execute(), audits."""
+    from deriva_ml.execution.execution import ExecutionStatus
+
     feature = _make_feature_mock()
     record_class = MagicMock()
     record_class.side_effect = lambda **kw: MagicMock(model_dump=lambda: kw)
@@ -490,6 +492,7 @@ async def test_add_feature_values_success(feature_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_feature.return_value = feature
 
     execution = MagicMock()
+    execution.status = ExecutionStatus.Created
     execution.add_features.return_value = 2
     # execute() returns a context manager (the execution itself).
     execution.execute.return_value = execution
@@ -575,6 +578,90 @@ async def test_add_feature_values_record_construction_fails(feature_ctx, capturi
     assert "error" in out
     assert out["failed_entry_index"] == 0
     assert out["attempted_count"] == 1
+    failed = _success_calls(mock_audit, "deriva_ml_add_feature_values_failed")
+    assert failed
+
+
+async def test_add_feature_values_running_state_skips_context_manager(
+    feature_ctx, capturing_mcp, mock_ml
+):
+    """Q1 hybrid: Running state skips ``with execution.execute()``."""
+    from deriva_ml.execution.execution import ExecutionStatus
+
+    feature = _make_feature_mock()
+    record_class = MagicMock()
+    record_class.side_effect = lambda **kw: MagicMock(model_dump=lambda: kw)
+    feature.feature_record_class.return_value = record_class
+    mock_ml.lookup_feature.return_value = feature
+
+    execution = MagicMock()
+    execution.status = ExecutionStatus.Running
+    execution.add_features.return_value = 2
+    # If anything tries to enter the context manager we want a clear
+    # failure, not a silent success.
+    execution.execute.side_effect = AssertionError("execute() must NOT be called when Running")
+    execution.__enter__ = MagicMock(side_effect=AssertionError("__enter__ must NOT be called"))
+    mock_ml.resume_execution.return_value = execution
+
+    with _patch_feature_audit() as mock_audit:
+        out = json.loads(
+            await capturing_mcp.tools["add_feature_values"](
+                hostname="h",
+                catalog_id="1",
+                table="Image",
+                feature_name="Quality",
+                execution_rid="EXEC-1",
+                entries=[
+                    {"Image": "1-AAAA", "Quality_Type": "good"},
+                    {"Image": "1-BBBB", "Quality_Type": "bad"},
+                ],
+            )
+        )
+
+    assert out == {
+        "status": "added",
+        "feature_name": "Quality",
+        "execution_rid": "EXEC-1",
+        "count": 2,
+    }
+    # add_features called directly without entering execute().
+    execution.add_features.assert_called_once()
+    execution.execute.assert_not_called()
+    success = _success_calls(mock_audit, "deriva_ml_add_feature_values")
+    assert success
+
+
+async def test_add_feature_values_terminal_state_validation_error(
+    feature_ctx, capturing_mcp, mock_ml
+):
+    """Q1 hybrid: terminal states (e.g. Stopped) get an arg-validation error."""
+    from deriva_ml.execution.execution import ExecutionStatus
+
+    feature = _make_feature_mock()
+    record_class = MagicMock(side_effect=lambda **kw: MagicMock())
+    feature.feature_record_class.return_value = record_class
+    mock_ml.lookup_feature.return_value = feature
+
+    execution = MagicMock()
+    execution.status = ExecutionStatus.Stopped
+    mock_ml.resume_execution.return_value = execution
+
+    with _patch_feature_audit() as mock_audit:
+        out = json.loads(
+            await capturing_mcp.tools["add_feature_values"](
+                hostname="h",
+                catalog_id="1",
+                table="Image",
+                feature_name="Quality",
+                execution_rid="EXEC-1",
+                entries=[{"Image": "1-AAAA", "Quality_Type": "good"}],
+            )
+        )
+    assert "error" in out
+    assert "Stopped" in out["error"]
+    # add_features must NOT have been called.
+    execution.add_features.assert_not_called()
+    # Routes through _error_envelope so a *_failed audit row is emitted.
     failed = _success_calls(mock_audit, "deriva_ml_add_feature_values_failed")
     assert failed
 
