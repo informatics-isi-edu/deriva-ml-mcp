@@ -37,10 +37,12 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-# TODO(upstream-rag-userfilter): rag_search must filter data: sources by
-# user_id (see docs/coverage.md "Upstream gaps (Phase 6 RAG)"). Until the
-# symmetric filter lands upstream, any user with read access to the
-# vector store can match against another user's chunks by source name.
+# TODO(upstream-rag-userfilter): tracked as deriva-mcp-core#1
+# (https://github.com/informatics-isi-edu/deriva-mcp-core/issues/1).
+# rag_search must filter data: sources by user_id (symmetric to the
+# existing schema-source filter). Until it lands, any user with read
+# access to the vector store can match against another user's chunks by
+# source name. See docs/coverage.md "Upstream gaps (Phase 6 RAG)".
 from deriva_mcp_core.context import resolve_user_identity
 from deriva_mcp_core.rag import get_rag_store
 from deriva_mcp_core.rag.data import RowSerializer, index_table_data
@@ -291,11 +293,12 @@ def _make_hook(
         ``(hostname, catalog_id, schema_hash, schema_json) -> None``.
     """
 
-    # TODO(upstream-rag-doctype): once upstream accepts a doc_type param
-    # on index_table_data, pass "ml-dataset" / "ml-workflow" / "ml-execution"
-    # to make rag_search(doc_type=...) able to distinguish these from
-    # generic catalog-data chunks. Tracked in docs/coverage.md
-    # "Upstream gaps (Phase 6 RAG)".
+    # TODO(upstream-rag-doctype): tracked as deriva-mcp-core#2
+    # (https://github.com/informatics-isi-edu/deriva-mcp-core/issues/2).
+    # Once index_table_data accepts a doc_type param, pass
+    # "ml-dataset" / "ml-workflow" / "ml-execution" so
+    # rag_search(doc_type=...) can distinguish these from generic
+    # catalog-data chunks. See docs/coverage.md "Upstream gaps".
     async def hook(
         hostname: str,
         catalog_id: str,
