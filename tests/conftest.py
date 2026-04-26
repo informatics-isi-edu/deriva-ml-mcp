@@ -242,3 +242,47 @@ def demo_catalog(deriva_host: str) -> Iterator[tuple[str, str]]:
         yield deriva_host, str(catalog.catalog_id)
     finally:
         destroy_demo_catalog(catalog)
+
+
+@pytest.fixture(scope="session")
+def demo_mutation_catalog(deriva_host: str) -> Iterator[tuple[str, str]]:
+    """Dedicated demo catalog for write-side integration tests.
+
+    Distinct from ``demo_catalog`` so mutation tests (workflow create,
+    and — once Phase 5 lands — execution create) cannot pollute the
+    read-only fixture. Read-side tests assert empty-catalog invariants
+    (e.g. ``count == 0``) that would break if a workflow row were
+    created in the same catalog earlier in the session.
+
+    Same shape as ``demo_catalog`` (empty schema, no populated rows
+    or datasets) — only the identity differs. Session-scoped, so the
+    ~10s catalog provisioning cost is paid once for the whole mutation
+    test surface.
+
+    Args:
+        deriva_host: Hostname injected by the ``deriva_host`` fixture.
+
+    Yields:
+        ``(hostname, catalog_id)`` tuple. ``catalog_id`` is stringified
+        because tool signatures take it as ``str``.
+
+    Example:
+        >>> def test_workflow_round_trip(demo_mutation_catalog):  # doctest: +SKIP
+        ...     host, catalog_id = demo_mutation_catalog
+        ...     # ... call create_workflow, update_workflow, etc. ...
+    """
+    from deriva_ml.demo_catalog import create_demo_catalog, destroy_demo_catalog
+
+    catalog = create_demo_catalog(
+        deriva_host,
+        domain_schema="demo-schema",
+        project_name="ml-mcp-int-mut",
+        populate=False,
+        create_features=False,
+        create_datasets=False,
+        on_exit_delete=False,
+    )
+    try:
+        yield deriva_host, str(catalog.catalog_id)
+    finally:
+        destroy_demo_catalog(catalog)
