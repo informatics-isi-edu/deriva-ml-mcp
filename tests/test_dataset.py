@@ -1080,3 +1080,446 @@ async def test_increment_dataset_version_error(dataset_ctx, capturing_mcp, mock_
     failed = _success_calls(mock_audit, "deriva_ml_increment_dataset_version_failed")
     assert failed
     assert failed[0].kwargs["component"] == "patch"
+
+
+# ===========================================================================
+# Batch 3: complex tools (cache_dataset, denormalize_dataset, split_dataset)
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# cache_dataset
+# ---------------------------------------------------------------------------
+
+
+def _bag_info_payload() -> dict:
+    """Return a bag_info-shaped dict for cache_dataset returns."""
+    return {
+        "tables": {"Image": {"row_count": 10, "is_asset": True, "asset_bytes": 1024}},
+        "total_rows": 10,
+        "total_asset_bytes": 1024,
+        "total_asset_size": "1 KB",
+        "cache_status": "cached_materialized",
+        "cache_path": "/tmp/cache/1-AAAA",
+    }
+
+
+async def test_cache_dataset_explicit_version(dataset_ctx, capturing_mcp, mock_ml):
+    """version supplied explicitly: lookup_dataset is NOT called for fallback."""
+    mock_ml.cache_dataset.return_value = _bag_info_payload()
+    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+        out = json.loads(
+            await capturing_mcp.tools["cache_dataset"](
+                hostname="h",
+                catalog_id="1",
+                dataset_rid="1-AAAA",
+                version="1.2.3",
+            )
+        )
+    assert out["status"] == "success"
+    assert out["dataset_rid"] == "1-AAAA"
+    assert out["version"] == "1.2.3"
+    assert out["materialize"] is True
+    assert out["cache_status"] == "cached_materialized"
+    assert out["cache_path"] == "/tmp/cache/1-AAAA"
+
+    # spec carried the explicit version through.
+    (spec_arg,) = mock_ml.cache_dataset.call_args.args
+    assert spec_arg.rid == "1-AAAA"
+    assert str(spec_arg.version) == "1.2.3"
+    assert spec_arg.exclude_tables is None
+    assert mock_ml.cache_dataset.call_args.kwargs["materialize"] is True
+
+    # Fallback path NOT exercised.
+    mock_ml.lookup_dataset.assert_not_called()
+
+    success = _success_calls(mock_audit, "deriva_ml_cache_dataset")
+    assert success
+    assert success[0].kwargs["dataset_rid"] == "1-AAAA"
+    assert success[0].kwargs["version"] == "1.2.3"
+    assert success[0].kwargs["materialize"] is True
+
+
+async def test_cache_dataset_falls_back_to_current_version(dataset_ctx, capturing_mcp, mock_ml):
+    """version=None pulls current_version off the looked-up dataset."""
+    ds = _make_dataset_mock("1-AAAA", current_version="2.0.0")
+    mock_ml.lookup_dataset.return_value = ds
+    mock_ml.cache_dataset.return_value = _bag_info_payload()
+    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+        out = json.loads(
+            await capturing_mcp.tools["cache_dataset"](
+                hostname="h",
+                catalog_id="1",
+                dataset_rid="1-AAAA",
+                materialize=False,
+            )
+        )
+    assert out["version"] == "2.0.0"
+    assert out["materialize"] is False
+    (spec_arg,) = mock_ml.cache_dataset.call_args.args
+    assert str(spec_arg.version) == "2.0.0"
+    assert mock_ml.cache_dataset.call_args.kwargs["materialize"] is False
+
+    success = _success_calls(mock_audit, "deriva_ml_cache_dataset")
+    assert success[0].kwargs["version"] == "2.0.0"
+    assert success[0].kwargs["materialize"] is False
+
+
+async def test_cache_dataset_exclude_tables_converted_to_set(dataset_ctx, capturing_mcp, mock_ml):
+    mock_ml.cache_dataset.return_value = _bag_info_payload()
+    with patch("deriva_ml_mcp.tools.dataset.audit_event"):
+        await capturing_mcp.tools["cache_dataset"](
+            hostname="h",
+            catalog_id="1",
+            dataset_rid="1-AAAA",
+            version="1.0.0",
+            exclude_tables=["Big_Asset", "Other"],
+        )
+    (spec_arg,) = mock_ml.cache_dataset.call_args.args
+    assert spec_arg.exclude_tables == {"Big_Asset", "Other"}
+
+
+async def test_cache_dataset_error_path(dataset_ctx, capturing_mcp, mock_ml):
+    mock_ml.cache_dataset.side_effect = RuntimeError("download failed")
+    with patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit:
+        out = json.loads(
+            await capturing_mcp.tools["cache_dataset"](
+                hostname="h",
+                catalog_id="1",
+                dataset_rid="1-AAAA",
+                version="1.0.0",
+            )
+        )
+    assert out == {"error": "download failed"}
+    failed = _success_calls(mock_audit, "deriva_ml_cache_dataset_failed")
+    assert failed
+    assert failed[0].kwargs["dataset_rid"] == "1-AAAA"
+    assert failed[0].kwargs["materialize"] is True
+
+
+# ---------------------------------------------------------------------------
+# denormalize_dataset
+# ---------------------------------------------------------------------------
+
+
+def _describe_payload(total_rows: int = 5) -> dict:
+    """Return a Denormalizer.describe() shaped dict."""
+    return {
+        "row_per": "Image",
+        "row_per_source": "auto-inferred",
+        "row_per_candidates": ["Image"],
+        "columns": [["Image.RID", "text"], ["Subject.Name", "text"]],
+        "include_tables": ["Image", "Subject"],
+        "via": [],
+        "join_path": ["Image", "Subject"],
+        "transparent_intermediates": [],
+        "ambiguities": [],
+        "estimated_row_count": {
+            "in_scope_row_per_rows": total_rows,
+            "orphan_rows": 0,
+            "total": total_rows,
+        },
+        "anchors": {"total": total_rows, "by_type": {"Image": total_rows}},
+        "source": "catalog",
+    }
+
+
+async def test_denormalize_dataset_validates_include_tables(dataset_ctx, capturing_mcp, mock_ml):
+    """Empty include_tables short-circuits to a validation error (no audit)."""
+    out = json.loads(
+        await capturing_mcp.tools["denormalize_dataset"](
+            hostname="h",
+            catalog_id="1",
+            include_tables=[],
+        )
+    )
+    assert "error" in out
+    assert "include_tables" in out["error"]
+    mock_ml.estimate_denormalized_size.assert_not_called()
+
+
+async def test_denormalize_dataset_catalog_shape(dataset_ctx, capturing_mcp, mock_ml):
+    """dataset_rid=None hits estimate_denormalized_size and tags catalog_shape."""
+    mock_ml.estimate_denormalized_size.return_value = {
+        "columns": [["Image.RID", "text"]],
+        "join_path": ["Image"],
+        "tables": {"Image": {"row_count": 100, "is_asset": True, "asset_bytes": 1024}},
+        "total_rows": 100,
+        "total_asset_bytes": 1024,
+        "total_asset_size": "1 KB",
+    }
+    out = json.loads(
+        await capturing_mcp.tools["denormalize_dataset"](
+            hostname="h",
+            catalog_id="1",
+            include_tables=["Image"],
+        )
+    )
+    assert out["mode"] == "catalog_shape"
+    assert out["include_tables"] == ["Image"]
+    assert out["total_rows"] == 100
+    mock_ml.estimate_denormalized_size.assert_called_once_with(["Image"])
+
+
+async def test_denormalize_dataset_dataset_shape_only(dataset_ctx, capturing_mcp, mock_ml):
+    """dataset_rid set + limit=0 returns shape only."""
+    ds = _make_dataset_mock("1-AAAA")
+    ds.describe_denormalized.return_value = _describe_payload()
+    mock_ml.lookup_dataset.return_value = ds
+
+    out = json.loads(
+        await capturing_mcp.tools["denormalize_dataset"](
+            hostname="h",
+            catalog_id="1",
+            include_tables=["Image", "Subject"],
+            dataset_rid="1-AAAA",
+        )
+    )
+    assert out["mode"] == "dataset_shape"
+    assert out["dataset_rid"] == "1-AAAA"
+    assert out["row_per"] == "Image"
+    assert "rows" not in out
+    ds.get_denormalized_as_dict.assert_not_called()
+
+
+async def test_denormalize_dataset_with_rows(dataset_ctx, capturing_mcp, mock_ml):
+    """limit>0 drains the generator, sorts, and paginates by Image.RID."""
+    ds = _make_dataset_mock("1-AAAA")
+    ds.describe_denormalized.return_value = _describe_payload(total_rows=3)
+
+    sample_rows = [
+        {"Image.RID": "1-IMG2", "Subject.Name": "B"},
+        {"Image.RID": "1-IMG1", "Subject.Name": "A"},
+        {"Image.RID": "1-IMG3", "Subject.Name": "C"},
+    ]
+    ds.get_denormalized_as_dict.return_value = iter(sample_rows)
+    mock_ml.lookup_dataset.return_value = ds
+
+    out = json.loads(
+        await capturing_mcp.tools["denormalize_dataset"](
+            hostname="h",
+            catalog_id="1",
+            include_tables=["Image", "Subject"],
+            dataset_rid="1-AAAA",
+            limit=2,
+        )
+    )
+    assert out["mode"] == "dataset_rows"
+    assert out["returned_count"] == 2
+    assert out["truncated"] is True
+    assert out["next_after_rid"] == "1-IMG2"
+    assert [r["Image.RID"] for r in out["rows"]] == ["1-IMG1", "1-IMG2"]
+
+
+async def test_denormalize_dataset_after_rid_advances_cursor(dataset_ctx, capturing_mcp, mock_ml):
+    ds = _make_dataset_mock("1-AAAA")
+    ds.describe_denormalized.return_value = _describe_payload(total_rows=3)
+    sample_rows = [
+        {"Image.RID": "1-IMG1"},
+        {"Image.RID": "1-IMG2"},
+        {"Image.RID": "1-IMG3"},
+    ]
+    ds.get_denormalized_as_dict.return_value = iter(sample_rows)
+    mock_ml.lookup_dataset.return_value = ds
+
+    out = json.loads(
+        await capturing_mcp.tools["denormalize_dataset"](
+            hostname="h",
+            catalog_id="1",
+            include_tables=["Image"],
+            dataset_rid="1-AAAA",
+            limit=10,
+            after_rid="1-IMG1",
+        )
+    )
+    assert [r["Image.RID"] for r in out["rows"]] == ["1-IMG2", "1-IMG3"]
+    assert out["truncated"] is False
+    assert out["next_after_rid"] is None
+
+
+async def test_denormalize_dataset_preflight_returns_estimated_count(
+    dataset_ctx, capturing_mcp, mock_ml
+):
+    ds = _make_dataset_mock("1-AAAA")
+    ds.describe_denormalized.return_value = _describe_payload(total_rows=42)
+    mock_ml.lookup_dataset.return_value = ds
+
+    out = json.loads(
+        await capturing_mcp.tools["denormalize_dataset"](
+            hostname="h",
+            catalog_id="1",
+            include_tables=["Image"],
+            dataset_rid="1-AAAA",
+            preflight_count=True,
+        )
+    )
+    assert out["mode"] == "dataset_preflight"
+    assert out["total_count"] == 42
+    assert out["entities_fetched"] is False
+    ds.get_denormalized_as_dict.assert_not_called()
+
+
+async def test_denormalize_dataset_error_path(dataset_ctx, capturing_mcp, mock_ml):
+    mock_ml.estimate_denormalized_size.side_effect = RuntimeError("schema error")
+    out = json.loads(
+        await capturing_mcp.tools["denormalize_dataset"](
+            hostname="h",
+            catalog_id="1",
+            include_tables=["Image"],
+        )
+    )
+    assert out == {"error": "schema error"}
+
+
+# ---------------------------------------------------------------------------
+# split_dataset
+# ---------------------------------------------------------------------------
+
+
+def _split_result_payload(*, with_validation: bool = False, dry_run: bool = False) -> dict:
+    """Build a SplitResult.model_dump()-shaped dict."""
+    payload: dict = {
+        "source": "1-AAAA",
+        "split": {"rid": "1-SPLT", "version": "1.0.0", "count": 100},
+        "training": {"rid": "1-TRN", "version": "1.0.0", "count": 80},
+        "testing": {"rid": "1-TST", "version": "1.0.0", "count": 20},
+        "validation": None,
+        "strategy": "random",
+        "element_table": "Image",
+        "seed": 42,
+        "dry_run": dry_run,
+    }
+    if with_validation:
+        payload["validation"] = {"rid": "1-VAL", "version": "1.0.0", "count": 10}
+        payload["training"]["count"] = 70
+    return payload
+
+
+async def test_split_dataset_basic_success(dataset_ctx, capturing_mcp, mock_ml):
+    payload = _split_result_payload()
+    result_obj = MagicMock()
+    result_obj.model_dump.return_value = payload
+    with (
+        patch("deriva_ml_mcp.tools.dataset._split_dataset", return_value=result_obj) as mock_split,
+        patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit,
+    ):
+        out = json.loads(
+            await capturing_mcp.tools["split_dataset"](
+                hostname="h",
+                catalog_id="1",
+                source_dataset_rid="1-AAAA",
+            )
+        )
+    assert out["status"] == "success"
+    assert out["source"] == "1-AAAA"
+    assert out["training"]["rid"] == "1-TRN"
+    assert out["testing"]["rid"] == "1-TST"
+    assert out["validation"] is None
+    assert out["strategy"] == "random"
+
+    args, kwargs = mock_split.call_args
+    assert args[0] is mock_ml
+    assert args[1] == "1-AAAA"
+    assert kwargs["test_size"] == 0.2
+    assert kwargs["seed"] == 42
+    assert kwargs["dry_run"] is False
+    # split_description default is empty string and should be passed through.
+    assert kwargs["split_description"] == ""
+
+    success = _success_calls(mock_audit, "deriva_ml_split_dataset")
+    assert success
+    audit_kwargs = success[0].kwargs
+    assert audit_kwargs["source_dataset_rid"] == "1-AAAA"
+    assert audit_kwargs["strategy"] == "random"
+    assert audit_kwargs["element_table"] == "Image"
+    assert audit_kwargs["training_count"] == 80
+    assert audit_kwargs["testing_count"] == 20
+    assert audit_kwargs["validation_count"] is None
+    assert audit_kwargs["dry_run"] is False
+    # No free-text description in the audit payload.
+    assert "split_description" not in audit_kwargs
+
+
+async def test_split_dataset_dry_run(dataset_ctx, capturing_mcp, mock_ml):
+    payload = _split_result_payload(dry_run=True)
+    result_obj = MagicMock()
+    result_obj.model_dump.return_value = payload
+    with (
+        patch("deriva_ml_mcp.tools.dataset._split_dataset", return_value=result_obj) as mock_split,
+        patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit,
+    ):
+        out = json.loads(
+            await capturing_mcp.tools["split_dataset"](
+                hostname="h",
+                catalog_id="1",
+                source_dataset_rid="1-AAAA",
+                dry_run=True,
+            )
+        )
+    assert out["dry_run"] is True
+    assert mock_split.call_args.kwargs["dry_run"] is True
+    success = _success_calls(mock_audit, "deriva_ml_split_dataset")
+    assert success[0].kwargs["dry_run"] is True
+
+
+async def test_split_dataset_stratified_three_way(dataset_ctx, capturing_mcp, mock_ml):
+    payload = _split_result_payload(with_validation=True)
+    payload["strategy"] = "stratified"
+    result_obj = MagicMock()
+    result_obj.model_dump.return_value = payload
+    with (
+        patch("deriva_ml_mcp.tools.dataset._split_dataset", return_value=result_obj) as mock_split,
+        patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit,
+    ):
+        out = json.loads(
+            await capturing_mcp.tools["split_dataset"](
+                hostname="h",
+                catalog_id="1",
+                source_dataset_rid="1-AAAA",
+                test_size=0.2,
+                val_size=0.1,
+                stratify_by_column="Image_Classification.Image_Class",
+                stratify_missing="drop",
+                include_tables=["Image", "Image_Classification"],
+                training_types=["Labeled"],
+            )
+        )
+    assert out["validation"]["rid"] == "1-VAL"
+    assert out["validation"]["count"] == 10
+    assert out["strategy"] == "stratified"
+
+    kwargs = mock_split.call_args.kwargs
+    assert kwargs["stratify_by_column"] == "Image_Classification.Image_Class"
+    assert kwargs["stratify_missing"] == "drop"
+    assert kwargs["include_tables"] == ["Image", "Image_Classification"]
+    assert kwargs["val_size"] == 0.1
+    assert kwargs["training_types"] == ["Labeled"]
+
+    success = _success_calls(mock_audit, "deriva_ml_split_dataset")
+    audit_kwargs = success[0].kwargs
+    assert audit_kwargs["strategy"] == "stratified"
+    assert audit_kwargs["training_count"] == 70
+    assert audit_kwargs["validation_count"] == 10
+
+
+async def test_split_dataset_error_path(dataset_ctx, capturing_mcp, mock_ml):
+    with (
+        patch(
+            "deriva_ml_mcp.tools.dataset._split_dataset",
+            side_effect=ValueError("invalid stratify column"),
+        ),
+        patch("deriva_ml_mcp.tools.dataset.audit_event") as mock_audit,
+    ):
+        out = json.loads(
+            await capturing_mcp.tools["split_dataset"](
+                hostname="h",
+                catalog_id="1",
+                source_dataset_rid="1-AAAA",
+                stratify_by_column="bogus",
+            )
+        )
+    assert out == {"error": "invalid stratify column"}
+    failed = _success_calls(mock_audit, "deriva_ml_split_dataset_failed")
+    assert failed
+    assert failed[0].kwargs["source_dataset_rid"] == "1-AAAA"
+    assert failed[0].kwargs["dry_run"] is False

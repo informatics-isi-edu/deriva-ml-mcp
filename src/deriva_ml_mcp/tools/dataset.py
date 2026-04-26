@@ -19,6 +19,7 @@ from deriva_mcp_core import deriva_call
 from deriva_mcp_core.telemetry import audit_event
 from deriva_ml.dataset.aux_classes import DatasetSpec, DatasetVersion, VersionPart
 from deriva_ml.dataset.dataset import Dataset
+from deriva_ml.dataset.split import split_dataset as _split_dataset
 
 from deriva_ml_mcp.ml_context import get_ml
 
@@ -150,6 +151,52 @@ def _read_rid(item: Any, rid_key: str) -> str:
                 return str(item[candidate])
         raise KeyError(f"no RID-like key in member dict (looked for RID, {rid_key})")
     return str(getattr(item, rid_key))
+
+
+def _row_rid(row: dict[str, Any]) -> str:
+    """Extract the RID from a denormalized-row dict for cursor pagination.
+
+    Denormalizer rows use ``Table.column`` keys (e.g. ``Image.RID``). Plain
+    ``RID`` is also supported as a fallback for unprefixed shapes.
+
+    Args:
+        row: A single denormalized row from
+            ``Dataset.get_denormalized_as_dict``.
+
+    Returns:
+        The RID as a string. Empty string when no RID-like key is present
+        (sorts first; pagination still terminates correctly).
+    """
+    if "RID" in row:
+        return str(row["RID"])
+    for key, value in row.items():
+        if key == "RID" or key.endswith(".RID"):
+            return str(value)
+    return ""
+
+
+def _paginate_rows(
+    rows: list[dict[str, Any]],
+    *,
+    after_rid: str | None,
+    limit: int,
+) -> tuple[list[dict[str, Any]], bool, str | None]:
+    """Cursor-paginate a list of denormalized rows by their RID-bearing key.
+
+    Args:
+        rows: Source rows, sorted by their RID-bearing key in ascending order.
+        after_rid: Skip rows with RID <= ``after_rid``.
+        limit: Page size (already capped by caller).
+
+    Returns:
+        Tuple of (page, truncated, next_after_rid).
+    """
+    if after_rid is not None:
+        rows = [r for r in rows if _row_rid(r) > after_rid]
+    page = rows[:limit]
+    truncated = len(page) == limit
+    next_after_rid = _row_rid(page[-1]) if page and truncated else None
+    return page, truncated, next_after_rid
 
 
 def register(ctx: PluginContext) -> None:
@@ -1203,4 +1250,395 @@ def register(ctx: PluginContext) -> None:
                 catalog_id=catalog_id,
                 dataset_rid=dataset_rid,
                 component=component,
+            )
+
+    # Complex tools (Batch 3). cache_dataset is local-FS-only (mutates=True
+    # because it touches the cache filesystem; no catalog state is changed).
+    # denormalize_dataset is read-only. split_dataset creates child datasets
+    # in the catalog (mutates=True).
+
+    @ctx.tool(mutates=True)
+    async def cache_dataset(
+        hostname: str,
+        catalog_id: str,
+        dataset_rid: str,
+        version: str | None = None,
+        materialize: bool = True,
+        exclude_tables: list[str] | None = None,
+    ) -> str:
+        """Warm the local cache for a dataset bag before running an experiment.
+
+        Downloads the bag's metadata (and assets, if ``materialize=True``)
+        to the local DerivaML cache. Subsequent calls hit the cache without
+        re-downloading. ``mutates=True`` because it touches the local
+        filesystem — but no catalog state is mutated.
+
+        Args:
+            hostname: The Deriva server hostname.
+            catalog_id: The catalog ID as a string.
+            dataset_rid: RID of the dataset to cache.
+            version: Specific version (semver string). If None, looks up the
+                dataset's current_version automatically.
+            materialize: If True (default), download asset files. If False,
+                only fetch the bag metadata.
+            exclude_tables: Tables to omit from the bag (e.g. large blob
+                tables you don't need).
+
+        Returns:
+            JSON string ``{"status": "success", "dataset_rid", "version",
+            "materialize", "tables", "total_rows", "total_asset_bytes",
+            "total_asset_size", "cache_status", "cache_path"}``. Pass-through
+            of DerivaML's bag_info-shaped return.
+
+        Raises:
+            RuntimeError: Wrapped, propagated from
+                ``deriva_ml.DerivaML.cache_dataset``.
+
+        Example:
+            ``{"status": "success", "dataset_rid": "1-AAAA", "version":
+            "1.0.0", "materialize": true, "cache_status":
+            "cached_materialized", "cache_path": "/path/to/bag", ...}``.
+        """
+        try:
+            with deriva_call():
+                ml = get_ml(hostname, catalog_id)
+                if version is None:
+                    ds = ml.lookup_dataset(dataset_rid)
+                    used_version = (
+                        str(ds.current_version) if ds.current_version is not None else None
+                    )
+                else:
+                    used_version = version
+                spec = DatasetSpec(
+                    rid=dataset_rid,
+                    version=used_version,
+                    exclude_tables=set(exclude_tables) if exclude_tables else None,
+                )
+                info = ml.cache_dataset(spec, materialize=materialize)
+            audit_event(
+                "deriva_ml_cache_dataset",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                dataset_rid=dataset_rid,
+                version=used_version,
+                materialize=materialize,
+            )
+            return json.dumps(
+                {
+                    "status": "success",
+                    "dataset_rid": dataset_rid,
+                    "version": used_version,
+                    "materialize": materialize,
+                    **info,
+                },
+                default=str,
+            )
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="cache_dataset",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                dataset_rid=dataset_rid,
+                materialize=materialize,
+            )
+
+    @ctx.tool(mutates=False)
+    async def denormalize_dataset(
+        hostname: str,
+        catalog_id: str,
+        include_tables: list[str],
+        dataset_rid: str | None = None,
+        version: str | None = None,
+        row_per: str | None = None,
+        via: list[str] | None = None,
+        limit: int = 0,
+        after_rid: str | None = None,
+        preflight_count: bool = False,
+    ) -> str:
+        """Preview a wide-table view (catalog-wide or dataset-scoped).
+
+        TWO MODES:
+
+        - Catalog-shape (``dataset_rid=None``): returns a size estimate for
+          the denormalized join across ``include_tables``. No rows. Use to
+          scope a download before committing.
+        - Dataset-described (``dataset_rid`` set): describes the
+          denormalized view for one dataset. With ``limit > 0``, also
+          returns up to ``limit`` rows (cursor-paged via ``after_rid`` /
+          ``preflight_count``). With ``limit == 0`` (default), returns
+          shape only.
+
+        PAGINATION (dataset-row mode): When the row count is unknown, call
+        with ``preflight_count=True`` first to get the planner's estimated
+        row count from the describe plan. Present that to the user, choose
+        a ``limit``, then call again with ``preflight_count=False``. Use
+        ``after_rid`` (the RID of the last row from the previous page) to
+        advance the cursor.
+
+        Note: ``get_denormalized_as_dict`` materializes the full join
+        before paging — for very large datasets, prefer downloading the
+        bag and querying it locally rather than paging through this tool.
+
+        Args:
+            hostname: The Deriva server hostname.
+            catalog_id: The catalog ID as a string.
+            include_tables: Tables to include in the denormalized join.
+                REQUIRED in both modes.
+            dataset_rid: If set, scope to one dataset. If None, catalog-wide
+                shape mode.
+            version: Optional dataset version (dataset mode only).
+            row_per: Anchor table for the join (advanced; usually None).
+            via: FK path hints (advanced; usually None).
+            limit: If 0 (default), shape only. If > 0, also return up to
+                ``limit`` rows (capped at 1000). Dataset mode only.
+            after_rid: Cursor for paging row results. Dataset mode only.
+            preflight_count: If True, return only the planner's row-count
+                estimate. Dataset mode only.
+
+        Returns:
+            JSON string. Catalog-shape: ``{"mode": "catalog_shape",
+            "include_tables", "columns", "join_path", "tables",
+            "total_rows", "total_asset_bytes", "total_asset_size"}``.
+            Dataset shape only: ``{"mode": "dataset_shape", "dataset_rid",
+            "version", "columns", "join_path", "row_per",
+            "estimated_row_count", ...}``. Dataset with rows: same as shape
+            plus ``"rows", "returned_count", "truncated", "next_after_rid"``.
+            Dataset preflight: ``{"mode": "dataset_preflight", "dataset_rid",
+            "total_count", "entities_fetched": False, "action_required"}``.
+
+        Raises:
+            RuntimeError: Wrapped, propagated from
+                ``deriva_ml.DerivaML.estimate_denormalized_size`` or
+                ``deriva_ml.dataset.dataset.Dataset.describe_denormalized``
+                / ``get_denormalized_as_dict``.
+
+        Example:
+            Catalog-shape: ``{"mode": "catalog_shape", "include_tables":
+            ["Image"], "columns": [["Image.RID", "text"]], "join_path":
+            ["Image"], "total_rows": 1000, ...}``.
+        """
+        if not include_tables:
+            return json.dumps({"error": "include_tables is required and must be non-empty"})
+        try:
+            if dataset_rid is None:
+                with deriva_call():
+                    ml = get_ml(hostname, catalog_id)
+                    estimate = ml.estimate_denormalized_size(include_tables)
+                return json.dumps(
+                    {
+                        "mode": "catalog_shape",
+                        "include_tables": include_tables,
+                        **estimate,
+                    },
+                    default=str,
+                )
+
+            # Dataset mode.
+            capped = min(max(limit, 0), _MAX_LIMIT)
+            with deriva_call():
+                ml = get_ml(hostname, catalog_id)
+                ds = ml.lookup_dataset(dataset_rid)
+                desc = ds.describe_denormalized(
+                    include_tables,
+                    row_per=row_per,
+                    via=via,
+                    version=version,
+                )
+                rows: list[dict[str, Any]] | None
+                if capped > 0 and not preflight_count:
+                    rows = list(
+                        ds.get_denormalized_as_dict(
+                            include_tables,
+                            row_per=row_per,
+                            via=via,
+                            version=version,
+                        )
+                    )
+                else:
+                    rows = None
+
+            if preflight_count:
+                total = desc.get("estimated_row_count", {}).get("total")
+                return json.dumps(
+                    {
+                        "mode": "dataset_preflight",
+                        "dataset_rid": dataset_rid,
+                        "total_count": total,
+                        "entities_fetched": False,
+                        "action_required": (
+                            f"Estimated {total} rows for the denormalized view. "
+                            "Choose a limit and call again with preflight_count=False."
+                        ),
+                    },
+                    default=str,
+                )
+
+            if rows is None:
+                return json.dumps(
+                    {
+                        "mode": "dataset_shape",
+                        "dataset_rid": dataset_rid,
+                        "version": version,
+                        **desc,
+                    },
+                    default=str,
+                )
+
+            # Sort + paginate rows by their RID-bearing column.
+            sorted_rows = sorted(rows, key=lambda r: _row_rid(r))
+            page, truncated, next_after = _paginate_rows(
+                sorted_rows, after_rid=after_rid, limit=capped
+            )
+            return json.dumps(
+                {
+                    "mode": "dataset_rows",
+                    "dataset_rid": dataset_rid,
+                    "version": version,
+                    **desc,
+                    "rows": page,
+                    "returned_count": len(page),
+                    "truncated": truncated,
+                    "next_after_rid": next_after,
+                },
+                default=str,
+            )
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+    @ctx.tool(mutates=True)
+    async def split_dataset(
+        hostname: str,
+        catalog_id: str,
+        source_dataset_rid: str,
+        test_size: float = 0.2,
+        train_size: float | None = None,
+        val_size: float | None = None,
+        seed: int = 42,
+        shuffle: bool = True,
+        stratify_by_column: str | None = None,
+        stratify_missing: str = "error",
+        element_table: str | None = None,
+        include_tables: list[str] | None = None,
+        training_types: list[str] | None = None,
+        testing_types: list[str] | None = None,
+        validation_types: list[str] | None = None,
+        split_description: str = "",
+        workflow_type: str = "Dataset_Split",
+        dry_run: bool = False,
+    ) -> str:
+        """Split a dataset into train/test/(validation) child datasets in the catalog.
+
+        sklearn-style split semantics. Creates a parent "split" dataset and
+        2-3 child datasets (training, testing, optionally validation) in
+        the catalog, all linked to the source via ``Dataset_Dataset``
+        relations with full provenance.
+
+        DerivaML's ``selection_fn`` (a Python callable) cannot cross the
+        MCP boundary; this tool exposes only random and stratified
+        strategies. For custom selection, use the Python API directly.
+
+        Args:
+            hostname: The Deriva server hostname.
+            catalog_id: The catalog ID as a string.
+            source_dataset_rid: RID of the source dataset to split.
+            test_size: Float (0-1) fraction of data for testing. Default 0.2.
+            train_size: Optional float (0-1) fraction for training. If None,
+                complement of ``test_size`` (and ``val_size``).
+            val_size: Optional float (0-1) fraction for validation. If None,
+                no validation split is created (two-way split).
+            seed: Random seed for reproducibility.
+            shuffle: Whether to shuffle before splitting. Ignored when
+                using stratified selection.
+            stratify_by_column: Column name for stratified splitting (dot
+                notation, e.g. ``Image_Classification.Image_Class``).
+            stratify_missing: Policy for null values in the stratify
+                column: ``"error"``, ``"drop"``, or ``"include"``.
+            element_table: Name of the element table to split. If None,
+                auto-detected from the source dataset's members.
+            include_tables: Tables to include when denormalizing for the
+                selection function. Required when ``stratify_by_column``
+                is set.
+            training_types: Additional dataset types for the training set
+                beyond ``"Training"`` (e.g., ``["Labeled"]``).
+            testing_types: Additional dataset types for the testing set
+                beyond ``"Testing"``.
+            validation_types: Additional dataset types for the validation
+                set beyond ``"Validation"``. Ignored when ``val_size`` is None.
+            split_description: Description for the parent Split dataset.
+            workflow_type: Workflow type vocabulary term. Default
+                ``"Dataset_Split"``.
+            dry_run: If True, compute the split assignment without creating
+                any catalog datasets. Use to validate strategy choice and
+                partition sizes before committing.
+
+        Returns:
+            JSON string ``{"status": "success", "source", "split", "training",
+            "testing", "validation", "strategy", "element_table", "seed",
+            "dry_run"}``. Each partition is ``{"rid", "version", "count"}``.
+            ``validation`` is null for two-way splits.
+
+        Raises:
+            RuntimeError: Wrapped, propagated from
+                ``deriva_ml.dataset.split.split_dataset`` (e.g. invalid
+                strategy, stratify column missing).
+
+        Example:
+            ``{"status": "success", "source": "1-AAAA", "split": {"rid":
+            "1-SPLT", "version": "1.0.0", "count": 100}, "training":
+            {"rid": "1-TRN", "version": "1.0.0", "count": 80}, "testing":
+            {"rid": "1-TST", "version": "1.0.0", "count": 20},
+            "validation": null, "strategy": "random", "element_table":
+            "Image", "seed": 42, "dry_run": false}``.
+        """
+        try:
+            with deriva_call():
+                ml = get_ml(hostname, catalog_id)
+                result = _split_dataset(
+                    ml,
+                    source_dataset_rid,
+                    test_size=test_size,
+                    train_size=train_size,
+                    val_size=val_size,
+                    shuffle=shuffle,
+                    seed=seed,
+                    stratify_by_column=stratify_by_column,
+                    stratify_missing=stratify_missing,
+                    split_description=split_description,
+                    training_types=training_types,
+                    testing_types=testing_types,
+                    validation_types=validation_types,
+                    element_table=element_table,
+                    include_tables=include_tables,
+                    workflow_type=workflow_type,
+                    dry_run=dry_run,
+                )
+                payload = result.model_dump()
+
+            training = payload.get("training") or {}
+            testing = payload.get("testing") or {}
+            validation = payload.get("validation") or {}
+            audit_event(
+                "deriva_ml_split_dataset",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                source_dataset_rid=source_dataset_rid,
+                strategy=payload.get("strategy"),
+                element_table=payload.get("element_table"),
+                seed=seed,
+                dry_run=dry_run,
+                training_count=training.get("count") if training else None,
+                testing_count=testing.get("count") if testing else None,
+                validation_count=validation.get("count") if validation else None,
+            )
+            return json.dumps({"status": "success", **payload}, default=str)
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="split_dataset",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                source_dataset_rid=source_dataset_rid,
+                seed=seed,
+                dry_run=dry_run,
             )
