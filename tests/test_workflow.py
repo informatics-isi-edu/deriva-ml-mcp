@@ -232,20 +232,24 @@ async def test_create_workflow_success_emits_audit(workflow_ctx, capturing_mcp, 
 
 
 async def test_create_workflow_dedup_exists(workflow_ctx, capturing_mcp, mock_ml):
-    # Existing workflow at this URL: skip create, return its RID.
+    """No checksum supplied -> dedup pre-check falls back to URL."""
     existing = _make_workflow_mock(rid="1-OLD")
     mock_ml.lookup_workflow_by_url.return_value = existing
+    url = "https://github.com/example/repo/blob/abc/main.py"
     with _patch_workflow_audit() as mock_audit:
         result = await capturing_mcp.tools["create_workflow"](
             hostname="h",
             catalog_id="1",
             name="MyPipeline",
             workflow_type=["Model_Training"],
-            url="https://github.com/example/repo/blob/abc/main.py",
+            url=url,
         )
     payload = json.loads(result)
     assert payload["status"] == "exists"
     assert payload["workflow_rid"] == "1-OLD"
+    # With checksum=None, the lookup falls back to URL (matching
+    # _add_workflow's `checksum or url` dedup key).
+    mock_ml.lookup_workflow_by_url.assert_called_once_with(url)
     # No create / no _add_workflow call.
     mock_ml.create_workflow.assert_not_called()
     mock_ml._add_workflow.assert_not_called()
@@ -254,6 +258,43 @@ async def test_create_workflow_dedup_exists(workflow_ctx, capturing_mcp, mock_ml
     assert len(success) == 1
     assert success[0].kwargs["status"] == "exists"
     assert success[0].kwargs["workflow_rid"] == "1-OLD"
+
+
+async def test_create_workflow_dedup_uses_checksum_when_provided(
+    workflow_ctx, capturing_mcp, mock_ml
+):
+    """Dedup pre-check must look up on `checksum or url` (matching
+    `_add_workflow`'s internal dedup logic), not URL alone. If a caller
+    passes a checksum that matches an existing workflow registered at a
+    different URL (e.g. file moved or commit rebased), the pre-check
+    must still find it — otherwise the tool reports status='created'
+    while `_add_workflow` silently dedups and returns the existing RID.
+    Regression test for the checksum-vs-URL mismatch caught in review.
+    """
+    existing = _make_workflow_mock(rid="1-OLD-CHECKSUM-MATCH")
+    mock_ml.lookup_workflow_by_url.return_value = existing
+    with _patch_workflow_audit() as mock_audit:
+        result = await capturing_mcp.tools["create_workflow"](
+            hostname="h",
+            catalog_id="1",
+            name="MyPipeline",
+            workflow_type=["Model_Training"],
+            url="https://github.com/example/repo/blob/NEW/main.py",
+            checksum="sha256:cafebabe",
+        )
+    payload = json.loads(result)
+    assert payload["status"] == "exists"
+    assert payload["workflow_rid"] == "1-OLD-CHECKSUM-MATCH"
+    # CRITICAL: lookup_workflow_by_url was called with the checksum
+    # (which takes precedence per `checksum or url`), NOT the URL.
+    mock_ml.lookup_workflow_by_url.assert_called_once_with("sha256:cafebabe")
+    # No create / no _add_workflow call.
+    mock_ml.create_workflow.assert_not_called()
+    mock_ml._add_workflow.assert_not_called()
+    # Audit fires with status=exists.
+    success = _success_calls(mock_audit, "deriva_ml_create_workflow")
+    assert len(success) == 1
+    assert success[0].kwargs["status"] == "exists"
 
 
 async def test_create_workflow_failure_emits_failed_audit(workflow_ctx, capturing_mcp, mock_ml):

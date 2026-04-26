@@ -328,13 +328,24 @@ def register(ctx: PluginContext) -> None:
         try:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
-                # Pre-check: dedup on URL/checksum. lookup_workflow_by_url
-                # raises DerivaMLException when nothing matches; we treat
-                # that as "not found" and proceed to create.
+                # Pre-check exists solely to set status="exists" for the
+                # audit + return value. _add_workflow already dedups
+                # internally on `checksum or url` and returns the existing
+                # RID either way (deriva_ml/core/mixins/workflow.py
+                # _add_workflow source) — so without this pre-check the
+                # tool would always report status="created" even when no
+                # row was inserted. Match _add_workflow's lookup key
+                # exactly (checksum-first, url-fallback) so the pre-check
+                # finds the same dedup hits the upstream code does.
+                # TOCTOU note: a concurrent insert between this lookup
+                # and _add_workflow would result in status="created"
+                # being reported for what _add_workflow then dedups —
+                # acceptable for serialized MCP execution.
+                lookup_key = checksum or url
                 rid: str
                 status: str
                 try:
-                    existing = ml.lookup_workflow_by_url(url)
+                    existing = ml.lookup_workflow_by_url(lookup_key)
                 except DerivaMLException:
                     existing = None
                 if existing is not None:
@@ -349,6 +360,11 @@ def register(ctx: PluginContext) -> None:
                     wf.url = url
                     wf.checksum = checksum
                     wf.version = version
+                    # _add_workflow is the canonical write path even
+                    # though the leading underscore looks private — all
+                    # workflow inserts in deriva_ml itself go through it.
+                    # If deriva_ml 2.x renames it, our pre-flight smoke
+                    # test will catch the mismatch via the import.
                     rid = ml._add_workflow(wf)
                     status = "created"
             audit_event(
@@ -410,6 +426,13 @@ def register(ctx: PluginContext) -> None:
             JSON string ``{"status": "updated", "workflow_rid",
             "updated_fields": [...]}``. ``updated_fields`` is the list of
             field names that were actually written.
+
+        Audit notes:
+            The audit row always carries a ``workflow_type`` field
+            (``None`` when the caller didn't pass one) for searchability
+            — operators querying audits by workflow_type tag find every
+            mutation that touched the field, including the no-change
+            calls. ``description`` is NEVER in the audit (free text).
 
         Raises:
             RuntimeError: Wrapped, propagated from
