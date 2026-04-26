@@ -145,6 +145,46 @@ def _summarize_upload_report(report: Any) -> dict[str, Any]:
     }
 
 
+def _summarize_upload_dict(
+    uploaded: dict[str, Any],
+    *,
+    execution_rid: str,
+    feature_count: int,
+) -> dict[str, Any]:
+    """Synthesize an UploadReport-shaped dict from ``upload_execution_outputs``.
+
+    ``Execution.upload_execution_outputs`` returns ``dict[str,
+    list[AssetFilePath]]`` (asset table -> uploaded files), not an
+    ``UploadReport``. We render it into the same JSON shape callers
+    expect from ``commit_execution`` so the response surface stays
+    stable across upstream API styles.
+
+    Args:
+        uploaded: The dict returned by ``Execution.upload_execution_outputs``.
+        execution_rid: RID of the execution being committed (for the
+            ``execution_rids`` envelope field).
+        feature_count: Number of staged feature records that were
+            flushed during this commit (added to ``total_uploaded``
+            since they don't appear in the asset dict).
+
+    Returns:
+        Dict matching ``_summarize_upload_report``'s envelope:
+        ``execution_rids``, ``total_uploaded``, ``total_failed``,
+        ``per_table``, ``errors``, ``errors_truncated``.
+    """
+    per_table: dict[str, int] = {
+        table: len(files or []) for table, files in (uploaded or {}).items()
+    }
+    return {
+        "execution_rids": [execution_rid],
+        "total_uploaded": sum(per_table.values()) + feature_count,
+        "total_failed": 0,
+        "per_table": per_table,
+        "errors": [],
+        "errors_truncated": False,
+    }
+
+
 def register(ctx: PluginContext) -> None:
     """Register all execution domain tools with the plugin context.
 
@@ -559,6 +599,14 @@ def register(ctx: PluginContext) -> None:
                     dry_run=dry_run,
                 )
                 execution_rid = execution.execution_rid
+                # Detach so DerivaML.__del__ does not abort the freshly
+                # created execution when this short-lived ml goes out of
+                # scope. Upstream's __del__ aborts any non-terminal
+                # ml._execution as a safety net for crashing scripts; in
+                # the MCP request/response model the execution is meant
+                # to outlive this tool call (a follow-up start_execution
+                # / commit_execution call will drive the lifecycle).
+                ml._execution = None
 
             # Q3 / Phase 3 convention: dry_run skips audit because no
             # catalog state actually changed. The response carries
@@ -737,8 +785,30 @@ def register(ctx: PluginContext) -> None:
                 if current in {ExecutionStatus.Created, ExecutionStatus.Running}:
                     execution.execution_stop()
 
-                report = execution.upload_outputs(retry_failed=retry_failed)
-                summary = _summarize_upload_report(report)
+                # Snapshot pending feature-record count before draining
+                # so the response can report how many feature values
+                # actually landed (the asset-only return value of
+                # upload_execution_outputs doesn't expose this).
+                pending_features = execution._manifest_store.list_pending_feature_records(
+                    execution_rid
+                )
+                feature_count = len(pending_features)
+
+                # upload_execution_outputs is the legacy method that
+                # ALSO drains staged feature_records via _flush_staged_features
+                # (called from _upload_execution_dirs after asset upload).
+                # The newer upload_outputs / upload_pending lease engine
+                # only handles pending_rows and skips the feature_records
+                # SQLite table — so it would leave ``add_feature_values``
+                # data unflushed. Until upstream unifies the two paths,
+                # commit_execution must use upload_execution_outputs to
+                # get a real end-to-end commit.
+                uploaded = execution.upload_execution_outputs()
+                summary = _summarize_upload_dict(
+                    uploaded,
+                    execution_rid=execution_rid,
+                    feature_count=feature_count,
+                )
 
             audit_event(
                 "deriva_ml_commit_execution",

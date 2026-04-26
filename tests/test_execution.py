@@ -451,20 +451,34 @@ async def test_start_execution_failure_emits_failed_audit(execution_ctx, capturi
 # ---------------------------------------------------------------------------
 
 
-def _make_upload_report(uploaded: int = 3, failed: int = 0, errors: list[str] | None = None):
-    """Build an UploadReport-shaped MagicMock."""
-    report = MagicMock()
-    report.execution_rids = ["1-EXEC"]
-    report.total_uploaded = uploaded
-    report.total_failed = failed
-    report.per_table = {"deriva-ml:Execution": {"uploaded": uploaded, "failed": failed}}
-    report.errors = errors or []
-    return report
+def _make_uploaded_dict(per_table: dict[str, int] | None = None):
+    """Build the dict shape returned by ``Execution.upload_execution_outputs``.
+
+    Real return type is ``dict[str, list[AssetFilePath]]`` mapping
+    ``"{schema}/{table}"`` to uploaded asset paths. For test purposes
+    we substitute opaque integer-count tuples — the tool only reads
+    ``len(value)``.
+    """
+    return {table: [object()] * count for table, count in (per_table or {}).items()}
+
+
+def _attach_pending_features(execution: MagicMock, count: int) -> None:
+    """Wire ``execution._manifest_store.list_pending_feature_records`` to return ``count`` rows.
+
+    ``commit_execution`` snapshots the pending feature-record count
+    before calling ``upload_execution_outputs`` so its synthetic
+    ``total_uploaded`` includes feature inserts (which the asset-only
+    return value of ``upload_execution_outputs`` doesn't expose).
+    """
+    execution._manifest_store.list_pending_feature_records.return_value = [object()] * count
 
 
 async def test_commit_execution_success_emits_audit(execution_ctx, capturing_mcp, mock_ml):
     execution = _make_execution_mock(execution_rid="1-EXEC", status=ExecutionStatus.Running)
-    execution.upload_outputs.return_value = _make_upload_report(uploaded=5, failed=0)
+    _attach_pending_features(execution, count=3)
+    execution.upload_execution_outputs.return_value = _make_uploaded_dict(
+        {"deriva-ml/Execution_Metadata": 2}
+    )
     mock_ml.resume_execution.return_value = execution
     with _patch_execution_audit() as mock_audit:
         result = await capturing_mcp.tools["commit_execution"](
@@ -473,10 +487,12 @@ async def test_commit_execution_success_emits_audit(execution_ctx, capturing_mcp
     payload = json.loads(result)
     assert payload["status"] == "uploaded"
     assert payload["execution_rid"] == "1-EXEC"
+    # 2 asset uploads + 3 feature flushes.
     assert payload["report"]["total_uploaded"] == 5
     assert payload["report"]["total_failed"] == 0
+    assert payload["report"]["per_table"] == {"deriva-ml/Execution_Metadata": 2}
     execution.execution_stop.assert_called_once()
-    execution.upload_outputs.assert_called_once_with(retry_failed=False)
+    execution.upload_execution_outputs.assert_called_once_with()
     success = _success_calls(mock_audit, "deriva_ml_commit_execution")
     assert success
     assert success[0].kwargs["total_uploaded"] == 5
@@ -485,8 +501,14 @@ async def test_commit_execution_success_emits_audit(execution_ctx, capturing_mcp
 
 
 async def test_commit_execution_retry_failed_true(execution_ctx, capturing_mcp, mock_ml):
+    # retry_failed is propagated to the audit row but does not (yet)
+    # alter the upload_execution_outputs call shape — that surface
+    # has its own per-asset retry policy via max_retries / retry_delay,
+    # not a retry_failed switch. We keep the public arg for forward
+    # compatibility with the lease engine path.
     execution = _make_execution_mock(execution_rid="1-EXEC", status=ExecutionStatus.Pending_Upload)
-    execution.upload_outputs.return_value = _make_upload_report(uploaded=2, failed=1)
+    _attach_pending_features(execution, count=0)
+    execution.upload_execution_outputs.return_value = _make_uploaded_dict({})
     mock_ml.resume_execution.return_value = execution
     with _patch_execution_audit() as mock_audit:
         await capturing_mcp.tools["commit_execution"](
@@ -494,7 +516,7 @@ async def test_commit_execution_retry_failed_true(execution_ctx, capturing_mcp, 
         )
     # Already past Running, no execution_stop call.
     execution.execution_stop.assert_not_called()
-    execution.upload_outputs.assert_called_once_with(retry_failed=True)
+    execution.upload_execution_outputs.assert_called_once_with()
     success = _success_calls(mock_audit, "deriva_ml_commit_execution")
     assert success[0].kwargs["retry_failed"] is True
 
