@@ -1537,6 +1537,8 @@ Surfaced during Phase 5; apply to Phase 6+ tool/resource authors:
 
 - **Polymorphic getattr-based renderers.** When the same renderer needs to handle 2+ shapes that don't share a protocol (e.g. `Execution` and `ExecutionRecord` both expose `rid`, `workflow_rid`, `status` but aren't related by inheritance), use `getattr(record, "field", None)` defensively and document the polymorphism in the renderer's docstring. The tradeoff (typo silently returns None) is acceptable for renderers; flag with an inline comment so it's discoverable. Canonical example: `tools/execution.py::_summarize_execution`.
 
+- **Partial-state error envelopes via `response_fields=`.** When a tool completes N sub-operations before failing (e.g. `add_feature_values` builds N FeatureRecords from input dicts; the 4th raises ValidationError after 3 successful constructions), pass `response_fields={"completed": [...], "failed_index": i, "attempted_count": N}` to `_error_envelope` so the LLM caller can reason about what was actually mutated before the failure. The merged response shape is `{"error": str(exc), **response_fields}`. Canonical example: `tools/feature.py::add_feature_values` (`response_fields={"attempted_count", "failed_entry_index"}` on per-record build failures). Distinct from the summarizer protocol above (which is for SUCCESS responses with bounded-but-large diagnostic fields); `response_fields=` is for FAILURE responses with partial-state visibility.
+
 ---
 
 ## Phase 6 — Resources
