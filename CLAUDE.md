@@ -15,24 +15,39 @@ group at server startup.
 
 ## Architecture
 
-Target shape (phased rollout — see plan for what each phase adds):
+Current shape after Phase 6:
 
 ```
 src/deriva_ml_mcp/
 ├── plugin.py          # register(ctx) entry point — dispatches to module registrars
 ├── ml_context.py      # The single helper that builds a DerivaML from core's credential
-├── tools/             # Per-domain tool modules
-│   ├── dataset.py
-│   ├── feature.py
-│   ├── workflow.py
-│   └── execution.py
-└── resources/
-    └── ml.py          # deriva-ml://... resources
+├── _helpers.py        # _error_envelope, _paginate, _read_rid, _MAX_LIMIT (shared)
+├── tools/             # Per-domain tool modules (39 tools across 4 domains)
+│   ├── dataset.py     #   17 tools
+│   ├── feature.py     #    6 tools
+│   ├── workflow.py    #    5 tools
+│   └── execution.py   #   11 tools
+└── resources/         # MCP resources + per-user RAG
+    ├── ml.py          #   9 read-only resources under deriva://catalog/{h}/{c}/ml/...
+    └── rag.py         #   1 GitHub doc source + 3 per-user on_catalog_connect hooks
 ```
 
-Phase 0 ships only `plugin.py` and the empty `tools/`/`resources/` package
-markers. `ml_context.py` arrives in Phase 1; the domain modules in Phases
-2-5; `resources/ml.py` in Phase 6.
+Phase 0 shipped `plugin.py` and the empty `tools/`/`resources/` package
+markers. `ml_context.py` arrived in Phase 1; the domain tool modules in
+Phases 2-5; `resources/ml.py` and `resources/rag.py` in Phase 6.
+
+**Per-user RAG safety.** `resources/rag.py` does NOT use
+`ctx.rag_dataset_indexer(...)` -- that API produces a single global
+enriched source shared across users (`enriched:{host}:{cat}:{schema}:{table}`),
+which leaks data for any catalog table where rows have user-specific
+ACLs. Instead, the plugin uses `ctx.on_catalog_connect(...)` with
+`index_table_data(..., user_id=resolve_user_identity(hostname))` so each
+user's chunks land under `data:{host}:{cat}:{user_id}` and ACL is
+applied at fetch time using the calling user's credential. The
+plugin-level test `test_register_does_not_use_rag_dataset_indexer`
+pins this; future commits accidentally calling the unsafe API will
+fail CI. Two upstream gaps in `deriva-mcp-core` are tracked as
+issues #1 and #2 (search filter and `doc_type` parameter).
 
 **Boundary rules.** This plugin **never** duplicates anything that lives in
 `deriva-mcp-core`:

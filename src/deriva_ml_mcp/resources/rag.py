@@ -299,6 +299,11 @@ def _make_hook(
     # "ml-dataset" / "ml-workflow" / "ml-execution" so
     # rag_search(doc_type=...) can distinguish these from generic
     # catalog-data chunks. See docs/coverage.md "Upstream gaps".
+    # schema_hash + schema_json are received because deriva-mcp-core's
+    # _dispatch_catalog_connect signature requires them. We deliberately
+    # ignore both: indexing depends only on (host, catalog_id, user_id,
+    # rows), and re-indexing on schema changes is handled separately by
+    # the framework's TTL gating, not by the schema_hash here.
     async def hook(
         hostname: str,
         catalog_id: str,
