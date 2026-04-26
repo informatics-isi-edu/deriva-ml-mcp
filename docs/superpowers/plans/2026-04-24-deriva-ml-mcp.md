@@ -1478,6 +1478,31 @@ Feature-specific Definition of Done items: integration round trip exercises work
 
 ---
 
+### Conventions inherited from Phase 4 (workflow tools)
+
+Surfaced during Phase 4; apply to Phase 5+ tool authors:
+
+- **Shared test infrastructure lives in `tests/conftest.py`.** Available imports:
+  - `from tests.conftest import _success_calls, make_patch_audit, _CapturingMCP, _server_reachable`
+  - Auto-discovered fixtures: `capturing_mcp`, `ctx`, `mock_ml`, `deriva_host`, `demo_catalog` (read-only), `demo_mutation_catalog` (mutation-isolated)
+  - The consumer protocol for `make_patch_audit`: `_patch_<domain>_audit = make_patch_audit("<domain>")` at the top of each `tests/test_<domain>.py` file. The bind-then-call pattern preserves call-site grep'ability.
+
+- **Use `demo_mutation_catalog` for write-side integration tests.** It's session-scoped, isolated from the read-only `demo_catalog`, and was promoted to conftest specifically anticipating Phase 5's executions. Don't define a per-domain mutation catalog fixture; reuse this one.
+
+- **Audit-event field-presence convention:** when a mutation tool takes optional fields, emit them in the audit unconditionally (with `None` as the no-change marker) rather than omitting them. Example: `update_workflow` always emits `workflow_type` in its audit even when the caller didn't change it. Operators querying audits by tag find every mutation that touched the field, not just the ones that changed it. Document the choice in the tool's docstring under an "Audit notes" subsection so the reasoning is on-site.
+
+- **Dedup pre-check pattern when an upstream method dedups silently:** if `_add_X(record)` returns the existing RID on dedup hit (no exception, no signal), the MCP tool needs an explicit pre-check to set `status="exists"` vs `status="created"` for the audit + return value. Match the upstream's lookup key EXACTLY (read the upstream source). See `tools/workflow.py::create_workflow` for the canonical shape (lookup_key = `checksum or url`, mirroring `_add_workflow`'s internal dedup). Add a regression test that asserts the lookup was called with the exact dedup key, not just that the right status was returned.
+
+- **Upstream-bug-handling discipline:** when an integration test discovers an upstream bug:
+  1. Spawn a separate task for the upstream fix (use the spawn-task chip).
+  2. Inline-document at the test site: bug description, why the assertion is scoped down, exact line to tighten when the fix lands.
+  3. Don't sprinkle the same note across plan / coverage.md / followup files — the test site is the single source of truth.
+  See `tests/test_integration_workflow.py:268-288` for the canonical shape (inline comment block documenting the deriva-ml `Workflow.__setattr__` Pydantic v2 gate bug).
+
+### Phase 5 entry tasks (do BEFORE Task 5.1 to prevent diff churn)
+
+- [ ] **Split `tests/conftest.py` into `tests/conftest.py` (fixtures) + `tests/_helpers.py` (module-level utilities).** Conftest is at 288 lines after Phase 4 and Phase 5's `demo_execution_catalog` (or analogous) will push it past comfortable. Move `_success_calls`, `make_patch_audit`, `_CapturingMCP`, `_server_reachable` to `_helpers.py`; keep the 6 fixtures (and any new ones) in `conftest.py`. Update consumer imports.
+
 ### Phase 5 — Execution domain
 
 Same shape. Source files:
@@ -1491,8 +1516,10 @@ Phase-specific notes for the analysis pass:
 
 - Execution touches state transitions. The granularity rule "merge methods into one tool when the user intent is single" is especially load-bearing here — old `deriva-mcp` exposed `start_execution` and `end_execution` separately; the analysis should weigh whether a single `run_execution(workflow_rid, ...)` better matches user intent.
 - Execution depends on workflows (a registered workflow is required to create an execution), so phase 4 must complete first.
+- **Resolve the four "Phase 5 design carryover from Phase 3" questions** in the analysis (lifecycle exposure, deriva_call+execute nesting rule, idempotency, bulk-mutation response shape).
+- **Add a Phase 4 follow-up to the integration round-trip:** once `create_execution` exists, exercise `update_workflow` end-to-end (currently scoped down because Phase 4's update path was mocked out — and the upstream `Workflow.__setattr__` Pydantic v2 bug needs to be fixed before the assertion can tighten — see `tests/test_integration_workflow.py:268-288`).
 
-Integration round trip: register a workflow → create an execution → start it → finish it → look up by RID.
+Integration round trip: register a workflow → create an execution → start it → finish it → look up by RID. Then exercise the **deferred Phase 3 DoD #2 mutation round trip** (create_workflow → create_execution → add_feature_values → list_feature_values verifies the values landed) — closes the integration coverage gap from Phase 3.
 
 ---
 
