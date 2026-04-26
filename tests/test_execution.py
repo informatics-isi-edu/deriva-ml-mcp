@@ -521,6 +521,32 @@ async def test_commit_execution_retry_failed_true(execution_ctx, capturing_mcp, 
     assert success[0].kwargs["retry_failed"] is True
 
 
+async def test_commit_execution_additive_upload_from_uploaded(
+    execution_ctx, capturing_mcp, mock_ml
+):
+    # Per deriva-ml 3d21f55, an Uploaded execution can have additional
+    # outputs registered after its initial commit. commit_execution must
+    # accept Uploaded as a valid prior state -- upload_execution_outputs
+    # cycles Uploaded -> Pending_Upload -> Uploaded internally when there
+    # are new pending entries, or no-ops when there aren't. The MCP tool
+    # must not reject this path with a state-machine error.
+    execution = _make_execution_mock(execution_rid="1-EXEC", status=ExecutionStatus.Uploaded)
+    _attach_pending_features(execution, count=0)
+    execution.upload_execution_outputs.return_value = _make_uploaded_dict({})
+    mock_ml.resume_execution.return_value = execution
+    with _patch_execution_audit() as mock_audit:
+        result = await capturing_mcp.tools["commit_execution"](
+            hostname="h", catalog_id="1", execution_rid="1-EXEC"
+        )
+    payload = json.loads(result)
+    assert "error" not in payload
+    # Already past Running, no execution_stop call (mirrors Pending_Upload path).
+    execution.execution_stop.assert_not_called()
+    execution.upload_execution_outputs.assert_called_once_with()
+    success = _success_calls(mock_audit, "deriva_ml_commit_execution")
+    assert success, "additive-upload path must still emit success audit"
+
+
 async def test_commit_execution_failure_emits_failed_audit(execution_ctx, capturing_mcp, mock_ml):
     mock_ml.resume_execution.side_effect = RuntimeError("offline")
     with _patch_execution_audit() as mock_audit:

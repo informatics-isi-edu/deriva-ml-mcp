@@ -52,10 +52,19 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-# Terminal states from which start_execution / commit_execution refuse
-# to advance. Aborted / Uploaded / Failed are unconditionally terminal;
-# Pending_Upload is terminal for start (work is past the algorithmic
-# phase) but not for commit (commit's whole purpose is to drain it).
+# States from which start_execution / commit_execution refuse to advance.
+#
+# start_execution: Created or Running are the only valid prior states
+# (Running is the idempotent no-op). Everything else is rejected -- once
+# work has stopped (Stopped/Pending_Upload/Uploaded) or failed/aborted,
+# the execution cannot be re-entered for new computation.
+#
+# commit_execution: drains staged work and uploads. Created and Running
+# are pre-stop; Stopped and Pending_Upload are mid-pipeline; Uploaded is
+# the additive-upload entry point per deriva-ml 3d21f55 (calling
+# upload_execution_outputs on an Uploaded execution that has new
+# pending manifest entries cycles Uploaded -> Pending_Upload -> Uploaded;
+# a call with no pending entries is a clean no-op).
 _START_REJECT_STATES = {
     ExecutionStatus.Stopped,
     ExecutionStatus.Failed,
@@ -69,6 +78,7 @@ _COMMIT_ALLOWED_STATES = {
     ExecutionStatus.Running,
     ExecutionStatus.Stopped,
     ExecutionStatus.Pending_Upload,
+    ExecutionStatus.Uploaded,
 }
 
 
@@ -875,7 +885,8 @@ def register(ctx: PluginContext) -> None:
                         {
                             "error": (
                                 f"cannot commit execution in state {state_name}; "
-                                "only Created, Running, Stopped, or Pending_Upload are valid"
+                                "only Created, Running, Stopped, Pending_Upload, "
+                                "or Uploaded (additive upload) are valid"
                             )
                         }
                     )

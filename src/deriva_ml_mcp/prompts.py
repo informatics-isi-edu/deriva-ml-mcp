@@ -192,9 +192,13 @@ Two state sets are load-bearing for the lifecycle tools:
            and Pending_Upload are past the algorithmic phase; Failed /
            Uploaded / Aborted are terminal.
 
-    _COMMIT_ALLOWED_STATES = {Created, Running, Stopped, Pending_Upload}
+    _COMMIT_ALLOWED_STATES = {Created, Running, Stopped, Pending_Upload, Uploaded}
         -- commit_execution accepts these. (Pending_Upload is included
-           because commit's whole purpose is to drain it.)
+           because commit's whole purpose is to drain it. Uploaded is
+           the additive-upload entry point: calling commit_execution on
+           an Uploaded execution that has new pending entries cycles
+           Uploaded -> Pending_Upload -> Uploaded; with no pending
+           entries it is a clean no-op.)
 
 THE FIVE LIFECYCLE TOOLS
 ------------------------
