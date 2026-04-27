@@ -1724,3 +1724,75 @@ async def test_split_dataset_error_path(dataset_ctx, capturing_mcp, mock_ml):
     assert failed
     assert failed[0].kwargs["source_dataset_rid"] == "1-AAAA"
     assert failed[0].kwargs["dry_run"] is False
+
+
+# ---------------------------------------------------------------------------
+# v1.3: surgical RAG re-index wired into mutating dataset tools
+# ---------------------------------------------------------------------------
+
+
+async def test_create_dataset_triggers_surgical_reindex(dataset_ctx, capturing_mcp, mock_ml):
+    """``deriva_ml_create_dataset`` calls ``_reindex_dataset`` with the new RID."""
+    from unittest.mock import AsyncMock
+
+    new_ds = _make_dataset_mock("1-NEW", "desc", ["Training"], "1.0.0")
+    fake_reindex = AsyncMock(return_value=1)
+    with (
+        patch("deriva_ml_mcp.tools.dataset.Dataset") as mock_dataset_cls,
+        patch("deriva_ml_mcp.resources.rag._reindex_dataset", new=fake_reindex),
+        _patch_audit(),
+    ):
+        mock_dataset_cls.create_dataset.return_value = new_ds
+        await capturing_mcp.tools["deriva_ml_create_dataset"](
+            hostname="h",
+            catalog_id="1",
+            execution_rid="EXEC-1",
+            description="d",
+        )
+    fake_reindex.assert_awaited_once_with("h", "1", "1-NEW")
+
+
+async def test_delete_dataset_triggers_surgical_drop(dataset_ctx, capturing_mcp, mock_ml):
+    """``deriva_ml_delete_dataset`` calls ``_delete_dataset_source`` with the RID."""
+    from unittest.mock import AsyncMock
+
+    fake_drop = AsyncMock(return_value=True)
+    with (
+        patch("deriva_ml_mcp.resources.rag._delete_dataset_source", new=fake_drop),
+        _patch_audit(),
+    ):
+        await capturing_mcp.tools["deriva_ml_delete_dataset"](
+            hostname="h", catalog_id="1", dataset_rid="1-AAAA"
+        )
+    fake_drop.assert_awaited_once_with("h", "1", "1-AAAA")
+
+
+async def test_create_dataset_reindex_failure_does_not_fail_tool(
+    dataset_ctx, capturing_mcp, mock_ml
+):
+    """A re-index exception is logged but the success envelope is still returned."""
+    from unittest.mock import AsyncMock
+
+    new_ds = _make_dataset_mock("1-NEW", "desc", ["Training"], "1.0.0")
+    fake_reindex = AsyncMock(side_effect=RuntimeError("rag boom"))
+    with (
+        patch("deriva_ml_mcp.tools.dataset.Dataset") as mock_dataset_cls,
+        patch("deriva_ml_mcp.resources.rag._reindex_dataset", new=fake_reindex),
+        _patch_audit() as mock_audit,
+    ):
+        mock_dataset_cls.create_dataset.return_value = new_ds
+        out = json.loads(
+            await capturing_mcp.tools["deriva_ml_create_dataset"](
+                hostname="h",
+                catalog_id="1",
+                execution_rid="EXEC-1",
+                description="d",
+            )
+        )
+    # Catalog mutation succeeded -- response is the success envelope, not an error.
+    assert out["status"] == "created"
+    assert out["rid"] == "1-NEW"
+    assert "error" not in out
+    # The success audit fired despite the re-index failure.
+    success = _success_calls(mock_audit, "deriva_ml_create_dataset")
+    assert success

@@ -27,10 +27,13 @@ captured every success-path emission in one shot.
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 from deriva_mcp_core import deriva_call
 from deriva_ml.dataset.aux_classes import DatasetVersion, VersionPart
+
+logger = logging.getLogger(__name__)
 
 # Note on patchable names (``audit_event``, ``get_ml``, ``Dataset``):
 # the package ``__init__.py`` imports each of these at module level and
@@ -124,6 +127,21 @@ def register(ctx: PluginContext) -> None:
                 dataset_types=dataset_types or [],
                 version=summary["current_version"],
             )
+            # v1.3 surgical re-index: refresh just the new dataset's
+            # per-RID source so rag_search picks it up on the next call
+            # from this user. Best-effort -- a re-index hiccup must NOT
+            # propagate to the tool's success path (the catalog mutation
+            # already succeeded). Lazy import to avoid the resources/rag
+            # <-> tools/dataset module-load cycle.
+            try:
+                from deriva_ml_mcp.resources.rag import _reindex_dataset
+
+                await _reindex_dataset(hostname, catalog_id, new_ds.dataset_rid)
+            except Exception:  # noqa: BLE001 -- best-effort cache refresh
+                logger.exception(
+                    "re-index failed for dataset %s after create_dataset",
+                    new_ds.dataset_rid,
+                )
             return json.dumps({"status": "created", **summary, "execution_rid": execution_rid})
         except Exception as exc:
             return _error_envelope(
@@ -178,6 +196,19 @@ def register(ctx: PluginContext) -> None:
                 dataset_rid=dataset_rid,
                 recursive=recurse,
             )
+            # v1.3 surgical re-index: drop the dataset's per-RID source so
+            # rag_search no longer surfaces a row that's been soft-deleted.
+            # Best-effort -- failure to drop is logged but does not affect
+            # the tool's success envelope.
+            try:
+                from deriva_ml_mcp.resources.rag import _delete_dataset_source
+
+                await _delete_dataset_source(hostname, catalog_id, dataset_rid)
+            except Exception:  # noqa: BLE001 -- best-effort cache refresh
+                logger.exception(
+                    "re-index drop failed for dataset %s after delete_dataset",
+                    dataset_rid,
+                )
             return json.dumps(
                 {
                     "status": "deleted",
@@ -278,6 +309,16 @@ def register(ctx: PluginContext) -> None:
                 added_count=added_count,
                 new_version=new_version,
             )
+            # v1.3 surgical re-index: member-count + version changed.
+            try:
+                from deriva_ml_mcp.resources.rag import _reindex_dataset
+
+                await _reindex_dataset(hostname, catalog_id, dataset_rid)
+            except Exception:  # noqa: BLE001 -- best-effort cache refresh
+                logger.exception(
+                    "re-index failed for dataset %s after add_dataset_members",
+                    dataset_rid,
+                )
             return json.dumps(
                 {
                     "status": "success",
@@ -352,6 +393,16 @@ def register(ctx: PluginContext) -> None:
                 removed_count=removed_count,
                 new_version=new_version,
             )
+            # v1.3 surgical re-index: member-count + version changed.
+            try:
+                from deriva_ml_mcp.resources.rag import _reindex_dataset
+
+                await _reindex_dataset(hostname, catalog_id, dataset_rid)
+            except Exception:  # noqa: BLE001 -- best-effort cache refresh
+                logger.exception(
+                    "re-index failed for dataset %s after delete_dataset_members",
+                    dataset_rid,
+                )
             return json.dumps(
                 {
                     "status": "success",
@@ -494,6 +545,16 @@ def register(ctx: PluginContext) -> None:
                 removed=removes_requested,
                 new_version=new_version,
             )
+            # v1.3 surgical re-index: types and/or description changed.
+            try:
+                from deriva_ml_mcp.resources.rag import _reindex_dataset
+
+                await _reindex_dataset(hostname, catalog_id, dataset_rid)
+            except Exception:  # noqa: BLE001 -- best-effort cache refresh
+                logger.exception(
+                    "re-index failed for dataset %s after update_dataset",
+                    dataset_rid,
+                )
             payload: dict[str, Any] = {
                 "status": "updated",
                 "dataset_rid": dataset_rid,
@@ -644,6 +705,16 @@ def register(ctx: PluginContext) -> None:
                 previous_version=previous_version,
                 new_version=new_version_str,
             )
+            # v1.3 surgical re-index: version field in the chunk changed.
+            try:
+                from deriva_ml_mcp.resources.rag import _reindex_dataset
+
+                await _reindex_dataset(hostname, catalog_id, dataset_rid)
+            except Exception:  # noqa: BLE001 -- best-effort cache refresh
+                logger.exception(
+                    "re-index failed for dataset %s after increment_dataset_version",
+                    dataset_rid,
+                )
             return json.dumps(
                 {
                     "status": "success",

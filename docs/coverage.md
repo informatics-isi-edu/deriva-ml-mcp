@@ -194,6 +194,26 @@ These 52 old `deriva-mcp` tools were never analyzed in the per-domain phases (2-
 | deriva://storage/execution-dirs | resources.py | dropped | (none) | (none) | Local filesystem execution directories; same disposition as `storage/summary` |
 | deriva://cache/results | resources.py | dropped | (none) | (none) | Per-connection result cache from the dead connection-singleton era; no successor concept in the new architecture |
 
+## v1.3 surgical per-RID re-index design
+
+Each Dataset / Workflow / Execution chunk now lives in its own per-user
+source named `data:{host}:{cat}:{user_id}:{table}:{rid}` (one source per
+user-table-RID tuple) rather than the v1.0 bulk-per-user shape
+`data:{host}:{cat}:{user_id}`. Mutating tools call `_reindex_<entity>`
+(or `_delete_dataset_source` for `deriva_ml_delete_dataset`) inline
+after the catalog mutation succeeds so the affected source is refreshed
+immediately and `rag_search` finds the change on the very next call from
+the same user. The re-index is best-effort: a failure logs but does NOT
+propagate to the tool's success path. The audit event for the catalog
+mutation always fires before the re-index call so audit captures the
+success regardless of cache state. Required a small upstream change to
+the `rag_search` user-id filter (extended from exact equality to also
+prefix-match `data:{host}:{cat}:{user_id}:` for the v1.3 per-RID shape;
+the trailing colon prevents accidental string-prefix overlap from
+weakening per-user isolation). Cross-user freshness (user A's mutation
+-> user B's RAG view) is still imperfect and tracked separately as #9
+for v1.4.
+
 ## Upstream gaps (Phase 6 RAG)
 
 Two open `deriva-mcp-core` limitations. The other (issue #1) was filed during

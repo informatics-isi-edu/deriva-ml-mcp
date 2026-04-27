@@ -1,19 +1,24 @@
 """Per-user RAG indexing + vocab indexing + DerivaML docs source for deriva-ml-mcp.
 
-Phase 6.3 wired three things into the RAG subsystem; v1.1 adds a
-fourth (vocabularies):
+Phase 6.3 wired three things into the RAG subsystem; v1.1 added a
+fourth (vocabularies); v1.3 (this file) reshapes the per-user trio into
+per-user-per-RID surgical indexers:
 
 1. **One GitHub doc source** -- ``informatics-isi-edu/deriva-ml`` ``docs/``
    (declared synchronously via ``ctx.rag_github_source``). The indexer
    crawls it once when RAG is enabled.
 
-2. **Three per-user ``on_catalog_connect`` hooks** -- one each for
-   ``Dataset``, ``Workflow``, and ``Execution`` rows. Each hook resolves
-   the calling user's identity, fetches rows under that user's
-   credential, and upserts into the vector store with a user-scoped
-   source name (``data:{host}:{cat}:{user_id}``). The fetch path goes
+2. **Three per-user-per-RID ``on_catalog_connect`` hooks** -- one each
+   for ``Dataset``, ``Workflow``, and ``Execution`` rows. Each hook
+   resolves the calling user's identity, fetches rows under that user's
+   credential, and writes one source per (user, table, RID) tuple to
+   the vector store under
+   ``data:{host}:{cat}:{user_id}:{table}:{rid}``. The fetch path goes
    through the plugin's existing ``_list_*_impl`` helpers, so ACL
-   behavior matches the read tools.
+   behavior matches the read tools. The per-RID source naming lets
+   mutating tools surgically refresh just the affected source via
+   ``_reindex_<entity>(...)`` immediately after the catalog mutation,
+   so ``rag_search`` finds the change on the very next call.
 
 3. **One catalog-public ``on_catalog_connect`` hook for vocabularies**
    (v1.1) -- discovers all vocabulary tables via
@@ -32,14 +37,22 @@ fourth (vocabularies):
    (``_VocabSerializer``), each producing rich Markdown sections for
    the LLM (header, fields, subsections; empties omitted FaceBase-style).
 
-Why hooks + ``index_table_data`` for the per-user trio (not
-``ctx.rag_dataset_indexer``)? ``rag_dataset_indexer`` produces a single
-global enriched source shared across all users (the enricher fires
-under whichever credential happens to connect first). For ML data with
-per-user ACLs that would leak rows across users. The per-user pattern
-here partitions the source name by user identity and fetches under the
-calling user's credential -- same posture as every other tool in this
-plugin.
+Why per-user hooks (not ``ctx.rag_dataset_indexer``)?
+``rag_dataset_indexer`` produces a single global enriched source shared
+across all users (the enricher fires under whichever credential happens
+to connect first). For ML data with per-user ACLs that would leak rows
+across users. The per-user pattern here partitions the source name by
+user identity and fetches under the calling user's credential -- same
+posture as every other tool in this plugin.
+
+Why direct store writes for the per-user trio (not ``index_table_data``)?
+``index_table_data``'s source naming is hardcoded to
+``data:{host}:{cat}:{user_id}`` (one source per user, all rows lumped
+together). v1.3's surgical re-index needs one source per (user, table,
+RID) so a single RID's chunk can be replaced without touching the rest
+of the user's index. Direct ``store.delete_source + store.add`` per
+row gives us that. Source-name shape stays under the ``data:`` prefix
+so upstream's ``rag_search`` user-id filter continues to gate access.
 
 Why direct store writes (not ``index_table_data``) for vocabularies?
 ``index_table_data``'s source naming is hardcoded to
@@ -77,14 +90,14 @@ from typing import TYPE_CHECKING, Any
 from deriva_mcp_core.context import resolve_user_identity
 from deriva_mcp_core.rag import get_rag_store
 from deriva_mcp_core.rag.chunker import chunk_markdown
-from deriva_mcp_core.rag.data import RowSerializer, index_table_data
+from deriva_mcp_core.rag.data import RowSerializer
 from deriva_mcp_core.rag.store import Chunk
 
 from deriva_ml_mcp._helpers import _MAX_LIMIT, _table_qname
 from deriva_ml_mcp.ml_context import get_ml
-from deriva_ml_mcp.tools.dataset import _list_datasets_impl
-from deriva_ml_mcp.tools.execution import _list_executions_impl
-from deriva_ml_mcp.tools.workflow import _list_workflows_impl
+from deriva_ml_mcp.tools.dataset import _list_datasets_impl, _summarize_dataset
+from deriva_ml_mcp.tools.execution import _list_executions_impl, _summarize_execution
+from deriva_ml_mcp.tools.workflow import _list_workflows_impl, _summarize_workflow
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
@@ -104,6 +117,15 @@ _GITHUB_DOCS_DOC_TYPE = "ml-docs"
 _DATASET_TABLE = "Dataset"
 _WORKFLOW_TABLE = "Workflow"
 _EXECUTION_TABLE = "Execution"
+
+# URL-safe slug used as the {table} routing key inside per-RID source
+# names ``data:{host}:{cat}:{user_id}:{table}:{rid}``. Distinct from the
+# ERMrest-cased catalog table names above so the source name stays a
+# stable identifier even if a future table rename shifts the catalog
+# label.
+_DATASET_TOKEN = "dataset"
+_WORKFLOW_TOKEN = "workflow"
+_EXECUTION_TOKEN = "execution"
 
 
 # ---------------------------------------------------------------------------
@@ -313,42 +335,277 @@ def _fetch_execution_rows(hostname: str, catalog_id: str) -> list[dict[str, Any]
 def _coerce_for_index(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Round-trip rows through JSON to drop non-serializable values.
 
-    The execution summary contains ``datetime`` objects that
-    ``index_table_data`` does not need (the serializer renders them
-    directly), but other downstream consumers may. The cheapest way to
-    keep the rows JSON-friendly is to round-trip through ``json.dumps``
-    + ``json.loads`` with ``default=str``. Datasets and workflows pass
+    The execution summary contains ``datetime`` objects; the serializer
+    renders them directly via ``str()`` but the round-trip leaves
+    everything as plain JSON-compatible scalars before chunking, which
+    keeps the per-row write path simple. Datasets and workflows pass
     through unchanged.
     """
     return [json.loads(json.dumps(r, default=str)) for r in rows]
 
 
 # ---------------------------------------------------------------------------
-# Hook factory
+# Per-RID source naming + single-row write (v1.3 surgical re-index path)
+# ---------------------------------------------------------------------------
+
+
+def _row_source_name(
+    hostname: str,
+    catalog_id: str,
+    user_id: str,
+    table_token: str,
+    rid: str,
+) -> str:
+    """Build the canonical per-RID ``data:`` source name for one user-table-RID tuple.
+
+    The trailing ``{table}:{rid}`` segment is what makes the per-user
+    trio's source naming surgical: each row lands in its own source so
+    a mutating tool can replace just that one source via
+    ``store.delete_source + store.add`` without touching the rest of
+    the user's index.
+
+    The ``data:{host}:{cat}:{user_id}`` prefix is preserved (verbatim)
+    so upstream's ``rag_search`` user-id filter (which accepts both the
+    bulk form ``data:{host}:{cat}:{user_id}`` and prefix-match on
+    ``data:{host}:{cat}:{user_id}:`` for the per-RID form) continues
+    to gate access correctly.
+
+    Args:
+        hostname: Deriva hostname.
+        catalog_id: Catalog ID or alias.
+        user_id: Subject identifier (``sub`` claim) for the calling user.
+        table_token: One of ``_DATASET_TOKEN`` / ``_WORKFLOW_TOKEN`` /
+            ``_EXECUTION_TOKEN``. URL-safe slug, distinct from the
+            ERMrest-cased catalog table name.
+        rid: RID of the row (e.g. ``"1-AAAA"``).
+
+    Returns:
+        ``f"data:{hostname}:{catalog_id}:{user_id}:{table_token}:{rid}"``.
+
+    Example:
+        >>> _row_source_name("h", "1", "u", "dataset", "1-AAAA")
+        'data:h:1:u:dataset:1-AAAA'
+    """
+    return f"data:{hostname}:{catalog_id}:{user_id}:{table_token}:{rid}"
+
+
+async def _write_row_chunk(
+    store: VectorStore,
+    source: str,
+    table_name: str,
+    row: dict[str, Any],
+    serializer: RowSerializer,
+) -> int:
+    """Render one row and replace the existing source with its chunks.
+
+    Pattern: ``delete_source`` (idempotent -- drains any prior version
+    of this RID's chunks if present); render the row via the serializer;
+    chunk via ``chunk_markdown``; ``store.add`` the resulting chunks.
+    Mirrors ``_write_vocab_chunks`` from v1.1 but for a single row.
+
+    Args:
+        store: An active ``VectorStore`` (call site checks for ``None``).
+        source: Canonical per-RID source name from ``_row_source_name``.
+        table_name: ERMrest-cased catalog table name. Passed through to
+            the serializer for dispatch.
+        row: A single summary-shape row dict (the form
+            ``_summarize_dataset`` / ``_summarize_workflow`` /
+            ``_summarize_execution`` produce).
+        serializer: The ``RowSerializer`` for the row's table.
+
+    Returns:
+        Count of chunks actually written (typically 1 -- one summary
+        renders to one chunk under the 800-token chunk budget). 0 if
+        the serializer returned None for the row.
+    """
+    await store.delete_source(source)
+    rendered = serializer.serialize(table_name, row)
+    if rendered is None:
+        return 0
+    chunks: list[Chunk] = []
+    chunk_index = 0
+    # TODO(upstream-rag-doctype): tracked as deriva-mcp-core#2.
+    # Once chunks can carry a domain-specific doc_type, switch to
+    # "ml-dataset" / "ml-workflow" / "ml-execution" so
+    # rag_search(doc_type=...) can distinguish these from generic
+    # catalog-data chunks.
+    for c in chunk_markdown(rendered, source=source, doc_type="catalog-data"):
+        chunks.append(
+            Chunk(
+                text=c.text,
+                source=source,
+                doc_type="catalog-data",
+                section_heading=c.section_heading,
+                heading_hierarchy=c.heading_hierarchy,
+                chunk_index=chunk_index,
+            )
+        )
+        chunk_index += 1
+    if chunks:
+        await store.add(chunks)
+    return len(chunks)
+
+
+# ---------------------------------------------------------------------------
+# Surgical per-RID re-index entry points called inline from mutating tools
+# ---------------------------------------------------------------------------
+
+
+async def _reindex_dataset(hostname: str, catalog_id: str, dataset_rid: str) -> int:
+    """Refresh just one Dataset row's chunk for the calling user.
+
+    Best-effort: any failure (fetch, render, store I/O) is logged and
+    swallowed -- a re-index hiccup must not propagate to the calling
+    tool's success path (the catalog mutation already succeeded). On
+    failure returns 0; the next first-connect for this user picks the
+    row up via the bulk path.
+
+    Args:
+        hostname: Deriva hostname.
+        catalog_id: Catalog ID or alias.
+        dataset_rid: RID of the dataset to refresh.
+
+    Returns:
+        Count of chunks written (typically 1; 0 on best-effort failure
+        or when RAG is disabled).
+    """
+    store = get_rag_store()
+    if store is None:
+        return 0
+    try:
+        ml = get_ml(hostname, catalog_id)
+        ds = ml.lookup_dataset(dataset_rid)
+        row = _summarize_dataset(ds)
+        # Round-trip through json so any stray non-serializable values
+        # (e.g. Pydantic versions) become plain strings before chunking.
+        row = json.loads(json.dumps(row, default=str))
+        user_id = resolve_user_identity(hostname)
+        source = _row_source_name(hostname, catalog_id, user_id, _DATASET_TOKEN, dataset_rid)
+        return await _write_row_chunk(store, source, _DATASET_TABLE, row, _DatasetSerializer())
+    except Exception:  # noqa: BLE001 -- best-effort cache refresh
+        logger.exception(
+            "deriva-ml RAG: surgical re-index failed for dataset %s in %s/%s",
+            dataset_rid,
+            hostname,
+            catalog_id,
+        )
+        return 0
+
+
+async def _reindex_workflow(hostname: str, catalog_id: str, workflow_rid: str) -> int:
+    """Refresh just one Workflow row's chunk for the calling user.
+
+    Best-effort; see ``_reindex_dataset`` for the failure-handling contract.
+    """
+    store = get_rag_store()
+    if store is None:
+        return 0
+    try:
+        ml = get_ml(hostname, catalog_id)
+        wf = ml.lookup_workflow(workflow_rid)
+        row = _summarize_workflow(wf)
+        row = json.loads(json.dumps(row, default=str))
+        user_id = resolve_user_identity(hostname)
+        source = _row_source_name(hostname, catalog_id, user_id, _WORKFLOW_TOKEN, workflow_rid)
+        return await _write_row_chunk(store, source, _WORKFLOW_TABLE, row, _WorkflowSerializer())
+    except Exception:  # noqa: BLE001 -- best-effort cache refresh
+        logger.exception(
+            "deriva-ml RAG: surgical re-index failed for workflow %s in %s/%s",
+            workflow_rid,
+            hostname,
+            catalog_id,
+        )
+        return 0
+
+
+async def _reindex_execution(hostname: str, catalog_id: str, execution_rid: str) -> int:
+    """Refresh just one Execution row's chunk for the calling user.
+
+    Best-effort; see ``_reindex_dataset`` for the failure-handling contract.
+    """
+    store = get_rag_store()
+    if store is None:
+        return 0
+    try:
+        ml = get_ml(hostname, catalog_id)
+        record = ml.lookup_execution(execution_rid)
+        row = _summarize_execution(record)
+        row = json.loads(json.dumps(row, default=str))
+        user_id = resolve_user_identity(hostname)
+        source = _row_source_name(hostname, catalog_id, user_id, _EXECUTION_TOKEN, execution_rid)
+        return await _write_row_chunk(store, source, _EXECUTION_TABLE, row, _ExecutionSerializer())
+    except Exception:  # noqa: BLE001 -- best-effort cache refresh
+        logger.exception(
+            "deriva-ml RAG: surgical re-index failed for execution %s in %s/%s",
+            execution_rid,
+            hostname,
+            catalog_id,
+        )
+        return 0
+
+
+async def _delete_dataset_source(hostname: str, catalog_id: str, dataset_rid: str) -> bool:
+    """Drop a single Dataset's per-RID source from the calling user's index.
+
+    Used by ``deriva_ml_delete_dataset`` -- the row is gone from the
+    catalog, so its chunk should not survive in RAG either. Best-effort:
+    a delete failure is logged and swallowed.
+
+    Args:
+        hostname: Deriva hostname.
+        catalog_id: Catalog ID or alias.
+        dataset_rid: RID of the dataset whose source should be dropped.
+
+    Returns:
+        True on success, False on failure or when RAG is disabled.
+    """
+    store = get_rag_store()
+    if store is None:
+        return False
+    try:
+        user_id = resolve_user_identity(hostname)
+        source = _row_source_name(hostname, catalog_id, user_id, _DATASET_TOKEN, dataset_rid)
+        await store.delete_source(source)
+        return True
+    except Exception:  # noqa: BLE001 -- best-effort cache refresh
+        logger.exception(
+            "deriva-ml RAG: failed to drop source for deleted dataset %s in %s/%s",
+            dataset_rid,
+            hostname,
+            catalog_id,
+        )
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Hook factory (first-connect bulk index, per-RID source naming)
 # ---------------------------------------------------------------------------
 
 
 def _make_hook(
     fetch_fn: Callable[[str, str], list[dict[str, Any]]],
     table_name: str,
+    table_token: str,
     serializer: RowSerializer,
 ) -> Callable[[str, str, str, dict], Awaitable[None]]:
-    """Build an ``on_catalog_connect`` hook that indexes ``table_name`` per-user.
+    """Build an ``on_catalog_connect`` hook that indexes ``table_name`` per-user-per-RID.
 
     The returned coroutine fetches rows under the caller's credential,
-    resolves the calling user's identity, and upserts the rendered chunks
-    into the vector store with a user-scoped source name. Adding a
-    fourth indexed table is a one-liner at the call site.
+    resolves the calling user's identity, and writes one source per
+    (user, table_token, RID) tuple to the vector store. Same total
+    chunk count as v1.0/v1.1's bulk pattern; the difference is that
+    they land in N sources instead of 1, so individual rows can later
+    be replaced surgically by ``_reindex_<entity>``.
 
     Behavior contract:
 
     - Wraps the fetch in ``try/except`` so a deriva-ml read failure is
-      logged with table context but does not propagate. The framework's
-      ``_safe_call`` wraps the index step on its own, so we don't double
-      up there -- letting ``index_table_data`` raise gives the framework
-      a clean traceback to log.
+      logged with table context but does not propagate.
     - Skips silently (debug log) when ``get_rag_store()`` returns
       ``None`` -- i.e. when RAG is disabled in this deployment.
+    - Per-row write failures are isolated: a bad row is logged and the
+      loop continues with the rest, so one degenerate row does not
+      poison the whole user's first-connect index pass.
     - Logs a debug success line including row count + resolved user_id
       so an operator can investigate "why isn't user X's data showing up?"
       by flipping on debug logging without overwhelming production logs.
@@ -356,8 +613,11 @@ def _make_hook(
     Args:
         fetch_fn: Callable that takes ``(hostname, catalog_id)`` and
             returns summary-shape row dicts.
-        table_name: Catalog table the rows belong to. Used as both the
-            serializer dispatch key and the chunk header.
+        table_name: Catalog table the rows belong to (ERMrest case).
+            Used as the serializer dispatch key.
+        table_token: URL-safe slug for the source-name routing segment
+            (one of ``_DATASET_TOKEN`` / ``_WORKFLOW_TOKEN`` /
+            ``_EXECUTION_TOKEN``).
         serializer: The ``RowSerializer`` to render each row.
 
     Returns:
@@ -365,12 +625,6 @@ def _make_hook(
         ``(hostname, catalog_id, schema_hash, schema_json) -> None``.
     """
 
-    # TODO(upstream-rag-doctype): tracked as deriva-mcp-core#2
-    # (https://github.com/informatics-isi-edu/deriva-mcp-core/issues/2).
-    # Once index_table_data accepts a doc_type param, pass
-    # "ml-dataset" / "ml-workflow" / "ml-execution" so
-    # rag_search(doc_type=...) can distinguish these from generic
-    # catalog-data chunks. See docs/coverage.md "Upstream gaps".
     # schema_hash + schema_json are received because deriva-mcp-core's
     # _dispatch_catalog_connect signature requires them. We deliberately
     # ignore both: indexing depends only on (host, catalog_id, user_id,
@@ -394,20 +648,33 @@ def _make_hook(
             return
         store = get_rag_store()
         if store is None:
-            logger.debug("rag store unavailable, skipping %s index", table_name)
+            logger.debug("rag store unavailable, skipping %s first-connect index", table_name)
             return
         user_id = resolve_user_identity(hostname)
-        await index_table_data(
-            store,
-            hostname,
-            catalog_id,
-            table_name,
-            rows,
-            user_id=user_id,
-            serializer=serializer,
-        )
+        for row in rows:
+            rid = row.get("rid")
+            if not rid:
+                # Defensive: a row without a RID can't get a stable
+                # per-RID source name; skip with a debug log rather
+                # than silently dropping it under an empty-RID source.
+                logger.debug(
+                    "skipping %s first-connect row with empty rid: %r",
+                    table_name,
+                    row,
+                )
+                continue
+            source = _row_source_name(hostname, catalog_id, user_id, table_token, rid)
+            try:
+                await _write_row_chunk(store, source, table_name, row, serializer)
+            except Exception:  # noqa: BLE001 -- one bad row should not poison the pass
+                logger.exception(
+                    "deriva-ml RAG: failed to first-connect index %s row %s",
+                    table_name,
+                    rid,
+                )
+                continue
         logger.debug(
-            "indexed %d %s rows for user=%s host=%s catalog=%s",
+            "first-connect indexed %d %s rows for user=%s host=%s catalog=%s",
             len(rows),
             table_name,
             user_id,
@@ -600,12 +867,16 @@ def register_rag_sources(ctx: PluginContext) -> None:
 
     Hooks fire in registration order on every catalog connect:
 
-    1. Dataset (per-user, ``data:`` source prefix)
-    2. Workflow (per-user, ``data:`` source prefix)
-    3. Execution (per-user, ``data:`` source prefix)
+    1. Dataset (per-user-per-RID, ``data:{host}:{cat}:{user_id}:dataset:{rid}``)
+    2. Workflow (per-user-per-RID, ``data:{host}:{cat}:{user_id}:workflow:{rid}``)
+    3. Execution (per-user-per-RID, ``data:{host}:{cat}:{user_id}:execution:{rid}``)
     4. Vocabularies (catalog-public, custom ``vocab:`` source prefix --
        v1.1; bypasses upstream's ``data:`` user-id filter, served to
        all users in the catalog)
+
+    The first three are first-connect bulk indexers but write under
+    per-RID source names so mutating tools can later replace just one
+    affected source via the ``_reindex_<entity>`` helpers.
 
     Called from ``plugin.register(ctx)``. Safe to call without any RAG
     config -- ``ctx.rag_github_source`` is a no-op when RAG is
@@ -631,9 +902,15 @@ def register_rag_sources(ctx: PluginContext) -> None:
         path_prefix=_GITHUB_DOCS_PATH_PREFIX,
         doc_type=_GITHUB_DOCS_DOC_TYPE,
     )
-    ctx.on_catalog_connect(_make_hook(_fetch_dataset_rows, _DATASET_TABLE, _DatasetSerializer()))
-    ctx.on_catalog_connect(_make_hook(_fetch_workflow_rows, _WORKFLOW_TABLE, _WorkflowSerializer()))
     ctx.on_catalog_connect(
-        _make_hook(_fetch_execution_rows, _EXECUTION_TABLE, _ExecutionSerializer())
+        _make_hook(_fetch_dataset_rows, _DATASET_TABLE, _DATASET_TOKEN, _DatasetSerializer())
+    )
+    ctx.on_catalog_connect(
+        _make_hook(_fetch_workflow_rows, _WORKFLOW_TABLE, _WORKFLOW_TOKEN, _WorkflowSerializer())
+    )
+    ctx.on_catalog_connect(
+        _make_hook(
+            _fetch_execution_rows, _EXECUTION_TABLE, _EXECUTION_TOKEN, _ExecutionSerializer()
+        )
     )
     ctx.on_catalog_connect(_make_vocab_hook())

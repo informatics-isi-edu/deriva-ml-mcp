@@ -766,3 +766,77 @@ async def test_add_nested_execution_failure_emits_failed_audit(
     assert "error" in payload
     failed = _success_calls(mock_audit, "deriva_ml_add_nested_execution_failed")
     assert failed
+
+
+# ---------------------------------------------------------------------------
+# v1.3: surgical RAG re-index wired into mutating execution tools
+# ---------------------------------------------------------------------------
+
+
+async def test_create_execution_triggers_surgical_reindex(execution_ctx, capturing_mcp, mock_ml):
+    """``deriva_ml_create_execution`` calls ``_reindex_execution`` with the new RID."""
+    from unittest.mock import AsyncMock
+
+    new_exec = _make_execution_mock(execution_rid="1-NEW")
+    mock_ml.create_execution.return_value = new_exec
+    fake_reindex = AsyncMock(return_value=1)
+    with (
+        patch("deriva_ml_mcp.resources.rag._reindex_execution", new=fake_reindex),
+        _patch_execution_audit(),
+    ):
+        await capturing_mcp.tools["deriva_ml_create_execution"](
+            hostname="h",
+            catalog_id="1",
+            workflow_rid="1-WF",
+            description="run",
+        )
+    fake_reindex.assert_awaited_once_with("h", "1", "1-NEW")
+
+
+async def test_create_execution_dry_run_skips_reindex(execution_ctx, capturing_mcp, mock_ml):
+    """A dry_run create skips both audit AND surgical re-index (no catalog change)."""
+    from unittest.mock import AsyncMock
+
+    new_exec = _make_execution_mock(execution_rid="DRY-RUN-RID")
+    mock_ml.create_execution.return_value = new_exec
+    fake_reindex = AsyncMock(return_value=1)
+    with (
+        patch("deriva_ml_mcp.resources.rag._reindex_execution", new=fake_reindex),
+        _patch_execution_audit(),
+    ):
+        await capturing_mcp.tools["deriva_ml_create_execution"](
+            hostname="h",
+            catalog_id="1",
+            workflow_rid="1-WF",
+            description="run",
+            dry_run=True,
+        )
+    fake_reindex.assert_not_awaited()
+
+
+async def test_create_execution_dataset_triggers_both_reindexes(
+    execution_ctx, capturing_mcp, mock_ml
+):
+    """``deriva_ml_create_execution_dataset`` re-indexes BOTH the dataset and the parent execution."""
+    from unittest.mock import AsyncMock
+
+    fake_execution = MagicMock()
+    fake_dataset = MagicMock()
+    fake_dataset.rid = "1-NEWDS"
+    fake_execution.create_dataset.return_value = fake_dataset
+    mock_ml.resume_execution.return_value = fake_execution
+    fake_reindex_ds = AsyncMock(return_value=1)
+    fake_reindex_ex = AsyncMock(return_value=1)
+    with (
+        patch("deriva_ml_mcp.resources.rag._reindex_dataset", new=fake_reindex_ds),
+        patch("deriva_ml_mcp.resources.rag._reindex_execution", new=fake_reindex_ex),
+        _patch_execution_audit(),
+    ):
+        await capturing_mcp.tools["deriva_ml_create_execution_dataset"](
+            hostname="h",
+            catalog_id="1",
+            execution_rid="1-EXEC",
+            description="d",
+        )
+    fake_reindex_ds.assert_awaited_once_with("h", "1", "1-NEWDS")
+    fake_reindex_ex.assert_awaited_once_with("h", "1", "1-EXEC")

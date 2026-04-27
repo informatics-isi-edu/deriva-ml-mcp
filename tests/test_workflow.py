@@ -418,3 +418,31 @@ async def test_update_workflow_failure_emits_failed_audit(workflow_ctx, capturin
     assert kwargs["workflow_rid"] == "1-MISSING"
     assert kwargs["updated_fields"] == []
     assert kwargs["error_type"] == "RuntimeError"
+
+
+# ---------------------------------------------------------------------------
+# v1.3: surgical RAG re-index wired into mutating workflow tools
+# ---------------------------------------------------------------------------
+
+
+async def test_create_workflow_triggers_surgical_reindex(workflow_ctx, capturing_mcp, mock_ml):
+    """``deriva_ml_create_workflow`` calls ``_reindex_workflow`` with the new RID."""
+    from unittest.mock import AsyncMock
+
+    mock_ml.lookup_workflow_by_url.side_effect = DerivaMLException("no match")
+    new_wf = _make_workflow_mock(rid=None)
+    mock_ml.create_workflow.return_value = new_wf
+    mock_ml._add_workflow.return_value = "1-NEW"
+    fake_reindex = AsyncMock(return_value=1)
+    with (
+        patch("deriva_ml_mcp.resources.rag._reindex_workflow", new=fake_reindex),
+        _patch_workflow_audit(),
+    ):
+        await capturing_mcp.tools["deriva_ml_create_workflow"](
+            hostname="h",
+            catalog_id="1",
+            name="P",
+            workflow_type="Model_Training",
+            url="https://github.com/x/r/blob/abc/main.py",
+        )
+    fake_reindex.assert_awaited_once_with("h", "1", "1-NEW")
