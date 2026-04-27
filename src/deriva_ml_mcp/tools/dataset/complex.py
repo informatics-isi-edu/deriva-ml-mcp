@@ -25,10 +25,13 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 from deriva_mcp_core import deriva_call
 from deriva_ml.dataset.aux_classes import DatasetSpec
+
+logger = logging.getLogger(__name__)
 
 # See the header note in ``mutate.py`` for why ``audit_event``,
 # ``get_ml``, and ``_split_dataset`` are accessed via attribute lookup
@@ -501,6 +504,32 @@ def register(ctx: PluginContext) -> None:
                     testing_count=testing.get("count") if testing else None,
                     validation_count=validation.get("count") if validation else None,
                 )
+                # v1.3 surgical re-index: split creates a parent + 2-3
+                # child datasets and links them via Dataset_Dataset
+                # relations. Refresh the source dataset (relations
+                # changed), the parent split, and each child so all
+                # affected per-RID sources get fresh chunks. Per-RID
+                # try/except so one failed re-index doesn't cancel the
+                # rest -- defense in depth (the helper itself swallows,
+                # but if the lazy import fails or the iteration raises,
+                # we still want the other RIDs refreshed).
+                from deriva_ml_mcp.resources.rag import _reindex_dataset
+
+                affected_rids: list[str] = [source_dataset_rid]
+                split_meta = payload.get("split") or {}
+                for entry in (split_meta, training, testing, validation):
+                    rid = entry.get("rid") if entry else None
+                    if rid:
+                        affected_rids.append(rid)
+                for rid in affected_rids:
+                    try:
+                        await _reindex_dataset(hostname, catalog_id, rid)
+                    except Exception:  # noqa: BLE001 -- best-effort, per-RID
+                        logger.exception(
+                            "re-index failed for dataset %s after split_dataset (source=%s)",
+                            rid,
+                            source_dataset_rid,
+                        )
             return json.dumps({"status": "success", **payload}, default=str)
         except Exception as exc:
             return _error_envelope(

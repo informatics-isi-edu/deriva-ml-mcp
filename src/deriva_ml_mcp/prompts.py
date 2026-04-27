@@ -193,12 +193,18 @@ The picker pattern works for these categories. Freshness varies:
     exists in many tables and need to ask which one.
 
   Workflows, datasets, executions
-    Indexed by this plugin per-user. Fresh on first connect;
-    NOT automatically refreshed when new ones are created or
-    existing ones are modified (deriva-ml-mcp#8 tracks the
-    surgical re-index redesign). If the user just created or
-    modified one, prefer the deriva_ml_list_* tools or the
-    detail resources for that one over rag_search.
+    Indexed by this plugin per-user-per-RID. Fresh on first
+    connect AND surgically refreshed on every mutation: each
+    deriva_ml_create_* / deriva_ml_update_* / deriva_ml_delete_*
+    / deriva_ml_commit_execution / etc. tool refreshes just the
+    affected source(s) before returning. So a freshly created or
+    modified row is searchable via rag_search on the very next
+    call from the same user.
+
+    Cross-user freshness is still imperfect: user A's mutation
+    does NOT refresh user B's per-user sources, so user B sees
+    A's change only at next first-connect (deriva-ml-mcp#9 tracks
+    the cross-user invalidation work for v1.4).
 
 MUTATION: WORKFLOW -> EXECUTION -> OUTPUTS
 ------------------------------------------

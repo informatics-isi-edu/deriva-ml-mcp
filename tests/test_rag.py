@@ -3,18 +3,21 @@
 Two surfaces under test:
 
 1. ``register_rag_sources(ctx)`` -- declarative wiring: one
-   ``rag_github_source`` declaration plus three ``on_catalog_connect``
+   ``rag_github_source`` declaration plus four ``on_catalog_connect``
    callbacks.
 
-2. The serializers and per-user hook bodies -- rich Markdown rendering
-   for Dataset / Workflow / Execution rows, fall-through to the generic
-   serializer for unknown tables, and best-effort exception handling
-   inside hooks (a hook that raises must not propagate).
+2. The serializers, per-user hook bodies, and v1.3 surgical re-index
+   helpers -- rich Markdown rendering for Dataset / Workflow / Execution
+   rows, fall-through to the generic serializer for unknown tables,
+   per-row write isolation inside the first-connect hooks (one bad row
+   doesn't poison the rest), and best-effort failure handling inside
+   ``_reindex_<entity>`` (the catalog mutation already succeeded; a
+   re-index hiccup must not propagate).
 
-All tests are fully mocked. ``index_table_data`` is patched so we can
-assert on ``user_id`` without touching a real vector store; the row
-fetchers are patched to keep the hook tests independent of the underlying
-``_list_*_impl`` shape.
+All tests are fully mocked. ``_write_row_chunk`` is patched in the
+hook-flow tests so we can assert on per-RID source naming without
+touching a real vector store; the row fetchers are patched to keep
+the hook tests independent of the underlying ``_list_*_impl`` shape.
 """
 
 from __future__ import annotations
@@ -286,85 +289,98 @@ def test_execution_serializer_returns_none_for_other_table() -> None:
 _USER_ID = "https://auth.example.org/sub/test-user-1"
 
 
-def test_dataset_hook_calls_index_table_data_with_resolved_user_id() -> None:
-    """The Dataset hook resolves the caller's user_id and forwards it."""
+def test_dataset_hook_writes_one_per_rid_source_per_row() -> None:
+    """First-connect Dataset hook writes one per-RID source per row for the caller.
+
+    Each row's chunk lands under
+    ``data:{host}:{cat}:{user_id}:dataset:{rid}`` (the v1.3 surgical
+    naming) so a later mutating tool can refresh that one source via
+    ``_reindex_dataset`` without touching anything else.
+    """
     from deriva_ml_mcp.resources import rag as rag_module
 
-    captured: dict[str, Any] = {}
-    rows = [{"rid": "1-DSAA", "name": "x"}]
+    captured_calls: list[dict[str, Any]] = []
+    rows = [{"rid": "1-DSAA", "name": "x"}, {"rid": "1-DSBB", "name": "y"}]
 
-    async def fake_index_table_data(
-        store, hostname, catalog_id, table_name, the_rows, *, user_id, serializer, **_kw
-    ):
-        captured["user_id"] = user_id
-        captured["table_name"] = table_name
-        captured["rows"] = the_rows
-        captured["hostname"] = hostname
-        captured["catalog_id"] = catalog_id
+    async def fake_write_row_chunk(store, source, table_name, row, serializer):
+        captured_calls.append(
+            {
+                "source": source,
+                "table_name": table_name,
+                "row_rid": row["rid"],
+            }
+        )
+        return 1
 
     with (
         patch.object(rag_module, "_fetch_dataset_rows", return_value=rows),
         patch.object(rag_module, "resolve_user_identity", return_value=_USER_ID),
         patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
-        patch.object(rag_module, "index_table_data", side_effect=fake_index_table_data),
+        patch.object(rag_module, "_write_row_chunk", side_effect=fake_write_row_chunk),
     ):
         _run(_hook_at(_DATASET_HOOK_IDX)("h.example", "1", "hash", {}))
 
-    assert captured["user_id"] == _USER_ID
-    assert captured["table_name"] == "Dataset"
-    assert captured["hostname"] == "h.example"
-    assert captured["catalog_id"] == "1"
-    assert captured["rows"] == rows
+    assert len(captured_calls) == 2
+    expected_sources = {
+        f"data:h.example:1:{_USER_ID}:dataset:1-DSAA",
+        f"data:h.example:1:{_USER_ID}:dataset:1-DSBB",
+    }
+    assert {c["source"] for c in captured_calls} == expected_sources
+    assert all(c["table_name"] == "Dataset" for c in captured_calls)
 
 
-def test_workflow_hook_calls_index_table_data_with_resolved_user_id() -> None:
-    """The Workflow hook resolves the caller's user_id and forwards it."""
+def test_workflow_hook_writes_one_per_rid_source_per_row() -> None:
+    """First-connect Workflow hook writes one per-RID source per row for the caller."""
     from deriva_ml_mcp.resources import rag as rag_module
 
-    captured: dict[str, Any] = {}
+    captured_calls: list[dict[str, Any]] = []
     rows = [{"rid": "1-WFAA", "name": "y"}]
 
-    async def fake_index_table_data(
-        store, hostname, catalog_id, table_name, the_rows, *, user_id, serializer, **_kw
-    ):
-        captured["user_id"] = user_id
-        captured["table_name"] = table_name
+    async def fake_write_row_chunk(store, source, table_name, row, serializer):
+        captured_calls.append({"source": source, "table_name": table_name})
+        return 1
 
     with (
         patch.object(rag_module, "_fetch_workflow_rows", return_value=rows),
         patch.object(rag_module, "resolve_user_identity", return_value=_USER_ID),
         patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
-        patch.object(rag_module, "index_table_data", side_effect=fake_index_table_data),
+        patch.object(rag_module, "_write_row_chunk", side_effect=fake_write_row_chunk),
     ):
         _run(_hook_at(_WORKFLOW_HOOK_IDX)("h.example", "1", "hash", {}))
 
-    assert captured["user_id"] == _USER_ID
-    assert captured["table_name"] == "Workflow"
+    assert captured_calls == [
+        {
+            "source": f"data:h.example:1:{_USER_ID}:workflow:1-WFAA",
+            "table_name": "Workflow",
+        }
+    ]
 
 
-def test_execution_hook_calls_index_table_data_with_resolved_user_id() -> None:
-    """The Execution hook resolves the caller's user_id and forwards it."""
+def test_execution_hook_writes_one_per_rid_source_per_row() -> None:
+    """First-connect Execution hook writes one per-RID source per row for the caller."""
     from deriva_ml_mcp.resources import rag as rag_module
 
-    captured: dict[str, Any] = {}
+    captured_calls: list[dict[str, Any]] = []
     rows = [{"rid": "1-EXAA", "workflow_rid": "1-WFAA", "status": "Created"}]
 
-    async def fake_index_table_data(
-        store, hostname, catalog_id, table_name, the_rows, *, user_id, serializer, **_kw
-    ):
-        captured["user_id"] = user_id
-        captured["table_name"] = table_name
+    async def fake_write_row_chunk(store, source, table_name, row, serializer):
+        captured_calls.append({"source": source, "table_name": table_name})
+        return 1
 
     with (
         patch.object(rag_module, "_fetch_execution_rows", return_value=rows),
         patch.object(rag_module, "resolve_user_identity", return_value=_USER_ID),
         patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
-        patch.object(rag_module, "index_table_data", side_effect=fake_index_table_data),
+        patch.object(rag_module, "_write_row_chunk", side_effect=fake_write_row_chunk),
     ):
         _run(_hook_at(_EXECUTION_HOOK_IDX)("h.example", "1", "hash", {}))
 
-    assert captured["user_id"] == _USER_ID
-    assert captured["table_name"] == "Execution"
+    assert captured_calls == [
+        {
+            "source": f"data:h.example:1:{_USER_ID}:execution:1-EXAA",
+            "table_name": "Execution",
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -382,76 +398,116 @@ def test_dataset_hook_swallows_fetch_exception() -> None:
     """
     from deriva_ml_mcp.resources import rag as rag_module
 
-    fake_index = AsyncMock()
+    fake_write = AsyncMock()
     with (
         patch.object(rag_module, "_fetch_dataset_rows", side_effect=RuntimeError("boom")),
         patch.object(rag_module, "resolve_user_identity", return_value=_USER_ID),
         patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
-        patch.object(rag_module, "index_table_data", new=fake_index),
+        patch.object(rag_module, "_write_row_chunk", new=fake_write),
     ):
         # Must not raise
         _run(_hook_at(_DATASET_HOOK_IDX)("h.example", "1", "hash", {}))
 
-    fake_index.assert_not_called()
+    fake_write.assert_not_called()
 
 
-def test_workflow_hook_propagates_index_exception() -> None:
-    """If index_table_data raises, the hook lets it propagate.
+def test_workflow_hook_isolates_per_row_write_failures(caplog) -> None:
+    """If one row's write raises, the hook logs and continues with the rest.
 
-    Phase 6.3 follow-on: the redundant index-side ``try/except`` was
-    dropped. The framework's ``_safe_call`` already wraps every dispatched
-    hook, so a duplicated suppression here added nothing -- only stripped
-    the traceback. The contract is now: fetch errors are swallowed with
-    table-name context; index errors propagate to the framework.
+    v1.3 contract: per-row writes are independently wrapped so one
+    degenerate row cannot poison the whole user's first-connect index.
+    The previous v1.0 contract (let ``index_table_data`` raise out)
+    no longer applies: the hook now drives N writes, and a single bad
+    row is the most likely failure shape.
     """
     from deriva_ml_mcp.resources import rag as rag_module
 
-    rows = [{"rid": "1-WFAA"}]
+    rows = [{"rid": "1-WFAA"}, {"rid": "1-WFBB"}, {"rid": "1-WFCC"}]
+    write_calls: list[str] = []
+
+    async def fake_write(store, source, table_name, row, serializer):
+        write_calls.append(source)
+        if row["rid"] == "1-WFBB":
+            raise RuntimeError("boom on middle row")
+        return 1
+
     with (
         patch.object(rag_module, "_fetch_workflow_rows", return_value=rows),
         patch.object(rag_module, "resolve_user_identity", return_value=_USER_ID),
         patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
-        patch.object(rag_module, "index_table_data", side_effect=RuntimeError("boom")),
-        pytest.raises(RuntimeError, match="boom"),
+        patch.object(rag_module, "_write_row_chunk", side_effect=fake_write),
+        caplog.at_level("ERROR", logger="deriva_ml_mcp.resources.rag"),
     ):
+        # Must not raise -- the hook isolates the bad row.
         _run(_hook_at(_WORKFLOW_HOOK_IDX)("h.example", "1", "hash", {}))
+
+    # All three rows attempted (the bad one in the middle did not abort the loop).
+    assert len(write_calls) == 3
+    assert any("1-WFBB" in record.message for record in caplog.records)
 
 
 def test_hook_short_circuits_when_rag_store_is_none() -> None:
     """When RAG is disabled (get_rag_store -> None), the hook does nothing."""
     from deriva_ml_mcp.resources import rag as rag_module
 
-    fake_index = AsyncMock()
+    fake_write = AsyncMock()
     rows = [{"rid": "1-DSAA"}]
     with (
         patch.object(rag_module, "_fetch_dataset_rows", return_value=rows),
         patch.object(rag_module, "resolve_user_identity", return_value=_USER_ID),
         patch.object(rag_module, "get_rag_store", return_value=None),
-        patch.object(rag_module, "index_table_data", new=fake_index),
+        patch.object(rag_module, "_write_row_chunk", new=fake_write),
     ):
         _run(_hook_at(_DATASET_HOOK_IDX)("h.example", "1", "hash", {}))
 
-    fake_index.assert_not_called()
+    fake_write.assert_not_called()
+
+
+def test_dataset_hook_skips_rows_without_rid() -> None:
+    """Rows with empty/missing rid are skipped (cannot form a stable per-RID source)."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    rows = [{"rid": "1-DSAA"}, {"rid": "", "name": "broken"}, {"name": "no-rid-key"}]
+    captured_sources: list[str] = []
+
+    async def fake_write(store, source, table_name, row, serializer):
+        captured_sources.append(source)
+        return 1
+
+    with (
+        patch.object(rag_module, "_fetch_dataset_rows", return_value=rows),
+        patch.object(rag_module, "resolve_user_identity", return_value=_USER_ID),
+        patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
+        patch.object(rag_module, "_write_row_chunk", side_effect=fake_write),
+    ):
+        _run(_hook_at(_DATASET_HOOK_IDX)("h.example", "1", "hash", {}))
+
+    assert captured_sources == [f"data:h.example:1:{_USER_ID}:dataset:1-DSAA"]
 
 
 def test_dataset_hook_partitions_per_user() -> None:
     """Two consecutive calls under different identities partition by user_id.
 
-    The contract under test: same hostname/catalog_id, two different
-    callers, two distinct ``user_id`` values forwarded into
-    ``index_table_data`` -- one per call. This pins the per-user
-    partitioning that keeps user A's rows out of user B's index.
+    v1.3 update: the partition is now visible in the per-RID source
+    name shape (``data:h:c:userA:dataset:RID`` vs
+    ``data:h:c:userB:dataset:RID``). Same contract as v1.0 (user A's
+    rows must not bleed into user B's index); the assertion just
+    targets the new naming.
     """
     from deriva_ml_mcp.resources import rag as rag_module
 
     rows = [{"rid": "1-DSAA", "name": "shared"}]
-    fake_index = AsyncMock()
+    captured: list[str] = []
+
+    async def fake_write(store, source, table_name, row, serializer):
+        captured.append(source)
+        return 1
 
     with (
         patch.object(rag_module, "_fetch_dataset_rows", return_value=rows),
         patch.object(rag_module, "resolve_user_identity", side_effect=["userA", "userB"]),
         patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
-        patch.object(rag_module, "index_table_data", new=fake_index),
+        patch.object(rag_module, "_write_row_chunk", side_effect=fake_write),
     ):
         # Build the hook inside the patch context so the factory's closure
         # captures the patched fetch fn rather than the real one.
@@ -459,9 +515,10 @@ def test_dataset_hook_partitions_per_user() -> None:
         _run(hook("h.example", "1", "hash", {}))
         _run(hook("h.example", "1", "hash", {}))
 
-    assert fake_index.call_count == 2
-    assert fake_index.call_args_list[0].kwargs["user_id"] == "userA"
-    assert fake_index.call_args_list[1].kwargs["user_id"] == "userB"
+    assert captured == [
+        "data:h.example:1:userA:dataset:1-DSAA",
+        "data:h.example:1:userB:dataset:1-DSAA",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -822,3 +879,267 @@ def test_write_vocab_chunks_empty_terms_drains_only() -> None:
     assert count == 0
     fake_store.delete_source.assert_awaited_once_with("vocab:h:1:s.t")
     fake_store.add.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 11. v1.3 _row_source_name + _write_row_chunk
+# ---------------------------------------------------------------------------
+
+
+def test_row_source_name_concatenates_segments() -> None:
+    """``_row_source_name`` produces ``data:{host}:{cat}:{user_id}:{table}:{rid}``."""
+    from deriva_ml_mcp.resources.rag import _row_source_name
+
+    assert (
+        _row_source_name("h.example", "1", "userA", "dataset", "1-AAAA")
+        == "data:h.example:1:userA:dataset:1-AAAA"
+    )
+    # Source name is a strict superset of the user-id-only prefix so
+    # upstream's filter (which prefix-matches on data:host:cat:user_id:)
+    # still gates correctly.
+    src = _row_source_name("h.example", "1", "userA", "execution", "1-EXAA")
+    assert src.startswith("data:h.example:1:userA:")
+
+
+def test_write_row_chunk_deletes_then_adds() -> None:
+    """``_write_row_chunk`` drains the source and writes the rendered chunks."""
+    from deriva_ml_mcp.resources.rag import _DatasetSerializer, _write_row_chunk
+
+    fake_store = MagicMock()
+    fake_store.delete_source = AsyncMock()
+    fake_store.add = AsyncMock()
+    row = {
+        "rid": "1-DSAA",
+        "name": "x",
+        "description": "demo",
+        "dataset_types": ["Training"],
+        "current_version": "1.0.0",
+        "member_count": 10,
+    }
+
+    count = _run(
+        _write_row_chunk(
+            fake_store,
+            "data:h:1:userA:dataset:1-DSAA",
+            "Dataset",
+            row,
+            _DatasetSerializer(),
+        )
+    )
+
+    assert count >= 1
+    fake_store.delete_source.assert_awaited_once_with("data:h:1:userA:dataset:1-DSAA")
+    assert fake_store.add.await_count == 1
+    chunks = fake_store.add.await_args.args[0]
+    assert all(c.source == "data:h:1:userA:dataset:1-DSAA" for c in chunks)
+    assert all(c.doc_type == "catalog-data" for c in chunks)
+
+
+def test_write_row_chunk_serializer_returns_none_drains_only() -> None:
+    """A serializer that returns None still drains the prior source but writes nothing."""
+    from deriva_ml_mcp.resources.rag import _DatasetSerializer, _write_row_chunk
+
+    fake_store = MagicMock()
+    fake_store.delete_source = AsyncMock()
+    fake_store.add = AsyncMock()
+
+    # Dataset serializer returns None for non-Dataset tables.
+    count = _run(
+        _write_row_chunk(
+            fake_store,
+            "data:h:1:userA:workflow:1-WFAA",
+            "Workflow",
+            {"rid": "1-WFAA"},
+            _DatasetSerializer(),
+        )
+    )
+
+    assert count == 0
+    fake_store.delete_source.assert_awaited_once_with("data:h:1:userA:workflow:1-WFAA")
+    fake_store.add.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 12. v1.3 _reindex_<entity> surgical helpers
+# ---------------------------------------------------------------------------
+
+
+def test_reindex_dataset_writes_one_per_rid_source() -> None:
+    """``_reindex_dataset`` looks up the row + writes one source for the caller."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    fake_ml = MagicMock()
+    fake_ds = MagicMock()
+    fake_ds.dataset_rid = "1-DSAA"
+    fake_ds.description = "x"
+    fake_ds.dataset_types = ["Training"]
+    fake_ds.current_version = "1.0.0"
+    fake_ml.lookup_dataset.return_value = fake_ds
+
+    captured: dict[str, Any] = {}
+
+    async def fake_write(store, source, table_name, row, serializer):
+        captured["source"] = source
+        captured["table_name"] = table_name
+        captured["row_rid"] = row.get("rid")
+        return 1
+
+    with (
+        patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
+        patch.object(rag_module, "get_ml", return_value=fake_ml),
+        patch.object(rag_module, "resolve_user_identity", return_value="userA"),
+        patch.object(rag_module, "_write_row_chunk", side_effect=fake_write),
+    ):
+        n = _run(rag_module._reindex_dataset("h.example", "1", "1-DSAA"))
+
+    assert n == 1
+    assert captured["source"] == "data:h.example:1:userA:dataset:1-DSAA"
+    assert captured["table_name"] == "Dataset"
+    assert captured["row_rid"] == "1-DSAA"
+    fake_ml.lookup_dataset.assert_called_once_with("1-DSAA")
+
+
+def test_reindex_workflow_writes_one_per_rid_source() -> None:
+    """``_reindex_workflow`` looks up the row + writes one source for the caller."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    fake_ml = MagicMock()
+    fake_wf = MagicMock()
+    fake_wf.rid = "1-WFAA"
+    fake_wf.name = "MyPipe"
+    fake_wf.url = "https://example/repo"
+    fake_wf.checksum = "abc"
+    fake_wf.version = "1.0.0"
+    fake_wf.workflow_type = ["Model_Training"]
+    fake_wf.description = "demo"
+    fake_ml.lookup_workflow.return_value = fake_wf
+
+    captured: dict[str, Any] = {}
+
+    async def fake_write(store, source, table_name, row, serializer):
+        captured["source"] = source
+        captured["table_name"] = table_name
+        return 1
+
+    with (
+        patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
+        patch.object(rag_module, "get_ml", return_value=fake_ml),
+        patch.object(rag_module, "resolve_user_identity", return_value="userA"),
+        patch.object(rag_module, "_write_row_chunk", side_effect=fake_write),
+    ):
+        n = _run(rag_module._reindex_workflow("h.example", "1", "1-WFAA"))
+
+    assert n == 1
+    assert captured["source"] == "data:h.example:1:userA:workflow:1-WFAA"
+    assert captured["table_name"] == "Workflow"
+
+
+def test_reindex_execution_writes_one_per_rid_source() -> None:
+    """``_reindex_execution`` looks up the row + writes one source for the caller."""
+    from deriva_ml.execution.execution import ExecutionStatus
+
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    fake_ml = MagicMock()
+    fake_record = MagicMock()
+    fake_record.execution_rid = "1-EXAA"
+    fake_record.workflow_rid = "1-WFAA"
+    fake_record.status = ExecutionStatus.Created
+    fake_record.description = "demo"
+    fake_record.start_time = None
+    fake_record.stop_time = None
+    fake_record.duration = None
+    fake_ml.lookup_execution.return_value = fake_record
+
+    captured: dict[str, Any] = {}
+
+    async def fake_write(store, source, table_name, row, serializer):
+        captured["source"] = source
+        captured["table_name"] = table_name
+        return 1
+
+    with (
+        patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
+        patch.object(rag_module, "get_ml", return_value=fake_ml),
+        patch.object(rag_module, "resolve_user_identity", return_value="userA"),
+        patch.object(rag_module, "_write_row_chunk", side_effect=fake_write),
+    ):
+        n = _run(rag_module._reindex_execution("h.example", "1", "1-EXAA"))
+
+    assert n == 1
+    assert captured["source"] == "data:h.example:1:userA:execution:1-EXAA"
+    assert captured["table_name"] == "Execution"
+
+
+def test_reindex_dataset_short_circuits_when_store_none() -> None:
+    """``_reindex_dataset`` returns 0 (no ml call) when RAG is disabled."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    fake_ml = MagicMock()  # must not be touched
+    with (
+        patch.object(rag_module, "get_rag_store", return_value=None),
+        patch.object(rag_module, "get_ml", return_value=fake_ml),
+    ):
+        n = _run(rag_module._reindex_dataset("h.example", "1", "1-DSAA"))
+
+    assert n == 0
+    fake_ml.lookup_dataset.assert_not_called()
+
+
+def test_reindex_dataset_swallows_lookup_failure(caplog) -> None:
+    """A best-effort failure (lookup raise) returns 0 + logs without propagating."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    fake_ml = MagicMock()
+    fake_ml.lookup_dataset.side_effect = RuntimeError("not found")
+    with (
+        patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
+        patch.object(rag_module, "get_ml", return_value=fake_ml),
+        patch.object(rag_module, "resolve_user_identity", return_value="userA"),
+        caplog.at_level("ERROR", logger="deriva_ml_mcp.resources.rag"),
+    ):
+        n = _run(rag_module._reindex_dataset("h.example", "1", "1-DSAA"))
+
+    assert n == 0
+    assert any("1-DSAA" in record.message for record in caplog.records)
+
+
+def test_delete_dataset_source_drops_per_rid_source() -> None:
+    """``_delete_dataset_source`` calls ``store.delete_source`` for the row's source."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    fake_store = MagicMock()
+    fake_store.delete_source = AsyncMock()
+    with (
+        patch.object(rag_module, "get_rag_store", return_value=fake_store),
+        patch.object(rag_module, "resolve_user_identity", return_value="userA"),
+    ):
+        ok = _run(rag_module._delete_dataset_source("h.example", "1", "1-DSAA"))
+
+    assert ok is True
+    fake_store.delete_source.assert_awaited_once_with("data:h.example:1:userA:dataset:1-DSAA")
+
+
+def test_delete_dataset_source_short_circuits_when_store_none() -> None:
+    """``_delete_dataset_source`` returns False when RAG is disabled."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    with patch.object(rag_module, "get_rag_store", return_value=None):
+        assert _run(rag_module._delete_dataset_source("h.example", "1", "1-DSAA")) is False
+
+
+def test_delete_dataset_source_swallows_failure(caplog) -> None:
+    """A delete failure returns False + logs without propagating."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    fake_store = MagicMock()
+    fake_store.delete_source = AsyncMock(side_effect=RuntimeError("boom"))
+    with (
+        patch.object(rag_module, "get_rag_store", return_value=fake_store),
+        patch.object(rag_module, "resolve_user_identity", return_value="userA"),
+        caplog.at_level("ERROR", logger="deriva_ml_mcp.resources.rag"),
+    ):
+        ok = _run(rag_module._delete_dataset_source("h.example", "1", "1-DSAA"))
+
+    assert ok is False
+    assert any("1-DSAA" in record.message for record in caplog.records)

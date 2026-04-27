@@ -55,12 +55,28 @@ into a focused-submodule package.
 enriched source shared across users (`enriched:{host}:{cat}:{schema}:{table}`),
 which leaks data for any catalog table where rows have user-specific
 ACLs. Instead, the plugin uses `ctx.on_catalog_connect(...)` with
-`index_table_data(..., user_id=resolve_user_identity(hostname))` so
-each user's chunks land under `data:{host}:{cat}:{user_id}` and ACL
-is applied at fetch time using the calling user's credential. The
-plugin-level test `test_register_does_not_use_rag_dataset_indexer`
-pins this; future commits accidentally calling the unsafe API will
-fail CI.
+direct `store.delete_source + store.add` writes so each user's chunks
+land under per-RID source names of the shape
+`data:{host}:{cat}:{user_id}:{table}:{rid}` (v1.3) and ACL is applied
+at fetch time using the calling user's credential. The `data:` prefix
+keeps upstream's `rag_search` user-id filter in play (it accepts both
+the legacy bulk form `data:{host}:{cat}:{user_id}` and prefix-match
+on the per-RID form). The plugin-level test
+`test_register_does_not_use_rag_dataset_indexer` pins the unsafe-API
+ban; `test_data_sources_use_per_rid_naming` pins the v1.3 source-name
+shape; future commits accidentally calling the unsafe API or
+regressing the source-name shape will fail CI.
+
+**Surgical per-RID re-index (v1.3).** Each mutating tool that affects
+a Dataset / Workflow / Execution row calls `_reindex_<entity>` (a
+lazy import inside the tool body, mirroring the v1.1 vocab indexer
+pattern) immediately after the catalog mutation succeeds. The
+re-index is best-effort: any failure is logged but does NOT propagate
+to the tool's success path (the catalog mutation already succeeded).
+The audit event for the catalog mutation always fires before the
+re-index call so audit captures the success regardless of cache
+state. Result: a freshly created or modified row is searchable via
+`rag_search` on the very next call from the same user.
 
 Vocabularies are the documented exception: vocab content is catalog-
 public (no per-user ACL), so the plugin writes vocab terms directly

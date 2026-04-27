@@ -16,12 +16,15 @@ them in. We never run server-side git introspection on the MCP host.
 from __future__ import annotations
 
 import json
+import logging
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from deriva_mcp_core import deriva_call
 from deriva_mcp_core.telemetry import audit_event
 from deriva_ml.core.exceptions import DerivaMLException
+
+logger = logging.getLogger(__name__)
 
 # Note on testing audit_event: see ``make_patch_audit("workflow")`` in
 # tests/conftest.py. Single-patch facade is impossible due to Python's
@@ -406,6 +409,18 @@ def register(ctx: PluginContext) -> None:
                 workflow_type=normalized_types,
                 status=status,
             )
+            # v1.3 surgical re-index. Best-effort -- catalog mutation
+            # already succeeded; a re-index hiccup must not propagate
+            # to the tool's success path.
+            try:
+                from deriva_ml_mcp.resources.rag import _reindex_workflow
+
+                await _reindex_workflow(hostname, catalog_id, rid)
+            except Exception:  # noqa: BLE001 -- best-effort cache refresh
+                logger.exception(
+                    "re-index failed for workflow %s after create_workflow",
+                    rid,
+                )
             return json.dumps(
                 {
                     "status": status,
@@ -503,6 +518,17 @@ def register(ctx: PluginContext) -> None:
                 updated_fields=updated_fields,
                 workflow_type=workflow_type,
             )
+            # v1.3 surgical re-index: description and/or workflow_type
+            # tags appear in the chunk; refresh after the catalog write.
+            try:
+                from deriva_ml_mcp.resources.rag import _reindex_workflow
+
+                await _reindex_workflow(hostname, catalog_id, workflow_rid)
+            except Exception:  # noqa: BLE001 -- best-effort cache refresh
+                logger.exception(
+                    "re-index failed for workflow %s after update_workflow",
+                    workflow_rid,
+                )
             return json.dumps(
                 {
                     "status": "updated",

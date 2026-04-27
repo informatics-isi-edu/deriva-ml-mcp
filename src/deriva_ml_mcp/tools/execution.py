@@ -22,12 +22,15 @@ where the call would put it.
 from __future__ import annotations
 
 import json
+import logging
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from deriva_mcp_core import deriva_call
 from deriva_mcp_core.telemetry import audit_event
 from deriva_ml.execution.execution import ExecutionStatus
+
+logger = logging.getLogger(__name__)
 
 # Note on testing audit_event: see ``make_patch_audit("execution")`` in
 # tests/_helpers.py. Single-patch facade is impossible due to Python's
@@ -749,6 +752,17 @@ def register(ctx: PluginContext) -> None:
                     dataset_count=len(ds_list),
                     asset_count=len(as_list),
                 )
+                # v1.3 surgical re-index. Best-effort -- catalog mutation
+                # already succeeded; a re-index hiccup must not propagate.
+                try:
+                    from deriva_ml_mcp.resources.rag import _reindex_execution
+
+                    await _reindex_execution(hostname, catalog_id, execution_rid)
+                except Exception:  # noqa: BLE001 -- best-effort cache refresh
+                    logger.exception(
+                        "re-index failed for execution %s after create_execution",
+                        execution_rid,
+                    )
             return json.dumps(
                 {
                     "status": "created",
@@ -838,6 +852,16 @@ def register(ctx: PluginContext) -> None:
                 catalog_id=catalog_id,
                 execution_rid=execution_rid,
             )
+            # v1.3 surgical re-index: status field changed in the chunk.
+            try:
+                from deriva_ml_mcp.resources.rag import _reindex_execution
+
+                await _reindex_execution(hostname, catalog_id, execution_rid)
+            except Exception:  # noqa: BLE001 -- best-effort cache refresh
+                logger.exception(
+                    "re-index failed for execution %s after start_execution",
+                    execution_rid,
+                )
             return json.dumps(
                 {
                     "status": "running",
@@ -948,6 +972,16 @@ def register(ctx: PluginContext) -> None:
                 total_failed=summary["total_failed"],
                 retry_failed=retry_failed,
             )
+            # v1.3 surgical re-index: status + stop_time + duration changed.
+            try:
+                from deriva_ml_mcp.resources.rag import _reindex_execution
+
+                await _reindex_execution(hostname, catalog_id, execution_rid)
+            except Exception:  # noqa: BLE001 -- best-effort cache refresh
+                logger.exception(
+                    "re-index failed for execution %s after commit_execution",
+                    execution_rid,
+                )
             return json.dumps(
                 {
                     "status": "uploaded",
@@ -1035,6 +1069,16 @@ def register(ctx: PluginContext) -> None:
                 execution_rid=execution_rid,
                 updated_fields=updated_fields,
             )
+            # v1.3 surgical re-index: description field changed in the chunk.
+            try:
+                from deriva_ml_mcp.resources.rag import _reindex_execution
+
+                await _reindex_execution(hostname, catalog_id, execution_rid)
+            except Exception:  # noqa: BLE001 -- best-effort cache refresh
+                logger.exception(
+                    "re-index failed for execution %s after update_execution",
+                    execution_rid,
+                )
             return json.dumps(
                 {
                     "status": "updated",
@@ -1109,6 +1153,16 @@ def register(ctx: PluginContext) -> None:
                 execution_rid=execution_rid,
                 reason=reason,
             )
+            # v1.3 surgical re-index: status field changed (now Aborted).
+            try:
+                from deriva_ml_mcp.resources.rag import _reindex_execution
+
+                await _reindex_execution(hostname, catalog_id, execution_rid)
+            except Exception:  # noqa: BLE001 -- best-effort cache refresh
+                logger.exception(
+                    "re-index failed for execution %s after abort_execution",
+                    execution_rid,
+                )
             return json.dumps(
                 {
                     "status": "aborted",
@@ -1179,6 +1233,31 @@ def register(ctx: PluginContext) -> None:
                 dataset_rid=dataset_rid,
                 dataset_types=types_list,
             )
+            # v1.3 surgical re-index: a new dataset row landed AND the
+            # parent execution's outputs view changed; refresh both.
+            # Per-target try/except so if dataset re-index fails, the
+            # execution re-index still runs (and vice versa) -- defense
+            # in depth against the helper's own try/except being
+            # bypassed by an unexpected outer raise.
+            from deriva_ml_mcp.resources.rag import (
+                _reindex_dataset,
+                _reindex_execution,
+            )
+
+            try:
+                await _reindex_dataset(hostname, catalog_id, dataset_rid)
+            except Exception:  # noqa: BLE001 -- best-effort, per-target
+                logger.exception(
+                    "re-index failed for dataset %s after create_execution_dataset",
+                    dataset_rid,
+                )
+            try:
+                await _reindex_execution(hostname, catalog_id, execution_rid)
+            except Exception:  # noqa: BLE001 -- best-effort, per-target
+                logger.exception(
+                    "re-index failed for execution %s after create_execution_dataset",
+                    execution_rid,
+                )
             return json.dumps(
                 {
                     "status": "created",
@@ -1246,6 +1325,16 @@ def register(ctx: PluginContext) -> None:
                 child_rid=child_execution_rid,
                 sequence=sequence,
             )
+            # v1.3 surgical re-index: parent's children view changed.
+            try:
+                from deriva_ml_mcp.resources.rag import _reindex_execution
+
+                await _reindex_execution(hostname, catalog_id, parent_execution_rid)
+            except Exception:  # noqa: BLE001 -- best-effort cache refresh
+                logger.exception(
+                    "re-index failed for parent execution %s after add_nested_execution",
+                    parent_execution_rid,
+                )
             return json.dumps(
                 {
                     "status": "added",
