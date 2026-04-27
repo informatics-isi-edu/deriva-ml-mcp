@@ -37,6 +37,10 @@ from deriva_ml_mcp._helpers import (
     _error_envelope,
     _paginate,
 )
+from deriva_ml_mcp._response_models import (
+    FeatureListResponse,
+    FeatureSummary,
+)
 from deriva_ml_mcp.ml_context import get_ml
 
 if TYPE_CHECKING:
@@ -50,9 +54,9 @@ def _summarize_feature(feature: Any) -> dict[str, Any]:
         feature: A ``deriva_ml.feature.Feature`` instance.
 
     Returns:
-        Dict with ``feature_name``, ``target_table``, ``feature_table``,
-        ``term_columns`` (names), ``asset_columns`` (names), and
-        ``value_columns`` (names).
+        Dict matching the ``FeatureSummary`` Pydantic model shape.
+        ``_list_features_impl`` constructs the model from these dicts.
+        Kept dict-returning to preserve PR 1 scope.
     """
     return {
         "feature_name": feature.feature_name,
@@ -70,7 +74,7 @@ def _list_features_impl(
     table: str | None,
     after_rid: str | None,
     limit: int,
-) -> dict[str, Any]:
+) -> FeatureListResponse:
     """Fetch + paginate features. Pure helper -- shared by tool and resource.
 
     Pagination key is ``feature_table.name`` (features have no first-class
@@ -84,7 +88,7 @@ def _list_features_impl(
         limit: Max features per page (already capped by caller).
 
     Returns:
-        Dict ``{"features": [...], "count", "truncated", "next_after_rid"}``.
+        ``FeatureListResponse`` -- see ``deriva_ml_mcp._response_models``.
     """
     features = sorted(
         ml.find_features(table=table),
@@ -96,12 +100,12 @@ def _list_features_impl(
         limit=limit,
         key=lambda f: f.feature_table.name,
     )
-    return {
-        "features": [_summarize_feature(f) for f in page],
-        "count": len(page),
-        "truncated": truncated,
-        "next_after_rid": next_after,
-    }
+    return FeatureListResponse(
+        features=[FeatureSummary(**_summarize_feature(f)) for f in page],
+        count=len(page),
+        truncated=truncated,
+        next_after_rid=next_after,
+    )
 
 
 def register(ctx: PluginContext) -> None:
@@ -183,7 +187,7 @@ def register(ctx: PluginContext) -> None:
                     after_rid=after_rid,
                     limit=capped,
                 )
-            return json.dumps(payload)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,

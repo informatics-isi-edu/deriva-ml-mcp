@@ -38,6 +38,11 @@ from deriva_ml_mcp._helpers import (
     _paginate,
     _read_rid,
 )
+from deriva_ml_mcp._response_models import (
+    WorkflowDetail,
+    WorkflowListResponse,
+    WorkflowSummary,
+)
 from deriva_ml_mcp.ml_context import get_ml
 
 if TYPE_CHECKING:
@@ -51,21 +56,10 @@ def _summarize_workflow(wf: Any) -> dict[str, Any]:
         wf: A ``deriva_ml.execution.workflow.Workflow`` instance.
 
     Returns:
-        Dict with ``rid``, ``name``, ``url``, ``checksum``, ``version``,
-        ``workflow_type`` (always a list), and ``description``.
-
-    Example:
-        >>> from unittest.mock import MagicMock
-        >>> wf = MagicMock()
-        >>> wf.rid = "1-WF"
-        >>> wf.name = "MyPipeline"
-        >>> wf.url = "https://github.com/example/repo"
-        >>> wf.checksum = "abc123"
-        >>> wf.version = "1.0.0"
-        >>> wf.workflow_type = ["Model_Training"]
-        >>> wf.description = "trains things"
-        >>> _summarize_workflow(wf)["rid"]
-        '1-WF'
+        Dict matching the ``WorkflowSummary`` Pydantic model shape.
+        ``_list_workflows_impl`` constructs the model from these dicts.
+        Kept dict-returning to avoid touching ad-hoc payload sites
+        in PR 1; PR 2 may switch to Pydantic-throughout.
     """
     return {
         "rid": wf.rid,
@@ -83,7 +77,7 @@ def _list_workflows_impl(
     *,
     after_rid: str | None,
     limit: int,
-) -> dict[str, Any]:
+) -> WorkflowListResponse:
     """Fetch + paginate workflows. Pure helper -- shared by tool and resource.
 
     Args:
@@ -92,7 +86,7 @@ def _list_workflows_impl(
         limit: Max workflows per page (already capped by caller).
 
     Returns:
-        Dict ``{"workflows": [...], "count", "truncated", "next_after_rid"}``.
+        ``WorkflowListResponse`` -- see ``deriva_ml_mcp._response_models``.
     """
     workflows = sorted(ml.find_workflows(), key=lambda w: w.rid)
     page, truncated, next_after = _paginate(
@@ -101,15 +95,15 @@ def _list_workflows_impl(
         limit=limit,
         key=partial(_read_rid, rid_key="rid"),
     )
-    return {
-        "workflows": [_summarize_workflow(w) for w in page],
-        "count": len(page),
-        "truncated": truncated,
-        "next_after_rid": next_after,
-    }
+    return WorkflowListResponse(
+        workflows=[WorkflowSummary(**_summarize_workflow(w)) for w in page],
+        count=len(page),
+        truncated=truncated,
+        next_after_rid=next_after,
+    )
 
 
-def _get_workflow_impl(ml: Any, workflow_rid: str) -> dict[str, Any]:
+def _get_workflow_impl(ml: Any, workflow_rid: str) -> WorkflowDetail:
     """Read one workflow's full summary.
 
     Args:
@@ -117,10 +111,11 @@ def _get_workflow_impl(ml: Any, workflow_rid: str) -> dict[str, Any]:
         workflow_rid: The RID of the workflow to look up.
 
     Returns:
-        Workflow summary dict.
+        ``WorkflowDetail`` -- see ``deriva_ml_mcp._response_models``.
+        (Currently shape-equivalent to ``WorkflowSummary``.)
     """
     wf = ml.lookup_workflow(workflow_rid)
-    return _summarize_workflow(wf)
+    return WorkflowDetail(**_summarize_workflow(wf))
 
 
 def register(ctx: PluginContext) -> None:
@@ -191,7 +186,7 @@ def register(ctx: PluginContext) -> None:
 
                 capped = min(max(limit, 0), _MAX_LIMIT)
                 payload = _list_workflows_impl(ml, after_rid=after_rid, limit=capped)
-            return json.dumps(payload)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             # Read-only tool: log+return without an audit row.
             return _error_envelope(
@@ -233,7 +228,7 @@ def register(ctx: PluginContext) -> None:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
                 summary = _get_workflow_impl(ml, workflow_rid)
-            return json.dumps(summary)
+            return summary.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,

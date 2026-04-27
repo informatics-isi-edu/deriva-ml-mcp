@@ -66,6 +66,14 @@ from deriva_ml_mcp._helpers import (
     _set_row_description,
     _table_to_dict,
 )
+from deriva_ml_mcp._response_models import (
+    AssetDetail,
+    AssetExecutionRef,
+    AssetListResponse,
+    AssetSummary,
+    AssetTableRef,
+    AssetTablesResponse,
+)
 from deriva_ml_mcp.ml_context import get_ml
 
 if TYPE_CHECKING:
@@ -86,8 +94,9 @@ def _summarize_asset(asset: Any) -> dict[str, Any]:
         asset: A ``deriva_ml.asset.asset.Asset`` instance.
 
     Returns:
-        Dict with ``rid``, ``filename``, ``length``, ``md5``,
-        ``asset_table``, and ``asset_types``.
+        Dict matching the ``AssetSummary`` Pydantic model shape. Kept
+        dict-returning to preserve PR 1 scope -- consumers that build
+        list responses construct the model from these dicts.
 
     Example:
         >>> from unittest.mock import MagicMock
@@ -111,27 +120,27 @@ def _summarize_asset(asset: Any) -> dict[str, Any]:
     }
 
 
-def _list_asset_tables_impl(ml: Any) -> dict[str, Any]:
+def _list_asset_tables_impl(ml: Any) -> AssetTablesResponse:
     """Fetch the catalog's asset tables. Pure helper -- shared by tool and resource.
 
     Args:
         ml: A connected ``deriva_ml.DerivaML`` instance.
 
     Returns:
-        Dict ``{"asset_tables": [{name, schema}, ...], "count": N}``.
+        ``AssetTablesResponse`` -- see ``deriva_ml_mcp._response_models``.
         No pagination -- catalogs typically have a handful of asset
         tables and ``Table`` objects don't carry a stable RID for the
         cursor protocol.
     """
     tables = list(ml.list_asset_tables())
     rendered = [_table_to_dict(t) for t in tables]
-    return {
-        "asset_tables": rendered,
-        "count": len(rendered),
-    }
+    return AssetTablesResponse(
+        asset_tables=[AssetTableRef.model_validate(r) for r in rendered],
+        count=len(rendered),
+    )
 
 
-def _get_asset_detail_impl(ml: Any, asset_rid: str) -> dict[str, Any]:
+def _get_asset_detail_impl(ml: Any, asset_rid: str) -> AssetDetail:
     """Build the bundled asset detail payload. Pure helper -- shared by tool and resource.
 
     Bundles the per-asset summary (rid/filename/length/md5/url/
@@ -155,34 +164,31 @@ def _get_asset_detail_impl(ml: Any, asset_rid: str) -> dict[str, Any]:
         asset_rid: The RID of the asset to look up.
 
     Returns:
-        Dict with ``rid``, ``filename``, ``length``, ``md5``, ``url``,
-        ``description``, ``asset_table``, ``asset_types``, and
-        ``executions`` (list of ``{rid, asset_role}``).
+        ``AssetDetail`` -- see ``deriva_ml_mcp._response_models``.
     """
     asset = ml.lookup_asset(asset_rid)
-    payload: dict[str, Any] = {
-        "rid": asset.asset_rid,
-        "filename": asset.filename,
-        "length": asset.length,
-        "md5": asset.md5,
-        "url": asset.url,
-        "description": asset.description,
-        "asset_table": asset.asset_table,
-        "asset_types": list(asset.asset_types) if asset.asset_types else [],
-    }
-    executions: list[dict[str, Any]] = []
+    executions: list[AssetExecutionRef] = []
     try:
         for record in asset.list_executions():
             executions.append(
-                {
-                    "rid": getattr(record, "execution_rid", None),
-                    "asset_role": getattr(record, "asset_role", None),
-                }
+                AssetExecutionRef(
+                    rid=getattr(record, "execution_rid", None),
+                    asset_role=getattr(record, "asset_role", None),
+                )
             )
     except Exception:  # noqa: BLE001 -- executions list is best-effort
         executions = []
-    payload["executions"] = executions
-    return payload
+    return AssetDetail(
+        rid=asset.asset_rid,
+        filename=asset.filename,
+        length=asset.length,
+        md5=asset.md5,
+        url=asset.url,
+        description=asset.description,
+        asset_table=asset.asset_table,
+        asset_types=list(asset.asset_types) if asset.asset_types else [],
+        executions=executions,
+    )
 
 
 def _write_asset_description(ml: Any, asset: Any, description: str) -> None:
@@ -253,7 +259,7 @@ def register(ctx: PluginContext) -> None:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
                 payload = _list_asset_tables_impl(ml)
-            return json.dumps(payload)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -329,14 +335,12 @@ def register(ctx: PluginContext) -> None:
                     limit=capped,
                     key=partial(_read_rid, rid_key="asset_rid"),
                 )
-            return json.dumps(
-                {
-                    "assets": [_summarize_asset(a) for a in page],
-                    "count": len(page),
-                    "truncated": truncated,
-                    "next_after_rid": next_after,
-                }
-            )
+            return AssetListResponse(
+                assets=[AssetSummary(**_summarize_asset(a)) for a in page],
+                count=len(page),
+                truncated=truncated,
+                next_after_rid=next_after,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -384,7 +388,7 @@ def register(ctx: PluginContext) -> None:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
                 payload = _get_asset_detail_impl(ml, asset_rid)
-            return json.dumps(payload)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,

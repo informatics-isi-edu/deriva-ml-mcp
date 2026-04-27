@@ -28,12 +28,15 @@ is preserved from the v1.1 layout for symmetry.)
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
 from deriva_mcp_core import deriva_call
 
 from deriva_ml_mcp._helpers import _error_envelope
+from deriva_ml_mcp._response_models import (
+    ReindexVocabulariesResponse,
+    ResyncIndexesResponse,
+)
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
@@ -113,7 +116,7 @@ def register(ctx: PluginContext) -> None:
                 from deriva_ml_mcp.resources.rag import _index_vocabularies
 
                 indexed = await _index_vocabularies(hostname, catalog_id, only_vocab=vocab)
-            return json.dumps({"reindexed": indexed})
+            return ReindexVocabulariesResponse(reindexed=indexed).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -207,7 +210,7 @@ def register(ctx: PluginContext) -> None:
                 from deriva_ml_mcp.resources.rag import _resync_user_sources
 
                 counts = await _resync_user_sources(hostname, catalog_id, target=target)
-            return json.dumps({"resynced": counts})
+            return ResyncIndexesResponse(resynced=counts).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
