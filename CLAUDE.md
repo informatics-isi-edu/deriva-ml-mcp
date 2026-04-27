@@ -78,6 +78,21 @@ re-index call so audit captures the success regardless of cache
 state. Result: a freshly created or modified row is searchable via
 `rag_search` on the very next call from the same user.
 
+**Cross-user freshness gap (v1.4 — known limitation).** Per-user
+surgical re-index covers the calling user's OWN mutations. It does
+NOT propagate across users: when user A mutates a dataset visible
+to user B, B's per-user sources remain stale until B reconnects.
+Same gap applies to mutations from non-MCP clients (Chaise UI,
+ERMrest direct). v1.4 ships a manual bridge: the
+`deriva_ml_resync_indexes(hostname, catalog_id, target=None)` tool
+in `tools/vocabulary.py` re-runs `_reindex_*` for the calling
+user's per-user sources -- either all (target=None) or one
+(target="dataset:1-AAAA"). The `deriva_ml_getting_started` prompt
+documents the verify-with-`get_*` recovery pattern for shared-visible
+rows. Automatic cross-user fan-out is deferred per the design
+discussion in #9 -- the load profile is deployment-specific and
+no demand signal yet.
+
 Vocabularies are the documented exception: vocab content is catalog-
 public (no per-user ACL), so the plugin writes vocab terms directly
 to the vector store under a custom `vocab:{host}:{cat}:{schema}.{table}`

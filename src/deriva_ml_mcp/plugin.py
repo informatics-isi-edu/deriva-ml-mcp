@@ -26,7 +26,7 @@ from deriva_ml_mcp.tools import asset as _asset
 from deriva_ml_mcp.tools import dataset as _dataset
 from deriva_ml_mcp.tools import execution as _execution
 from deriva_ml_mcp.tools import feature as _feature
-from deriva_ml_mcp.tools import vocabulary as _vocabulary
+from deriva_ml_mcp.tools import maintenance as _maintenance
 from deriva_ml_mcp.tools import workflow as _workflow
 
 if TYPE_CHECKING:
@@ -78,7 +78,7 @@ def register(ctx: PluginContext) -> None:
     _workflow.register(ctx)
     _execution.register(ctx)
     _asset.register(ctx)
-    _vocabulary.register(ctx)
+    _maintenance.register(ctx)
     _ml_resources.register(ctx)
     _ml_rag.register_rag_sources(ctx)
     _ml_prompts.register(ctx)

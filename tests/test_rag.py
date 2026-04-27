@@ -1143,3 +1143,177 @@ def test_delete_dataset_source_swallows_failure(caplog) -> None:
 
     assert ok is False
     assert any("1-DSAA" in record.message for record in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# 13. v1.4 _resync_user_sources orchestrator (cross-user freshness bridge)
+# ---------------------------------------------------------------------------
+
+
+def test_resync_user_sources_all_iterates_all_three_tables() -> None:
+    """``target=None`` iterates dataset/workflow/execution row fetchers + reindexes each RID."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    fake_reindex_ds = AsyncMock(return_value=1)
+    fake_reindex_wf = AsyncMock(return_value=1)
+    fake_reindex_ex = AsyncMock(return_value=1)
+    with (
+        patch.object(
+            rag_module,
+            "_fetch_dataset_rows",
+            return_value=[{"rid": "1-DSAA"}, {"rid": "1-DSBB"}],
+        ),
+        patch.object(rag_module, "_fetch_workflow_rows", return_value=[{"rid": "1-WFAA"}]),
+        patch.object(
+            rag_module,
+            "_fetch_execution_rows",
+            return_value=[{"rid": "1-EXAA"}, {"rid": "1-EXBB"}, {"rid": "1-EXCC"}],
+        ),
+        patch.object(rag_module, "_reindex_dataset", new=fake_reindex_ds),
+        patch.object(rag_module, "_reindex_workflow", new=fake_reindex_wf),
+        patch.object(rag_module, "_reindex_execution", new=fake_reindex_ex),
+    ):
+        counts = _run(rag_module._resync_user_sources("h.example", "1"))
+
+    assert counts == {"dataset": 2, "workflow": 1, "execution": 3}
+    assert fake_reindex_ds.await_count == 2
+    assert fake_reindex_wf.await_count == 1
+    assert fake_reindex_ex.await_count == 3
+
+
+def test_resync_user_sources_targeted_dispatches_to_one_helper() -> None:
+    """``target="dataset:1-AAAA"`` calls _reindex_dataset only; others not touched."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    fake_reindex_ds = AsyncMock(return_value=1)
+    fake_reindex_wf = AsyncMock(return_value=1)
+    fake_reindex_ex = AsyncMock(return_value=1)
+    with (
+        patch.object(rag_module, "_reindex_dataset", new=fake_reindex_ds),
+        patch.object(rag_module, "_reindex_workflow", new=fake_reindex_wf),
+        patch.object(rag_module, "_reindex_execution", new=fake_reindex_ex),
+    ):
+        counts = _run(rag_module._resync_user_sources("h.example", "1", target="dataset:1-AAAA"))
+
+    fake_reindex_ds.assert_awaited_once_with("h.example", "1", "1-AAAA")
+    fake_reindex_wf.assert_not_awaited()
+    fake_reindex_ex.assert_not_awaited()
+    assert counts == {"dataset": 1, "workflow": 0, "execution": 0}
+
+
+def test_resync_user_sources_targeted_workflow_dispatches_correctly() -> None:
+    """``target="workflow:..."`` routes to _reindex_workflow."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    fake_reindex_wf = AsyncMock(return_value=1)
+    with patch.object(rag_module, "_reindex_workflow", new=fake_reindex_wf):
+        counts = _run(rag_module._resync_user_sources("h.example", "1", target="workflow:1-WFAA"))
+
+    fake_reindex_wf.assert_awaited_once_with("h.example", "1", "1-WFAA")
+    assert counts["workflow"] == 1
+
+
+def test_resync_user_sources_targeted_execution_dispatches_correctly() -> None:
+    """``target="execution:..."`` routes to _reindex_execution."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    fake_reindex_ex = AsyncMock(return_value=1)
+    with patch.object(rag_module, "_reindex_execution", new=fake_reindex_ex):
+        counts = _run(rag_module._resync_user_sources("h.example", "1", target="execution:1-EXAA"))
+
+    fake_reindex_ex.assert_awaited_once_with("h.example", "1", "1-EXAA")
+    assert counts["execution"] == 1
+
+
+def test_resync_user_sources_malformed_target_raises_valueerror() -> None:
+    """Malformed ``target`` (no colon, or unknown table) raises ValueError."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    with pytest.raises(ValueError, match="<table>:<rid>"):
+        _run(rag_module._resync_user_sources("h.example", "1", target="badtarget"))
+
+    with pytest.raises(ValueError, match="dataset/workflow/execution"):
+        _run(rag_module._resync_user_sources("h.example", "1", target="schema:1-AAAA"))
+
+
+def test_resync_user_sources_per_rid_failure_is_isolated(caplog) -> None:
+    """One row's reindex failure logs + continues; other rows still refresh."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    # Dataset 1-DSAA succeeds, 1-DSBB raises; both should be attempted.
+    async def _fake_reindex_ds(host, cat, rid):
+        if rid == "1-DSBB":
+            raise RuntimeError("dataset boom")
+        return 1
+
+    with (
+        patch.object(
+            rag_module,
+            "_fetch_dataset_rows",
+            return_value=[{"rid": "1-DSAA"}, {"rid": "1-DSBB"}],
+        ),
+        patch.object(rag_module, "_fetch_workflow_rows", return_value=[]),
+        patch.object(rag_module, "_fetch_execution_rows", return_value=[]),
+        patch.object(rag_module, "_reindex_dataset", side_effect=_fake_reindex_ds),
+        caplog.at_level("ERROR", logger="deriva_ml_mcp.resources.rag"),
+    ):
+        counts = _run(rag_module._resync_user_sources("h.example", "1"))
+
+    # The successful RID still landed; the failed one didn't increment the count.
+    assert counts == {"dataset": 1, "workflow": 0, "execution": 0}
+    # The failure was logged with the failing RID identified.
+    assert any("1-DSBB" in record.message for record in caplog.records)
+
+
+def test_resync_user_sources_fetcher_failure_skips_table_but_continues_others(caplog) -> None:
+    """If a row fetcher raises, that table reports zero but other tables still resync."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    fake_reindex_ds = AsyncMock(return_value=1)
+    fake_reindex_wf = AsyncMock(return_value=1)
+    fake_reindex_ex = AsyncMock(return_value=1)
+    with (
+        patch.object(
+            rag_module, "_fetch_dataset_rows", side_effect=RuntimeError("dataset fetch boom")
+        ),
+        patch.object(rag_module, "_fetch_workflow_rows", return_value=[{"rid": "1-WFAA"}]),
+        patch.object(rag_module, "_fetch_execution_rows", return_value=[{"rid": "1-EXAA"}]),
+        patch.object(rag_module, "_reindex_dataset", new=fake_reindex_ds),
+        patch.object(rag_module, "_reindex_workflow", new=fake_reindex_wf),
+        patch.object(rag_module, "_reindex_execution", new=fake_reindex_ex),
+        caplog.at_level("ERROR", logger="deriva_ml_mcp.resources.rag"),
+    ):
+        counts = _run(rag_module._resync_user_sources("h.example", "1"))
+
+    # Dataset table reports zero (fetcher raised; no rows to reindex).
+    assert counts == {"dataset": 0, "workflow": 1, "execution": 1}
+    # Dataset reindex was never attempted.
+    fake_reindex_ds.assert_not_awaited()
+    # Workflow + execution still ran.
+    fake_reindex_wf.assert_awaited_once_with("h.example", "1", "1-WFAA")
+    fake_reindex_ex.assert_awaited_once_with("h.example", "1", "1-EXAA")
+    # The fetcher failure was logged with the dataset-table context.
+    # (The "dataset fetch boom" RuntimeError text lives in the traceback
+    # via logger.exception, not in record.message itself.)
+    assert any("failed to enumerate datasets" in record.message for record in caplog.records)
+
+
+def test_resync_user_sources_skips_rows_with_empty_rid() -> None:
+    """A row dict with empty/missing 'rid' is silently skipped (no None RID in source name)."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    fake_reindex_ds = AsyncMock(return_value=1)
+    with (
+        patch.object(
+            rag_module,
+            "_fetch_dataset_rows",
+            return_value=[{"rid": "1-DSAA"}, {"rid": ""}, {"name": "no rid here"}],
+        ),
+        patch.object(rag_module, "_fetch_workflow_rows", return_value=[]),
+        patch.object(rag_module, "_fetch_execution_rows", return_value=[]),
+        patch.object(rag_module, "_reindex_dataset", new=fake_reindex_ds),
+    ):
+        counts = _run(rag_module._resync_user_sources("h.example", "1"))
+
+    assert counts["dataset"] == 1
+    fake_reindex_ds.assert_awaited_once_with("h.example", "1", "1-DSAA")
