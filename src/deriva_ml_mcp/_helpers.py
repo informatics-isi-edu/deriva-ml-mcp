@@ -14,6 +14,8 @@ Public API:
         dicts with a known key.
     _row_rid_for: Key extractor factory for denormalized-row dicts
         with Table.column-style keys.
+    _table_qname: Render a deriva-py Table as ``"schema.name"``.
+    _table_to_dict: Render a deriva-py Table as ``{"name", "schema"}``.
     _MAX_LIMIT: Pagination cap (1000 rows per page).
 
 The leading underscore on each helper is preserved -- they're internal
@@ -197,6 +199,52 @@ def _read_rid(item: Any, rid_key: str) -> str:
                 return str(item[candidate])
         raise KeyError(f"no RID-like key in member dict (looked for RID, {rid_key})")
     return str(getattr(item, rid_key))
+
+
+def _table_qname(table: Any) -> str:
+    """Return the qualified ``schema.name`` form of a deriva-py Table.
+
+    Args:
+        table: A ``deriva.core.ermrest_model.Table`` instance (the type
+            returned by ``ml.find_vocabularies()`` and similar deriva-py
+            model accessors).
+
+    Returns:
+        The string ``f"{table.schema.name}.{table.name}"``.
+
+    Example:
+        >>> from unittest.mock import MagicMock
+        >>> t = MagicMock()
+        >>> t.name = "Dataset_Type"
+        >>> t.schema.name = "deriva-ml"
+        >>> _table_qname(t)
+        'deriva-ml.Dataset_Type'
+    """
+    return f"{table.schema.name}.{table.name}"
+
+
+def _table_to_dict(table: Any) -> dict[str, str]:
+    """Return a JSON-friendly ``{schema, name}`` dict for a deriva-py Table.
+
+    The canonical shape used across the plugin's tool/resource responses
+    when emitting table references. Use ``_table_qname`` when a string
+    form (e.g., for log messages or markdown headers) is preferable.
+
+    Args:
+        table: A ``deriva.core.ermrest_model.Table`` instance.
+
+    Returns:
+        ``{"name": table.name, "schema": table.schema.name}``.
+
+    Example:
+        >>> from unittest.mock import MagicMock
+        >>> t = MagicMock()
+        >>> t.name = "Image"
+        >>> t.schema.name = "demo-schema"
+        >>> _table_to_dict(t)
+        {'name': 'Image', 'schema': 'demo-schema'}
+    """
+    return {"name": table.name, "schema": table.schema.name}
 
 
 def _row_rid_for(row_per: str | None) -> Callable[[dict[str, Any]], str]:

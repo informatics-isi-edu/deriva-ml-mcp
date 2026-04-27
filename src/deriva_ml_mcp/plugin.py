@@ -25,6 +25,7 @@ from deriva_ml_mcp.resources import rag as _ml_rag
 from deriva_ml_mcp.tools import dataset as _dataset
 from deriva_ml_mcp.tools import execution as _execution
 from deriva_ml_mcp.tools import feature as _feature
+from deriva_ml_mcp.tools import vocabulary as _vocabulary
 from deriva_ml_mcp.tools import workflow as _workflow
 
 if TYPE_CHECKING:
@@ -40,7 +41,15 @@ def register(ctx: PluginContext) -> None:
     Workflow, and Execution rows). v1.0 polish added 3 MCP prompts
     (``deriva_ml_getting_started``, ``deriva_ml_execution_lifecycle``,
     ``deriva_ml_workflow_dedup``) so an LLM connecting cold has an
-    anchor for the 39-tool ML domain.
+    anchor for the ML domain.
+
+    v1.1 added vocabulary RAG indexing: a fourth on_catalog_connect
+    hook bulk-indexes all discovered vocabulary tables under a
+    catalog-public ``vocab:`` source, and a one-tool vocabulary domain
+    (``deriva_ml_reindex_vocabularies``) lets callers force a refresh
+    after using core's ``add_term`` / ``delete_term`` (which don't
+    fire any framework lifecycle hook -- tracked upstream as
+    deriva-mcp-core#3).
 
     Args:
         ctx: PluginContext supplied by deriva-mcp-core at startup.
@@ -57,6 +66,7 @@ def register(ctx: PluginContext) -> None:
     _feature.register(ctx)
     _workflow.register(ctx)
     _execution.register(ctx)
+    _vocabulary.register(ctx)
     _ml_resources.register(ctx)
     _ml_rag.register_rag_sources(ctx)
     _ml_prompts.register(ctx)

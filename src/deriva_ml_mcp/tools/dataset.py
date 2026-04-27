@@ -45,6 +45,7 @@ from deriva_ml_mcp._helpers import (
     _paginate,
     _read_rid,
     _row_rid_for,
+    _table_to_dict,
 )
 from deriva_ml_mcp.ml_context import get_ml
 
@@ -606,7 +607,7 @@ def register(ctx: PluginContext) -> None:
                 tables = list(ml.list_dataset_element_types())
             return json.dumps(
                 {
-                    "element_types": [{"name": t.name, "schema": t.schema.name} for t in tables],
+                    "element_types": [_table_to_dict(t) for t in tables],
                     "count": len(tables),
                 }
             )
