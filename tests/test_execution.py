@@ -840,3 +840,42 @@ async def test_create_execution_dataset_triggers_both_reindexes(
         )
     fake_reindex_ds.assert_awaited_once_with("h", "1", "1-NEWDS")
     fake_reindex_ex.assert_awaited_once_with("h", "1", "1-EXEC")
+
+
+async def test_create_execution_dataset_dataset_reindex_failure_does_not_skip_execution(
+    execution_ctx, capturing_mcp, mock_ml
+):
+    """If the dataset re-index raises, the execution re-index must STILL run.
+
+    Pins the per-target try/except isolation in
+    ``deriva_ml_create_execution_dataset``'s re-index block (v1.3 review S2:
+    a single try/except wrapping both calls would silently skip the second
+    re-index when the first raises, defeating defense-in-depth).
+    """
+    from unittest.mock import AsyncMock
+
+    fake_execution = MagicMock()
+    fake_dataset = MagicMock()
+    fake_dataset.rid = "1-NEWDS"
+    fake_execution.create_dataset.return_value = fake_dataset
+    mock_ml.resume_execution.return_value = fake_execution
+    fake_reindex_ds = AsyncMock(side_effect=RuntimeError("dataset reindex boom"))
+    fake_reindex_ex = AsyncMock(return_value=1)
+    with (
+        patch("deriva_ml_mcp.resources.rag._reindex_dataset", new=fake_reindex_ds),
+        patch("deriva_ml_mcp.resources.rag._reindex_execution", new=fake_reindex_ex),
+        _patch_execution_audit(),
+    ):
+        result = await capturing_mcp.tools["deriva_ml_create_execution_dataset"](
+            hostname="h",
+            catalog_id="1",
+            execution_rid="1-EXEC",
+            description="d",
+        )
+    payload = json.loads(result)
+    # Tool returns success (the catalog mutation succeeded; re-index is best-effort).
+    assert "error" not in payload
+    # Both re-indexes were attempted -- the dataset failure didn't short-circuit
+    # the execution call.
+    fake_reindex_ds.assert_awaited_once_with("h", "1", "1-NEWDS")
+    fake_reindex_ex.assert_awaited_once_with("h", "1", "1-EXEC")

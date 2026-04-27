@@ -1235,18 +1235,27 @@ def register(ctx: PluginContext) -> None:
             )
             # v1.3 surgical re-index: a new dataset row landed AND the
             # parent execution's outputs view changed; refresh both.
-            try:
-                from deriva_ml_mcp.resources.rag import (
-                    _reindex_dataset,
-                    _reindex_execution,
-                )
+            # Per-target try/except so if dataset re-index fails, the
+            # execution re-index still runs (and vice versa) -- defense
+            # in depth against the helper's own try/except being
+            # bypassed by an unexpected outer raise.
+            from deriva_ml_mcp.resources.rag import (
+                _reindex_dataset,
+                _reindex_execution,
+            )
 
+            try:
                 await _reindex_dataset(hostname, catalog_id, dataset_rid)
-                await _reindex_execution(hostname, catalog_id, execution_rid)
-            except Exception:  # noqa: BLE001 -- best-effort cache refresh
+            except Exception:  # noqa: BLE001 -- best-effort, per-target
                 logger.exception(
-                    "re-index failed for dataset %s / execution %s after create_execution_dataset",
+                    "re-index failed for dataset %s after create_execution_dataset",
                     dataset_rid,
+                )
+            try:
+                await _reindex_execution(hostname, catalog_id, execution_rid)
+            except Exception:  # noqa: BLE001 -- best-effort, per-target
+                logger.exception(
+                    "re-index failed for execution %s after create_execution_dataset",
                     execution_rid,
                 )
             return json.dumps(
