@@ -254,9 +254,14 @@ def register(ctx: PluginContext) -> None:
 
         Absorbs the old ``execution/{rid}/inputs``, ``/outputs``,
         ``/metadata`` and ``experiment/{rid}`` URIs. The payload bundles
-        the execution summary plus ``inputs``, ``outputs``, ``metadata``,
-        and an ``experiment`` key (currently always ``None`` -- see the
-        TODO in ``_get_execution_detail_impl``).
+        the execution summary plus ``inputs`` and ``outputs``. An
+        ``experiment`` key is added when the execution is a Hydra-driven
+        experiment (carries name + config_choices + model_config; the
+        full hydra_config dict is NOT surfaced -- it can be 10-100 KB,
+        and callers wanting it should fetch the metadata asset directly).
+        The ``metadata`` key is omitted entirely until deriva-ml provides
+        a generic enumerator for ``Execution_Metadata`` files (TODO in
+        ``_get_execution_detail_impl``).
         """
         try:
             with deriva_call():
@@ -327,6 +332,13 @@ def register(ctx: PluginContext) -> None:
 
         Same shape as ``deriva_ml_lookup_asset`` -- the resource and
         tool share an internal helper so the two can never drift.
+
+        Note on the ``executions`` list: each entry has
+        ``{rid, asset_role}``, but ``asset_role`` is best-effort and
+        commonly ``None`` (deriva-ml's ``ExecutionRecord`` doesn't
+        carry the per-asset role attribute by default). A ``None``
+        role is not an error -- it means the relationship exists but
+        the role wasn't surfaced through the upstream API.
         """
         try:
             with deriva_call():

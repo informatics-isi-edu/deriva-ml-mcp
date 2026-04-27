@@ -466,14 +466,14 @@ def register(ctx: PluginContext) -> None:
         # Argument validation -- return errors directly without audit.
         if asset_types is None and description is None:
             return json.dumps(
-                {"error": ("at least one of asset_types or description must be provided")}
+                {"error": "at least one of asset_types or description must be provided"}
             )
 
         # Track partial progress for the failure path. asset_types is a
         # per-term loop (each add/remove is its own catalog round-trip),
         # so an LLM caller benefits from seeing what landed before the
-        # failure -- mirrors update_dataset_types's partial-progress
-        # response shape.
+        # failure -- mirrors update_dataset's partial-progress
+        # response shape (the same diff-then-loop pattern).
         added_done: list[str] = []
         removed_done: list[str] = []
         updated_fields: list[str] = []

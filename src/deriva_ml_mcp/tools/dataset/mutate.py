@@ -3,7 +3,7 @@
 This submodule houses the 7 simple-mutation dataset tools:
 ``deriva_ml_create_dataset``, ``deriva_ml_delete_dataset``,
 ``deriva_ml_add_dataset_members``, ``deriva_ml_delete_dataset_members``,
-``deriva_ml_update_dataset_types``, ``deriva_ml_add_dataset_element_type``,
+``deriva_ml_update_dataset``, ``deriva_ml_add_dataset_element_type``,
 and ``deriva_ml_increment_dataset_version``.
 
 These are the "one operation, one catalog mutation" tools -- each is
@@ -439,7 +439,7 @@ def register(ctx: PluginContext) -> None:
         # Argument validation -- return errors directly without audit.
         if dataset_types is None and description is None:
             return json.dumps(
-                {"error": ("at least one of dataset_types or description must be provided")}
+                {"error": "at least one of dataset_types or description must be provided"}
             )
 
         # Track partial progress for the failure path: dataset_types is a
