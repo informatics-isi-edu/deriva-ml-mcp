@@ -1,18 +1,32 @@
-"""Unit tests for the vocabulary domain tool.
+"""Unit tests for the RAG cache management tools.
 
-The single tool exposed by ``tools/vocabulary.py`` is the manual
-``deriva_ml_reindex_vocabularies`` re-indexer. It's a thin wrapper
-around ``resources.rag._index_vocabularies`` (the same coroutine the
-on_catalog_connect hook fires) -- the tests focus on the wrapper's
-contract: success-path JSON shape, the ``vocab=`` qname filter
-forwarding, and the ``mutates=False`` no-audit-on-failure guarantee
-(audit log is for catalog state changes; cache refreshes don't count).
+``tools/maintenance.py`` exposes two manual cache-refresh tools:
+
+- ``deriva_ml_reindex_vocabularies`` (v1.1) -- thin wrapper around
+  ``resources.rag._index_vocabularies`` (the same coroutine the
+  on_catalog_connect hook fires); covered by the ``vocab_*`` tests
+  in the first half of this file.
+- ``deriva_ml_resync_indexes`` (v1.4) -- cross-user freshness bridge
+  for the per-user-trio sources; thin wrapper around
+  ``resources.rag._resync_user_sources``; covered by the ``resync_*``
+  tests in the second half of this file.
+
+Both tools are ``mutates=False`` (cache refresh, not catalog mutation).
+The tests focus on the wrappers' contracts: success-path JSON shape,
+argument forwarding, and the no-audit-on-failure guarantee.
 
 Note on audit patching: unlike the other domain test files, this one
 patches only ``deriva_ml_mcp._helpers.audit_event`` -- the failure-path
-bind site. The tool module itself never imports ``audit_event``
-(success path is mutates=False, so no emission anywhere). A single
-patch is sufficient to assert "audit_event was not called".
+bind site. Neither tool module ever imports ``audit_event`` directly
+(both are ``mutates=False``, so no emission anywhere). A single patch
+is sufficient to assert "audit_event was not called".
+
+History: this module was named ``test_vocabulary.py`` in v1.1 when it
+held only the vocab tool; v1.4 added the resync tool, which isn't
+vocabulary-specific, so the file was renamed alongside the
+``tools/vocabulary.py -> tools/maintenance.py`` rename. The fixture
+name ``vocab_ctx`` is preserved for symmetry with the underlying
+domain (both tools live alongside the vocab indexer in spirit).
 """
 
 from __future__ import annotations
@@ -26,21 +40,27 @@ import pytest
 def _patch_helpers_audit():
     """Context manager that patches the helpers-module audit_event bind site.
 
-    The vocabulary tool is mutates=False on both success and failure
-    paths, so neither bind site should ever fire. This single patch is
-    sufficient to assert that contract (helpers.audit_event is the
-    failure-path entry; the tool module never imports the success-path
-    binding because it never emits one).
+    Both tools in ``tools/maintenance.py`` are ``mutates=False`` on
+    both success and failure paths, so neither bind site should ever
+    fire. This single patch is sufficient to assert that contract
+    (helpers.audit_event is the failure-path entry; neither tool
+    module imports the success-path binding because neither emits
+    one).
     """
     return patch("deriva_ml_mcp._helpers.audit_event")
 
 
 @pytest.fixture()
 def vocab_ctx(ctx):
-    """Register vocabulary tools on a fresh PluginContext."""
-    from deriva_ml_mcp.tools import vocabulary as vocabulary_module
+    """Register the maintenance tools on a fresh PluginContext.
 
-    vocabulary_module.register(ctx)
+    The fixture name ``vocab_ctx`` is preserved from the v1.1 module
+    layout for symmetry; the registered surface now includes both
+    ``deriva_ml_reindex_vocabularies`` and ``deriva_ml_resync_indexes``.
+    """
+    from deriva_ml_mcp.tools import maintenance as maintenance_module
+
+    maintenance_module.register(ctx)
     return ctx
 
 

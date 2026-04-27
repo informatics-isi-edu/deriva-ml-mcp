@@ -654,86 +654,87 @@ async def _resync_user_sources(
         return counts
 
     # All-of-user-sources mode: iterate each table's row fetcher and
-    # re-index every visible RID for the calling user. Per-RID
-    # try/except so one failure doesn't cancel the rest -- defense in
-    # depth (the helpers swallow internally, but if a fetcher itself
-    # raises we still want partial progress reported).
-    try:
-        dataset_rows = _fetch_dataset_rows(hostname, catalog_id)
-    except Exception:  # noqa: BLE001 -- best-effort, log + continue
-        logger.exception(
-            "deriva-ml RAG: failed to enumerate datasets for resync in %s/%s",
-            hostname,
-            catalog_id,
-        )
-        dataset_rows = []
-    for row in dataset_rows:
-        rid = row.get("rid")
-        if not rid:
-            continue
-        try:
-            chunks = await _reindex_dataset(hostname, catalog_id, rid)
-            if chunks > 0:
-                counts["dataset"] += 1
-        except Exception:  # noqa: BLE001 -- best-effort, per-RID
-            logger.exception(
-                "deriva-ml RAG: resync failed for dataset %s in %s/%s",
-                rid,
-                hostname,
-                catalog_id,
-            )
-
-    try:
-        workflow_rows = _fetch_workflow_rows(hostname, catalog_id)
-    except Exception:  # noqa: BLE001 -- best-effort, log + continue
-        logger.exception(
-            "deriva-ml RAG: failed to enumerate workflows for resync in %s/%s",
-            hostname,
-            catalog_id,
-        )
-        workflow_rows = []
-    for row in workflow_rows:
-        rid = row.get("rid")
-        if not rid:
-            continue
-        try:
-            chunks = await _reindex_workflow(hostname, catalog_id, rid)
-            if chunks > 0:
-                counts["workflow"] += 1
-        except Exception:  # noqa: BLE001 -- best-effort, per-RID
-            logger.exception(
-                "deriva-ml RAG: resync failed for workflow %s in %s/%s",
-                rid,
-                hostname,
-                catalog_id,
-            )
-
-    try:
-        execution_rows = _fetch_execution_rows(hostname, catalog_id)
-    except Exception:  # noqa: BLE001 -- best-effort, log + continue
-        logger.exception(
-            "deriva-ml RAG: failed to enumerate executions for resync in %s/%s",
-            hostname,
-            catalog_id,
-        )
-        execution_rows = []
-    for row in execution_rows:
-        rid = row.get("rid")
-        if not rid:
-            continue
-        try:
-            chunks = await _reindex_execution(hostname, catalog_id, rid)
-            if chunks > 0:
-                counts["execution"] += 1
-        except Exception:  # noqa: BLE001 -- best-effort, per-RID
-            logger.exception(
-                "deriva-ml RAG: resync failed for execution %s in %s/%s",
-                rid,
-                hostname,
-                catalog_id,
-            )
+    # re-index every visible RID for the calling user. Each table
+    # routes through ``_resync_one_table``, which encapsulates the
+    # two-level try/except (per-table fetcher + per-RID reindex).
+    counts["dataset"] = await _resync_one_table(
+        hostname, catalog_id, "dataset", _fetch_dataset_rows, _reindex_dataset
+    )
+    counts["workflow"] = await _resync_one_table(
+        hostname, catalog_id, "workflow", _fetch_workflow_rows, _reindex_workflow
+    )
+    counts["execution"] = await _resync_one_table(
+        hostname, catalog_id, "execution", _fetch_execution_rows, _reindex_execution
+    )
 
     return counts
+
+
+async def _resync_one_table(
+    hostname: str,
+    catalog_id: str,
+    table_label: str,
+    fetch_fn: Callable[[str, str], list[dict[str, Any]]],
+    reindex_fn: Callable[[str, str, str], Awaitable[int]],
+) -> int:
+    """Refresh every visible RID in one of the per-user-trio tables.
+
+    Two-level try/except discipline: the outer ``try`` isolates a
+    per-table fetcher failure (one bad fetcher doesn't cancel the
+    other tables); the inner ``try`` isolates a per-RID reindex
+    failure (one bad row doesn't cancel the rest of the loop). Both
+    layers are needed because the underlying ``_reindex_<entity>``
+    helpers swallow internally -- but defense in depth says the
+    orchestrator should still isolate in case an unexpected raise
+    escapes (lazy import failure, coroutine-creation issue, etc).
+
+    Empty/missing RIDs are silently skipped so a malformed row dict
+    never produces a None-bearing source name.
+
+    Args:
+        hostname: Deriva hostname.
+        catalog_id: Catalog ID or alias.
+        table_label: Lowercase singular ("dataset" / "workflow" /
+            "execution"). Used in log messages and matches the key in
+            ``_resync_user_sources``'s returned counts dict.
+        fetch_fn: One of the row fetchers (``_fetch_<table>_rows``).
+            Called synchronously inside the outer try.
+        reindex_fn: The matching ``_reindex_<entity>`` coroutine.
+            Awaited per RID inside the inner try.
+
+    Returns:
+        Count of RIDs whose reindex returned at least one chunk.
+        Failures (fetcher or per-RID) don't increment the count but
+        do emit a log line; the function never raises.
+    """
+    try:
+        rows = fetch_fn(hostname, catalog_id)
+    except Exception:  # noqa: BLE001 -- best-effort, log + continue
+        logger.exception(
+            "deriva-ml RAG: failed to enumerate %ss for resync in %s/%s",
+            table_label,
+            hostname,
+            catalog_id,
+        )
+        return 0
+    count = 0
+    for row in rows:
+        rid = row.get("rid")
+        if not rid:
+            continue
+        try:
+            chunks = await reindex_fn(hostname, catalog_id, rid)
+            if chunks > 0:
+                count += 1
+        except Exception:  # noqa: BLE001 -- best-effort, per-RID
+            logger.exception(
+                "deriva-ml RAG: resync failed for %s %s in %s/%s",
+                table_label,
+                rid,
+                hostname,
+                catalog_id,
+            )
+    return count
 
 
 # ---------------------------------------------------------------------------

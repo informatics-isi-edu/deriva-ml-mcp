@@ -18,8 +18,12 @@ two scenarios the framework's lifecycle hooks don't cover:
   cross-user freshness. See #9 for the design discussion (Option 4
   in the original issue body).
 
-(The module name ``vocabulary`` predates the v1.4 addition and is
-now misleading; rename to ``maintenance`` is a v1.x cleanup.)
+(History: this module was named ``tools/vocabulary.py`` in v1.1 when
+it held only the vocab tool. v1.4 added ``deriva_ml_resync_indexes``,
+which isn't vocabulary-specific, so the module was renamed to
+``maintenance.py`` to reflect that both tools are RAG-cache management
+verbs. The fixture name ``vocab_ctx`` in ``tests/test_maintenance.py``
+is preserved from the v1.1 layout for symmetry.)
 """
 
 from __future__ import annotations
@@ -36,7 +40,12 @@ if TYPE_CHECKING:
 
 
 def register(ctx: PluginContext) -> None:
-    """Register vocabulary management tools with the plugin context.
+    """Register the RAG cache management tools with the plugin context.
+
+    Two tools are registered: ``deriva_ml_reindex_vocabularies`` (v1.1)
+    and ``deriva_ml_resync_indexes`` (v1.4). Both are ``mutates=False``
+    cache-refresh verbs; see the module docstring for the full
+    rationale.
 
     Args:
         ctx: PluginContext supplied by deriva-mcp-core at startup.
