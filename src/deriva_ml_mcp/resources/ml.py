@@ -28,6 +28,8 @@ Resources registered:
     deriva://catalog/{hostname}/{catalog_id}/ml/executions
     deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}
     deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}
+    deriva://catalog/{hostname}/{catalog_id}/ml/asset-tables
+    deriva://catalog/{hostname}/{catalog_id}/ml/asset/{asset_rid}
     deriva://catalog/{hostname}/{catalog_id}/ml/registries
 """
 
@@ -41,6 +43,10 @@ from deriva_ml.core.enums import MLVocab
 
 from deriva_ml_mcp._helpers import _MAX_LIMIT, _error_envelope
 from deriva_ml_mcp.ml_context import get_ml
+from deriva_ml_mcp.tools.asset import (
+    _get_asset_detail_impl,
+    _list_asset_tables_impl,
+)
 from deriva_ml_mcp.tools.dataset import (
     _get_dataset_detail_impl,
     _list_dataset_members_summary_impl,
@@ -248,9 +254,14 @@ def register(ctx: PluginContext) -> None:
 
         Absorbs the old ``execution/{rid}/inputs``, ``/outputs``,
         ``/metadata`` and ``experiment/{rid}`` URIs. The payload bundles
-        the execution summary plus ``inputs``, ``outputs``, ``metadata``,
-        and an ``experiment`` key (currently always ``None`` -- see the
-        TODO in ``_get_execution_detail_impl``).
+        the execution summary plus ``inputs`` and ``outputs``. An
+        ``experiment`` key is added when the execution is a Hydra-driven
+        experiment (carries name + config_choices + model_config; the
+        full hydra_config dict is NOT surfaced -- it can be 10-100 KB,
+        and callers wanting it should fetch the metadata asset directly).
+        The ``metadata`` key is omitted entirely until deriva-ml provides
+        a generic enumerator for ``Execution_Metadata`` files (TODO in
+        ``_get_execution_detail_impl``).
         """
         try:
             with deriva_call():
@@ -287,6 +298,57 @@ def register(ctx: PluginContext) -> None:
             return _error_envelope(
                 exc,
                 operation="resource_ml_features_for_table",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/asset-tables")
+    async def ml_asset_tables(hostname: str, catalog_id: str) -> str:
+        """Snapshot of all asset tables in the catalog.
+
+        Catalogs typically have only a handful of asset tables, so the
+        full set is returned (no pagination, no ``truncated`` flag).
+        For paginated row-level browsing of one asset table use the
+        ``deriva_ml_list_assets`` tool.
+        """
+        try:
+            with deriva_call():
+                ml = get_ml(hostname, catalog_id)
+                payload = _list_asset_tables_impl(ml)
+            return json.dumps(payload)
+        except Exception as exc:  # noqa: BLE001
+            return _error_envelope(
+                exc,
+                operation="resource_ml_asset_tables",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/asset/{asset_rid}")
+    async def ml_asset_detail(hostname: str, catalog_id: str, asset_rid: str) -> str:
+        """Detail payload for one asset: summary + bundled executions.
+
+        Same shape as ``deriva_ml_lookup_asset`` -- the resource and
+        tool share an internal helper so the two can never drift.
+
+        Note on the ``executions`` list: each entry has
+        ``{rid, asset_role}``, but ``asset_role`` is best-effort and
+        commonly ``None`` (deriva-ml's ``ExecutionRecord`` doesn't
+        carry the per-asset role attribute by default). A ``None``
+        role is not an error -- it means the relationship exists but
+        the role wasn't surfaced through the upstream API.
+        """
+        try:
+            with deriva_call():
+                ml = get_ml(hostname, catalog_id)
+                payload = _get_asset_detail_impl(ml, asset_rid)
+            return json.dumps(payload)
+        except Exception as exc:  # noqa: BLE001
+            return _error_envelope(
+                exc,
+                operation="resource_ml_asset_detail",
                 hostname=hostname,
                 catalog_id=catalog_id,
                 audit=False,
