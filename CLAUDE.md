@@ -15,39 +15,64 @@ group at server startup.
 
 ## Architecture
 
-Current shape after Phase 6:
+Current shape (v1.1.x):
 
 ```
 src/deriva_ml_mcp/
-├── plugin.py          # register(ctx) entry point — dispatches to module registrars
-├── ml_context.py      # The single helper that builds a DerivaML from core's credential
-├── _helpers.py        # _error_envelope, _paginate, _read_rid, _MAX_LIMIT (shared)
-├── tools/             # Per-domain tool modules (39 tools across 4 domains)
-│   ├── dataset.py     #   17 tools
-│   ├── feature.py     #    6 tools
-│   ├── workflow.py    #    5 tools
-│   └── execution.py   #   11 tools
-└── resources/         # MCP resources + per-user RAG
-    ├── ml.py          #   9 read-only resources under deriva://catalog/{h}/{c}/ml/...
-    └── rag.py         #   1 GitHub doc source + 3 per-user on_catalog_connect hooks
+├── plugin.py            # register(ctx) entry point -- dispatches to module registrars
+├── ml_context.py        # The single helper that builds a DerivaML from core's credential
+├── _helpers.py          # _error_envelope, _paginate, _read_rid, _table_qname,
+│                        # _table_to_dict, _MAX_LIMIT (shared)
+├── prompts.py           # 3 MCP prompts: deriva_ml_getting_started /
+│                        #   _execution_lifecycle / _workflow_dedup
+├── tools/               # Per-domain tool modules (40 tools across 5 domains)
+│   ├── dataset/         #   17 tools, split into focused submodules:
+│   │   ├── __init__.py  #     register aggregator + helper re-exports
+│   │   ├── read.py      #     7 read tools + 4 shared helpers
+│   │   ├── mutate.py    #     7 simple mutation tools
+│   │   └── complex.py   #     3 complex tools (cache, denormalize, split)
+│   ├── feature.py       #    6 tools
+│   ├── workflow.py      #    5 tools
+│   ├── execution.py     #   11 tools
+│   └── vocabulary.py    #    1 tool (deriva_ml_reindex_vocabularies)
+└── resources/           # MCP resources + per-user RAG
+    ├── ml.py            #   9 read-only resources under deriva://catalog/{h}/{c}/ml/...
+    └── rag.py           #   1 GitHub doc source +
+                         #   3 per-user on_catalog_connect hooks (Dataset/Workflow/Execution)
+                         # + 1 catalog-public on_catalog_connect hook (vocabularies)
 ```
 
-Phase 0 shipped `plugin.py` and the empty `tools/`/`resources/` package
-markers. `ml_context.py` arrived in Phase 1; the domain tool modules in
-Phases 2-5; `resources/ml.py` and `resources/rag.py` in Phase 6.
+History: Phase 0 shipped `plugin.py` and the empty `tools/`/`resources/`
+package markers. `ml_context.py` arrived in Phase 1; the domain tool
+modules in Phases 2-5; `resources/ml.py` and `resources/rag.py` in
+Phase 6; v1.0 polish added `prompts.py` + the `deriva_ml_*` tool name
+prefix; v1.1 added vocabulary RAG indexing + `tools/vocabulary.py` +
+the discovery-pattern prompt section; v1.x split `tools/dataset.py`
+into a focused-submodule package.
 
 **Per-user RAG safety.** `resources/rag.py` does NOT use
 `ctx.rag_dataset_indexer(...)` -- that API produces a single global
 enriched source shared across users (`enriched:{host}:{cat}:{schema}:{table}`),
 which leaks data for any catalog table where rows have user-specific
 ACLs. Instead, the plugin uses `ctx.on_catalog_connect(...)` with
-`index_table_data(..., user_id=resolve_user_identity(hostname))` so each
-user's chunks land under `data:{host}:{cat}:{user_id}` and ACL is
-applied at fetch time using the calling user's credential. The
+`index_table_data(..., user_id=resolve_user_identity(hostname))` so
+each user's chunks land under `data:{host}:{cat}:{user_id}` and ACL
+is applied at fetch time using the calling user's credential. The
 plugin-level test `test_register_does_not_use_rag_dataset_indexer`
 pins this; future commits accidentally calling the unsafe API will
-fail CI. Two upstream gaps in `deriva-mcp-core` are tracked as
-issues #1 and #2 (search filter and `doc_type` parameter).
+fail CI.
+
+Vocabularies are the documented exception: vocab content is catalog-
+public (no per-user ACL), so the plugin writes vocab terms directly
+to the vector store under a custom `vocab:{host}:{cat}:{schema}.{table}`
+prefix that bypasses upstream's `data:` user-id filter and serves
+chunks to all users in the catalog. See `resources/rag.py`'s module
+docstring for the full rationale.
+
+One upstream gap remains: deriva-mcp-core#2 (`index_table_data`
+should accept a `doc_type` parameter so per-table RAG chunks can
+be filtered by `rag_search(doc_type="ml-dataset")`). Tracked
+inline at the call site with `# TODO(upstream-rag-doctype)`.
 
 **Boundary rules.** This plugin **never** duplicates anything that lives in
 `deriva-mcp-core`:
