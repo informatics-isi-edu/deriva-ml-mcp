@@ -45,7 +45,7 @@ from deriva_ml.dataset.aux_classes import DatasetVersion, VersionPart
 # ``make_patch_audit("dataset")`` in ``tests/_helpers.py`` (the
 # canonical factory) for the dual-patch context manager.
 import deriva_ml_mcp.tools.dataset as _pkg  # noqa: E402  (intentional cycle)
-from deriva_ml_mcp._helpers import _error_envelope
+from deriva_ml_mcp._helpers import _error_envelope, _set_row_description
 from deriva_ml_mcp.tools.dataset.read import _summarize_dataset
 
 if TYPE_CHECKING:
@@ -472,15 +472,13 @@ def register(ctx: PluginContext) -> None:
                     updated_fields.append("dataset_types")
 
                 if description is not None:
-                    # The deriva-ml Dataset class stores description as
-                    # a plain instance attribute (no catalog-write
-                    # setter), so we write the row directly via
-                    # pathBuilder. Mirrors what dataset.create_dataset
-                    # itself does for the Description column.
-                    pb = ml.pathBuilder()
-                    dataset_table = ml._dataset_table
-                    dataset_path = pb.schemas[dataset_table.schema.name].tables[dataset_table.name]
-                    dataset_path.update([{"RID": dataset_rid, "Description": description}])
+                    # The deriva-ml Dataset class stores description as a
+                    # plain instance attribute (no catalog-write setter);
+                    # delegate the catalog write to the shared
+                    # _set_row_description helper, then mirror the value
+                    # into the in-memory Dataset object only after the
+                    # write returns successfully.
+                    _set_row_description(ml, ml._dataset_table, dataset_rid, description)
                     ds.description = description
                     updated_fields.append("description")
 

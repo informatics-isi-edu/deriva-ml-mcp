@@ -247,6 +247,46 @@ def _table_to_dict(table: Any) -> dict[str, str]:
     return {"name": table.name, "schema": table.schema.name}
 
 
+def _set_row_description(ml: Any, table: Any, rid: str, description: str) -> None:
+    """Write a new ``Description`` value to one row via deriva-py pathBuilder.
+
+    Two of the four ML domain entity classes (``Asset`` and ``Dataset``)
+    do NOT expose write-through ``description`` setters in deriva-ml --
+    only ``Workflow`` and ``ExecutionRecord`` do. This helper compensates
+    for the upstream gap by writing the row directly through pathBuilder,
+    mirroring what deriva-ml's own internal code does for description
+    population (e.g. ``execution._set_asset_descriptions``).
+
+    Callers are responsible for mirroring the new value back into any
+    in-memory object they're holding (e.g. ``asset.description = description``)
+    so subsequent reads of the same Python object reflect the change.
+
+    Args:
+        ml: A connected ``deriva_ml.DerivaML`` instance.
+        table: The deriva-py ``Table`` object the row belongs to.
+            Caller resolves this from whatever they have at hand
+            (e.g. ``ml.model.name_to_table(name)`` for assets,
+            ``ml._dataset_table`` for datasets).
+        rid: The row RID to update.
+        description: The new description value.
+
+    Raises:
+        Whatever ``pathBuilder().update(...)`` raises if the catalog
+        write fails. Caller should NOT mirror to the in-memory object
+        until this returns successfully -- a write that raises must
+        not poison the in-memory copy.
+
+    Example:
+        >>> # Caller pattern (asset path):
+        >>> # asset_table = ml.model.name_to_table(asset.asset_table)
+        >>> # _set_row_description(ml, asset_table, asset.asset_rid, "new desc")
+        >>> # asset.description = "new desc"  # mirror after success
+    """
+    pb = ml.pathBuilder()
+    table_path = pb.schemas[table.schema.name].tables[table.name]
+    table_path.update([{"RID": rid, "Description": description}])
+
+
 def _row_rid_for(row_per: str | None) -> Callable[[dict[str, Any]], str]:
     """Build a callable that extracts the RID from a denormalized-row dict.
 

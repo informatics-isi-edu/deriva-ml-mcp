@@ -63,6 +63,7 @@ from deriva_ml_mcp._helpers import (
     _error_envelope,
     _paginate,
     _read_rid,
+    _set_row_description,
     _table_to_dict,
 )
 from deriva_ml_mcp.ml_context import get_ml
@@ -187,25 +188,22 @@ def _get_asset_detail_impl(ml: Any, asset_rid: str) -> dict[str, Any]:
 def _write_asset_description(ml: Any, asset: Any, description: str) -> None:
     """Write a new Description value to an asset row in the catalog.
 
-    The deriva-ml ``Asset`` class stores ``description`` as a plain
-    instance attribute -- it does NOT expose a catalog-write setter
-    (only ``Workflow`` and ``ExecutionRecord`` do). For description
-    curation we write the row directly via pathBuilder, mirroring what
-    deriva-ml's own asset-upload code does for description population
-    (``execution._set_asset_descriptions`` in
-    ``deriva_ml/execution/execution.py``).
+    Thin wrapper around the shared ``_set_row_description`` helper:
+    resolves the asset's ``Table`` object from its ``asset_table``
+    name, delegates the catalog write, then mirrors the value into
+    the in-memory ``asset.description`` attribute.
 
     Args:
         ml: A connected ``deriva_ml.DerivaML`` instance.
-        asset: The Asset object to update (used only for its
-            ``asset_rid`` and ``asset_table`` attributes).
+        asset: The Asset object to update (used for its ``asset_rid``,
+            ``asset_table``, and as the in-memory mirror target).
         description: The new description value to write.
     """
     asset_table_obj = ml.model.name_to_table(asset.asset_table)
-    pb = ml.pathBuilder()
-    asset_path = pb.schemas[asset_table_obj.schema.name].tables[asset_table_obj.name]
-    asset_path.update([{"RID": asset.asset_rid, "Description": description}])
-    # Keep the in-memory mirror consistent with the catalog row.
+    _set_row_description(ml, asset_table_obj, asset.asset_rid, description)
+    # Mirror the value into the in-memory Asset object only after the
+    # catalog write returns successfully -- a write that raises must
+    # not poison the in-memory copy.
     asset.description = description
 
 
