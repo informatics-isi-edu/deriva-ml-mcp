@@ -1,33 +1,70 @@
-"""Per-user RAG indexing + DerivaML docs source for deriva-ml-mcp.
+"""Per-user RAG indexing + vocab indexing + DerivaML docs source for deriva-ml-mcp.
 
-Phase 6.3 wires three things into the RAG subsystem:
+Phase 6.3 wired three things into the RAG subsystem; v1.1 adds a
+fourth (vocabularies):
 
 1. **One GitHub doc source** -- ``informatics-isi-edu/deriva-ml`` ``docs/``
    (declared synchronously via ``ctx.rag_github_source``). The indexer
    crawls it once when RAG is enabled.
 
-2. **Three ``on_catalog_connect`` hooks** -- one each for ``Dataset``,
-   ``Workflow``, and ``Execution`` rows. Each hook resolves the calling
-   user's identity, fetches rows under that user's credential, and
-   upserts into the vector store with a user-scoped source name
-   (``data:{host}:{cat}:{user_id}``). The fetch path goes through the
-   plugin's existing ``_list_*_impl`` helpers, so ACL behavior matches
-   the read tools.
+2. **Three per-user ``on_catalog_connect`` hooks** -- one each for
+   ``Dataset``, ``Workflow``, and ``Execution`` rows. Each hook resolves
+   the calling user's identity, fetches rows under that user's
+   credential, and upserts into the vector store with a user-scoped
+   source name (``data:{host}:{cat}:{user_id}``). The fetch path goes
+   through the plugin's existing ``_list_*_impl`` helpers, so ACL
+   behavior matches the read tools.
 
-3. **Three ``RowSerializer`` implementations** -- one per table, each
-   producing rich Markdown sections for the LLM (header, fields,
-   subsections; empties omitted FaceBase-style).
+3. **One catalog-public ``on_catalog_connect`` hook for vocabularies**
+   (v1.1) -- discovers all vocabulary tables via
+   ``ml.find_vocabularies()`` (built-in ML vocabs + any user-defined
+   domain vocabs) and writes each vocab's terms to the vector store
+   under a custom source prefix
+   ``vocab:{hostname}:{catalog_id}:{schema}.{table}``. The ``vocab:``
+   prefix bypasses upstream's ``data:`` user-id filter so chunks are
+   served to all users in the catalog -- vocabularies have no per-user
+   ACL. Each term renders to markdown with name + description +
+   synonyms + RID; the parent vocab table appears inline in the H2
+   header so a search hit carries the disambiguating context.
 
-Why hooks + ``index_table_data`` (not ``ctx.rag_dataset_indexer``)?
-``rag_dataset_indexer`` produces a single global enriched source shared
-across all users (the enricher fires under whichever credential happens
-to connect first). For ML data with per-user ACLs that would leak rows
-across users. The per-user pattern here partitions the source name by
-user identity and fetches under the calling user's credential -- same
-posture as every other tool in this plugin.
+4. **Four ``RowSerializer`` implementations** -- one per per-user table
+   (Dataset, Workflow, Execution) and one for vocabulary terms
+   (``_VocabSerializer``), each producing rich Markdown sections for
+   the LLM (header, fields, subsections; empties omitted FaceBase-style).
 
-Wiring into ``plugin.py`` is deferred to Phase 6.4. This module is
-import-safe and idempotent on its own.
+Why hooks + ``index_table_data`` for the per-user trio (not
+``ctx.rag_dataset_indexer``)? ``rag_dataset_indexer`` produces a single
+global enriched source shared across all users (the enricher fires
+under whichever credential happens to connect first). For ML data with
+per-user ACLs that would leak rows across users. The per-user pattern
+here partitions the source name by user identity and fetches under the
+calling user's credential -- same posture as every other tool in this
+plugin.
+
+Why direct store writes (not ``index_table_data``) for vocabularies?
+``index_table_data``'s source naming is hardcoded to
+``data:{host}:{cat}:{user_id}``, which would (a) be incorrectly
+per-user-partitioned for public vocab data, and (b) get filtered out
+by upstream's ``data:`` user-id filter for users whose ``user_id`` is
+not the indexer's. The vocab path writes to the store directly with
+its own ``vocab:`` prefix; the upstream filter only applies to
+``schema:``, ``data:``, and ``enriched:`` prefixes (verified in
+``deriva-mcp-core/src/deriva_mcp_core/rag/tools.py`` around lines
+425-440), so ``vocab:`` chunks are served to all users.
+
+Vocab freshness (v1.1):
+    First catalog connect per server lifetime indexes all vocabs in
+    bulk via the new on_catalog_connect hook. The
+    ``deriva_ml_reindex_vocabularies`` tool re-runs the same
+    discovery + per-vocab write -- use it after adding terms via
+    core's ``add_term``, which doesn't fire any framework lifecycle
+    hook (tracked upstream as deriva-mcp-core#3). v1.1 deliberately
+    does NOT add an ``on_schema_change`` hook -- ``add_term`` doesn't
+    fire it, and the cost/benefit is wrong for v1.1; the manual tool
+    is the bridge until upstream ships ``on_data_change``.
+
+Wiring into ``plugin.py`` is in ``register_rag_sources(ctx)``. This
+module is import-safe and idempotent on its own.
 """
 
 from __future__ import annotations
@@ -39,9 +76,11 @@ from typing import TYPE_CHECKING, Any
 
 from deriva_mcp_core.context import resolve_user_identity
 from deriva_mcp_core.rag import get_rag_store
+from deriva_mcp_core.rag.chunker import chunk_markdown
 from deriva_mcp_core.rag.data import RowSerializer, index_table_data
+from deriva_mcp_core.rag.store import Chunk
 
-from deriva_ml_mcp._helpers import _MAX_LIMIT
+from deriva_ml_mcp._helpers import _MAX_LIMIT, _table_qname
 from deriva_ml_mcp.ml_context import get_ml
 from deriva_ml_mcp.tools.dataset import _list_datasets_impl
 from deriva_ml_mcp.tools.execution import _list_executions_impl
@@ -49,6 +88,7 @@ from deriva_ml_mcp.tools.workflow import _list_workflows_impl
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
+    from deriva_mcp_core.rag.store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +233,44 @@ class _ExecutionSerializer(RowSerializer):
             _kv_line("Duration", row.get("duration")),
         ]
         return _render_block(f"## Execution: {rid}", lines)
+
+
+class _VocabSerializer(RowSerializer):
+    """Serialize a vocabulary term as Markdown for RAG indexing.
+
+    Used for all discovered vocabulary tables (built-in ML vocabs and
+    user-defined domain vocabs). The parent vocab table name appears
+    inline in the H2 header so a search hit carries enough context for
+    the LLM to know which vocabulary the term belongs to.
+
+    Contract:
+        Returns rendered markdown if the row carries a ``"name"`` (or
+        ``"Name"``) value; ``None`` otherwise. The ``table_name``
+        argument is treated as an opaque identifier for the inline
+        header -- typically the qualified ``schema.table`` form -- and
+        does not gate dispatch the way the per-user serializers do.
+    """
+
+    def serialize(self, table_name: str, row: dict) -> str | None:  # noqa: D401
+        """Serialize one vocabulary term, or return None when ``name`` is absent."""
+        # Contract divergence vs _DatasetSerializer/_WorkflowSerializer/
+        # _ExecutionSerializer: those gate on table_name to dispatch among
+        # multiple known table types. This serializer accepts ANY vocab
+        # table; dispatch is handled by the caller's discovery loop in
+        # _index_vocabularies (which iterates ml.find_vocabularies()), not
+        # by the serializer itself. table_name is only used for the inline
+        # header so a search hit carries its parent vocab inline.
+        name = row.get("name") or row.get("Name")
+        if not name:
+            return None
+        synonyms = row.get("synonyms") or row.get("Synonyms")
+        synonyms_list = list(synonyms) if synonyms else None
+        lines: list[str | None] = [
+            _kv_line("Description", row.get("description") or row.get("Description")),
+            _kv_line("Synonyms", synonyms_list),
+            _kv_line("RID", row.get("rid") or row.get("RID")),
+        ]
+        return _render_block(f"## Vocab Term: {name} ({table_name})", lines)
 
 
 # ---------------------------------------------------------------------------
@@ -341,18 +419,198 @@ def _make_hook(
 
 
 # ---------------------------------------------------------------------------
+# Vocabulary indexing (catalog-public, custom ``vocab:`` source prefix)
+# ---------------------------------------------------------------------------
+
+
+def _vocab_source_name(hostname: str, catalog_id: str, qname: str) -> str:
+    """Build the canonical ``vocab:`` source name for one vocab table.
+
+    The ``vocab:`` prefix is a deliberate carve-out from upstream's
+    ``data:`` user-id filter (see module docstring) -- chunks under
+    this prefix are returned to all users in the catalog, regardless
+    of which user's connect triggered the index pass. This is correct
+    for vocabularies, which carry no per-user ACL.
+    """
+    return f"vocab:{hostname}:{catalog_id}:{qname}"
+
+
+async def _write_vocab_chunks(
+    store: VectorStore,
+    source: str,
+    vocab_table: str,
+    terms: list[dict[str, Any]],
+    serializer: _VocabSerializer,
+) -> int:
+    """Render terms, chunk them, and replace the existing vocab source.
+
+    The delete-then-add pattern mirrors what ``index_table_data`` does
+    internally. Idempotent: a prior version of this source is drained
+    before the new chunks land, so re-running on an unchanged vocab is
+    a no-op from the caller's perspective (the chunks are equivalent).
+
+    Args:
+        store: An active ``VectorStore`` (call site checks for ``None``).
+        source: Canonical source name from ``_vocab_source_name``.
+        vocab_table: Qualified ``schema.table`` -- passed to the
+            serializer as the inline header context.
+        terms: List of term dicts (``name``, ``description``, ``synonyms``,
+            ``rid``). Empty list short-circuits without touching the store.
+        serializer: A ``_VocabSerializer`` instance.
+
+    Returns:
+        Count of indexed terms (the rendered, chunked count -- one term
+        typically yields one chunk under our 800-token budget).
+    """
+    await store.delete_source(source)
+    if not terms:
+        return 0
+    chunks: list[Chunk] = []
+    chunk_index = 0
+    for term in terms:
+        rendered = serializer.serialize(vocab_table, term)
+        if rendered is None:
+            continue
+        # TODO(upstream-rag-doctype): tracked as deriva-mcp-core#2
+        # (https://github.com/informatics-isi-edu/deriva-mcp-core/issues/2).
+        # Once chunks can carry a domain-specific doc_type, switch to
+        # "ml-vocab" so rag_search(doc_type=...) can distinguish vocab
+        # term chunks from generic catalog-data chunks.
+        for c in chunk_markdown(rendered, source=source, doc_type="catalog-data"):
+            chunks.append(
+                Chunk(
+                    text=c.text,
+                    source=source,
+                    doc_type="catalog-data",
+                    section_heading=c.section_heading,
+                    heading_hierarchy=c.heading_hierarchy,
+                    chunk_index=chunk_index,
+                )
+            )
+            chunk_index += 1
+    if chunks:
+        await store.add(chunks)
+    return len(terms)
+
+
+async def _index_vocabularies(
+    hostname: str,
+    catalog_id: str,
+    only_vocab: str | None = None,
+) -> dict[str, int]:
+    """Discover and index vocabulary tables for the catalog.
+
+    Iterates ``ml.find_vocabularies()`` (built-in ML vocabs +
+    user-defined domain vocabs in any schema) and writes one shared
+    source per vocab table at
+    ``vocab:{hostname}:{catalog_id}:{schema}.{table}``. The custom
+    ``vocab:`` prefix bypasses upstream's ``data:`` user-id filter so
+    chunks are served to all users in the catalog (vocabularies carry
+    no per-user ACL).
+
+    Best-effort: per-vocab failures (missing vocab table, fetch error)
+    are logged and skipped without aborting the whole index pass.
+
+    Args:
+        hostname: Deriva hostname.
+        catalog_id: Catalog ID.
+        only_vocab: If provided, only re-index this vocab (qualified
+            ``"schema.table"`` form). If ``None``, re-index all
+            discovered vocabs.
+
+    Returns:
+        Dict mapping vocab qname to indexed-term count for each vocab
+        that was successfully indexed. Vocabs that errored or were
+        filtered out by ``only_vocab`` do not appear.
+    """
+    store = get_rag_store()
+    if store is None:
+        logger.debug("rag store unavailable, skipping vocab index")
+        return {}
+
+    ml = get_ml(hostname, catalog_id)
+    serializer = _VocabSerializer()
+    indexed: dict[str, int] = {}
+
+    for vocab_table in ml.find_vocabularies():
+        qname = _table_qname(vocab_table)
+        if only_vocab is not None and qname != only_vocab:
+            continue
+        try:
+            terms = ml.list_vocabulary_terms(vocab_table)
+            term_dicts = [
+                {
+                    "name": t.name,
+                    "description": t.description,
+                    "synonyms": list(t.synonyms or []),
+                    "rid": t.rid,
+                }
+                for t in terms
+            ]
+            source = _vocab_source_name(hostname, catalog_id, qname)
+            count = await _write_vocab_chunks(store, source, qname, term_dicts, serializer)
+            indexed[qname] = count
+            logger.debug("indexed %d terms for vocab %s", count, qname)
+        except Exception:
+            logger.exception("failed to index vocab %s", qname)
+            continue
+
+    return indexed
+
+
+def _make_vocab_hook() -> Callable[[str, str, str, dict], Awaitable[None]]:
+    """Build the on_catalog_connect hook that bulk-indexes vocabularies.
+
+    Distinct from ``_make_hook`` because vocab indexing has a different
+    shape: one hook fires N writes (one per discovered vocab) rather
+    than one write. Forcing this into the per-user factory's
+    ``(fetch_fn, table_name, serializer)`` signature would obscure the
+    difference. Two clear factories beat one general one.
+
+    Returns:
+        An async hook with the ``on_catalog_connect`` signature
+        ``(hostname, catalog_id, schema_hash, schema_json) -> None``.
+    """
+
+    async def hook(
+        hostname: str,
+        catalog_id: str,
+        schema_hash: str,  # noqa: ARG001 -- hook signature requires it
+        schema_json: dict,  # noqa: ARG001 -- hook signature requires it
+    ) -> None:
+        try:
+            await _index_vocabularies(hostname, catalog_id)
+        except Exception:  # noqa: BLE001 -- vocab discovery is best-effort
+            logger.exception(
+                "deriva-ml RAG: vocab index pass failed for %s/%s",
+                hostname,
+                catalog_id,
+            )
+
+    return hook
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
 
 def register_rag_sources(ctx: PluginContext) -> None:
-    """Register the DerivaML docs source and three per-user catalog hooks.
+    """Register the DerivaML docs source and four catalog-connect hooks.
 
-    Called from ``plugin.register(ctx)`` (wired in Phase 6.4). Safe to
-    call without any RAG config -- ``ctx.rag_github_source`` is a no-op
-    when RAG is disabled, and the hooks are best-effort: they swallow
-    fetch exceptions and short-circuit when the vector store is
-    unavailable.
+    Hooks fire in registration order on every catalog connect:
+
+    1. Dataset (per-user, ``data:`` source prefix)
+    2. Workflow (per-user, ``data:`` source prefix)
+    3. Execution (per-user, ``data:`` source prefix)
+    4. Vocabularies (catalog-public, custom ``vocab:`` source prefix --
+       v1.1; bypasses upstream's ``data:`` user-id filter, served to
+       all users in the catalog)
+
+    Called from ``plugin.register(ctx)``. Safe to call without any RAG
+    config -- ``ctx.rag_github_source`` is a no-op when RAG is
+    disabled, and the hooks are best-effort: they swallow fetch
+    exceptions and short-circuit when the vector store is unavailable.
 
     Args:
         ctx: PluginContext supplied by deriva-mcp-core at startup.
@@ -378,3 +636,4 @@ def register_rag_sources(ctx: PluginContext) -> None:
     ctx.on_catalog_connect(
         _make_hook(_fetch_execution_rows, _EXECUTION_TABLE, _ExecutionSerializer())
     )
+    ctx.on_catalog_connect(_make_vocab_hook())

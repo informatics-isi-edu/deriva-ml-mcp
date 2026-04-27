@@ -131,6 +131,67 @@ Fall back to the paginated list tools (``deriva_ml_list_datasets``,
 you need filtered scans (e.g. "executions with status=Failed for
 workflow 1-WF") that resources cannot express.
 
+DISCOVERY: RESOLVING USER-MENTIONED NAMES TO CATALOG IDENTIFIERS
+----------------------------------------------------------------
+When the user mentions a vocabulary term, table or column, workflow,
+dataset, or feature by name, resolve it to the canonical catalog
+identifier in this order:
+
+1. EXACT MATCH FIRST. If the user-supplied string matches a known
+   canonical name exactly (case-sensitive), use it. Don't search,
+   don't ask. DerivaML names are case-sensitive: "Training" is the
+   Dataset_Type term; "training" is not. If the user says
+   "Training", they mean Training.
+
+2. SEMANTIC SEARCH WHEN AMBIGUOUS OR DESCRIPTIVE. If the user's
+   phrasing is descriptive ("the training data type", "labels for
+   image quality"), or if their string doesn't match any canonical
+   name, call rag_search with their phrase. Examine the results:
+
+   - Single clear top hit (score significantly above runners-up):
+     use it, but tell the user what you resolved it to in one
+     sentence. ("I'm using the Training Dataset_Type.") Fast for
+     normal cases, traceable if wrong.
+
+   - Multiple close hits or genuinely ambiguous: present a picker.
+     List 3-5 candidates with their canonical name + one-line
+     description + RID (or table.column for column hits). Ask
+     the user to pick. Don't choose blindly when reasonable
+     people might disagree.
+
+   - No useful hits: ask a clarifying question. Do not fabricate
+     a name; do not call create_* with a guessed identifier.
+
+3. EXPLICIT LIST REQUEST GETS A LIST. If the user says "show me
+   all dataset types" or "list workflows", use the appropriate
+   list endpoint (ml/registries, deriva_ml_list_workflows,
+   deriva://catalog/{h}/{c}/ml/datasets). Don't run rag_search
+   when they explicitly want enumeration.
+
+INDEX COVERAGE BY CATEGORY
+--------------------------
+The picker pattern works for these categories. Freshness varies:
+
+  Vocabulary terms (built-in + user-defined)
+    Indexed by this plugin per-vocab. Fresh on first connect to
+    the catalog. To re-index after adding a term via core's
+    add_term, call deriva_ml_reindex_vocabularies first.
+
+  Tables and columns (any schema, ML or domain)
+    Indexed by the framework's schema RAG, per-user. Fresh on
+    first connect; refreshed automatically when any tool mutates
+    the schema. A column hit lands inside its surrounding table
+    chunk -- when the user says "the rid column" you'll see RID
+    exists in many tables and need to ask which one.
+
+  Workflows, datasets, executions
+    Indexed by this plugin per-user. Fresh on first connect;
+    NOT automatically refreshed when new ones are created or
+    existing ones are modified (deriva-ml-mcp#8 tracks the
+    surgical re-index redesign). If the user just created or
+    modified one, prefer the deriva_ml_list_* tools or the
+    detail resources for that one over rag_search.
+
 MUTATION: WORKFLOW -> EXECUTION -> OUTPUTS
 ------------------------------------------
 The canonical mutation chain is:

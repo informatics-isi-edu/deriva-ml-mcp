@@ -54,6 +54,16 @@ for column meanings, disposition definitions, and maintenance rules.
 | add_nested_execution | execution.py | kept | deriva_ml_add_nested_execution | tools/execution.py | hostname/catalog_id added | Already takes both RIDs explicitly. Same intent; no signature change beyond the boundary args. |
 | list_nested_executions | execution.py | renamed | deriva_ml_list_execution_children | tools/execution.py | name change mirrors upstream rename `Execution.list_nested_executions` → `ExecutionRecord.list_execution_children`; aligns with dataset-hierarchy template (`list_dataset_children`); hostname/catalog_id added | Net-new symmetric complement `list_execution_parents` (catalog-side parent query) lands alongside this in Phase 5.2 but is NOT a port of any old tool — it has no row here. |
 
+### Net-new tools (post-v1.0 additions)
+
+Tools not present in the old `deriva-mcp` repo. Added because v1.0+
+landed new infrastructure (RAG, on_catalog_connect hooks, etc.) that
+had no corresponding old-tool to migrate from.
+
+| name | module | mutates | added_in | notes |
+|---|---|---|---|---|
+| deriva_ml_reindex_vocabularies | tools/vocabulary.py | False | v1.1 (issue #5) | Force re-index of vocabulary tables in the RAG vector store. The on_catalog_connect hook bulk-indexes all vocabs on first connect; this tool is the manual bridge for after-the-fact mutations via core's `add_term` / `delete_term` (which don't fire any framework lifecycle hook -- tracked upstream as deriva-mcp-core#3). `mutates=False` because the vector store is a cache; the audit log is for catalog state changes and a cache refresh isn't one. Optional `vocab="schema.table"` arg restricts to one vocab; default re-indexes all. |
+
 ### Pre-existing core-owned tools (Phase 7.1 backfill)
 
 These 52 old `deriva-mcp` tools were never analyzed in the per-domain phases (2-5) because they have no ML-domain semantics — they're generic Deriva primitives that live in `deriva-mcp-core` (or were dropped with the connection-singleton architecture). Phase 7.1's `scripts/check_coverage.py` flagged them as missing from `coverage.md`; this section catalogues the disposition for completeness.
@@ -180,7 +190,7 @@ These 52 old `deriva-mcp` tools were never analyzed in the per-domain phases (2-
 
 ## Upstream gaps (Phase 6 RAG)
 
-One open `deriva-mcp-core` limitation. The other (issue #1) was filed during
+Two open `deriva-mcp-core` limitations. The other (issue #1) was filed during
 Phase 6.6 and landed upstream in commit
 [`0aef9fc`](https://github.com/informatics-isi-edu/deriva-mcp-core/commit/0aef9fc)
 during the v1.0 polish sprint -- `rag_search` now filters `data:` sources by
@@ -198,6 +208,17 @@ Still open:
   inline for the LLM. Fix is a one-line `doc_type` parameter addition
   upstream. The plugin marks the gap with `# TODO(upstream-rag-doctype)` at
   the `index_table_data` call site in `resources/rag.py`.
+
+- **No `on_data_change` lifecycle hook**
+  ([deriva-mcp-core#3](https://github.com/informatics-isi-edu/deriva-mcp-core/issues/3)).
+  Vocabulary mutations via core's `add_term` / `delete_term` do not fire
+  `on_schema_change` (verified by reading core's `vocabulary.py`), and there
+  is no `on_data_change` equivalent. The v1.1 vocab indexer in
+  `resources/rag.py` therefore can't auto-refresh after term mutations.
+  Bridge: the `deriva_ml_reindex_vocabularies` tool exposes a manual
+  re-index that callers (or the LLM) can fire after `add_term`. Long-term
+  fix is the upstream hook; the manual tool stays as the targeted-refresh
+  affordance even after the hook lands.
 
 ## Validation (Phase 7+)
 

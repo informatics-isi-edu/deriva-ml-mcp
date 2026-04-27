@@ -36,12 +36,13 @@ def _run(coro):
 
 
 # Hook registration order in register_rag_sources(ctx):
-#   0 -> Dataset, 1 -> Workflow, 2 -> Execution.
+#   0 -> Dataset, 1 -> Workflow, 2 -> Execution, 3 -> Vocabularies.
 # Tests pull hooks via index rather than by name because the factory
 # refactor produces anonymous closures (no module-level attribute to import).
 _DATASET_HOOK_IDX = 0
 _WORKFLOW_HOOK_IDX = 1
 _EXECUTION_HOOK_IDX = 2
+_VOCAB_HOOK_IDX = 3
 
 
 def _hook_at(idx: int):
@@ -86,9 +87,9 @@ def test_register_rag_sources_github_source_targets_deriva_ml_docs(rag_ctx) -> N
     assert decl.doc_type == "ml-docs"
 
 
-def test_register_rag_sources_registers_three_catalog_hooks(rag_ctx) -> None:
-    """Three on_catalog_connect callbacks are registered (Dataset, Workflow, Execution)."""
-    assert len(rag_ctx._catalog_connect_hooks) == 3
+def test_register_rag_sources_registers_four_catalog_hooks(rag_ctx) -> None:
+    """Four on_catalog_connect callbacks are registered (Dataset, Workflow, Execution, Vocab)."""
+    assert len(rag_ctx._catalog_connect_hooks) == 4
 
 
 def test_register_rag_sources_does_not_use_rag_dataset_indexer(rag_ctx) -> None:
@@ -461,3 +462,363 @@ def test_dataset_hook_partitions_per_user() -> None:
     assert fake_index.call_count == 2
     assert fake_index.call_args_list[0].kwargs["user_id"] == "userA"
     assert fake_index.call_args_list[1].kwargs["user_id"] == "userB"
+
+
+# ---------------------------------------------------------------------------
+# 7. _VocabSerializer
+# ---------------------------------------------------------------------------
+
+
+def test_vocab_serializer_renders_full_term() -> None:
+    """A populated vocab term renders all sections + parent table in header."""
+    from deriva_ml_mcp.resources.rag import _VocabSerializer
+
+    row = {
+        "name": "epithelial",
+        "description": "Epithelial tissue type.",
+        "synonyms": ["epithelium", "epi"],
+        "rid": "1-VOAA",
+    }
+    md = _VocabSerializer().serialize("demo-schema.Tissue_Type", row)
+
+    assert md is not None
+    assert md.startswith("## Vocab Term: epithelial (demo-schema.Tissue_Type)")
+    assert "**Description:** Epithelial tissue type." in md
+    assert "**Synonyms:** epithelium, epi" in md
+    assert "**RID:** 1-VOAA" in md
+
+
+def test_vocab_serializer_omits_empty_description() -> None:
+    """Term without description still renders header + synonyms + RID."""
+    from deriva_ml_mcp.resources.rag import _VocabSerializer
+
+    row = {
+        "name": "stromal",
+        "description": None,
+        "synonyms": ["stroma"],
+        "rid": "1-VOBB",
+    }
+    md = _VocabSerializer().serialize("demo-schema.Tissue_Type", row)
+
+    assert md is not None
+    assert md.startswith("## Vocab Term: stromal")
+    assert "Description" not in md
+    assert "**Synonyms:** stroma" in md
+    assert "**RID:** 1-VOBB" in md
+
+
+def test_vocab_serializer_omits_empty_synonyms() -> None:
+    """Term with empty synonyms list drops the line."""
+    from deriva_ml_mcp.resources.rag import _VocabSerializer
+
+    row = {
+        "name": "muscle",
+        "description": "Muscle tissue.",
+        "synonyms": [],
+        "rid": "1-VOCC",
+    }
+    md = _VocabSerializer().serialize("demo-schema.Tissue_Type", row)
+
+    assert md is not None
+    assert "Synonyms" not in md
+    assert "**Description:** Muscle tissue." in md
+
+
+def test_vocab_serializer_omits_both_empty() -> None:
+    """Term with neither description nor synonyms renders header + RID only."""
+    from deriva_ml_mcp.resources.rag import _VocabSerializer
+
+    row = {
+        "name": "bare",
+        "description": None,
+        "synonyms": None,
+        "rid": "1-VODD",
+    }
+    md = _VocabSerializer().serialize("demo-schema.Tissue_Type", row)
+
+    assert md is not None
+    assert md.startswith("## Vocab Term: bare")
+    assert "Description" not in md
+    assert "Synonyms" not in md
+    assert "**RID:** 1-VODD" in md
+
+
+def test_vocab_serializer_returns_none_when_name_missing() -> None:
+    """A row without a name is skipped (returns None)."""
+    from deriva_ml_mcp.resources.rag import _VocabSerializer
+
+    assert _VocabSerializer().serialize("schema.Vocab", {"description": "x"}) is None
+    assert _VocabSerializer().serialize("schema.Vocab", {"name": ""}) is None
+
+
+def test_vocab_serializer_accepts_capitalized_keys() -> None:
+    """ERMrest-style ``Name``/``Synonyms``/``Description``/``RID`` keys also work."""
+    from deriva_ml_mcp.resources.rag import _VocabSerializer
+
+    row = {
+        "Name": "foo",
+        "Description": "Foo desc",
+        "Synonyms": ["f"],
+        "RID": "1-VOEE",
+    }
+    md = _VocabSerializer().serialize("schema.Vocab", row)
+
+    assert md is not None
+    assert "## Vocab Term: foo (schema.Vocab)" in md
+    assert "**Description:** Foo desc" in md
+    assert "**Synonyms:** f" in md
+    assert "**RID:** 1-VOEE" in md
+
+
+# ---------------------------------------------------------------------------
+# 8. _index_vocabularies discovery / filter / failure-isolation / shared source
+# ---------------------------------------------------------------------------
+
+
+def _vocab_table(schema_name: str, table_name: str) -> MagicMock:
+    """Build a MagicMock standing in for a deriva-py Table with schema/name."""
+    t = MagicMock()
+    t.name = table_name
+    t.schema.name = schema_name
+    return t
+
+
+def _vocab_term(name: str, description: str | None, synonyms: list[str], rid: str) -> MagicMock:
+    """Build a MagicMock standing in for a VocabularyTerm."""
+    term = MagicMock()
+    term.name = name
+    term.description = description
+    term.synonyms = synonyms
+    term.rid = rid
+    return term
+
+
+def test_index_vocabularies_writes_one_source_per_vocab() -> None:
+    """All discovered vocabs land under their own ``vocab:`` source."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    vocabs = [
+        _vocab_table("deriva-ml", "Dataset_Type"),
+        _vocab_table("deriva-ml", "Workflow_Type"),
+        _vocab_table("demo-schema", "Tissue_Type"),
+    ]
+    terms_by_table = {
+        "deriva-ml.Dataset_Type": [_vocab_term("Training", "train", [], "1-T1")],
+        "deriva-ml.Workflow_Type": [
+            _vocab_term("Model_Training", None, ["MT"], "1-T2"),
+            _vocab_term("Eval", "eval", [], "1-T3"),
+        ],
+        "demo-schema.Tissue_Type": [_vocab_term("epi", None, [], "1-T4")],
+    }
+
+    fake_ml = MagicMock()
+    fake_ml.find_vocabularies.return_value = vocabs
+    fake_ml.list_vocabulary_terms.side_effect = lambda t: terms_by_table[
+        f"{t.schema.name}.{t.name}"
+    ]
+    fake_store = MagicMock()
+    fake_store.delete_source = AsyncMock()
+    fake_store.add = AsyncMock()
+
+    with (
+        patch.object(rag_module, "get_rag_store", return_value=fake_store),
+        patch.object(rag_module, "get_ml", return_value=fake_ml),
+    ):
+        result = _run(rag_module._index_vocabularies("h.example", "1"))
+
+    assert result == {
+        "deriva-ml.Dataset_Type": 1,
+        "deriva-ml.Workflow_Type": 2,
+        "demo-schema.Tissue_Type": 1,
+    }
+    deleted_sources = [c.args[0] for c in fake_store.delete_source.call_args_list]
+    assert "vocab:h.example:1:deriva-ml.Dataset_Type" in deleted_sources
+    assert "vocab:h.example:1:deriva-ml.Workflow_Type" in deleted_sources
+    assert "vocab:h.example:1:demo-schema.Tissue_Type" in deleted_sources
+
+    # Every chunk written carries the vocab: prefix (catalog-public carve-out).
+    for call in fake_store.add.call_args_list:
+        chunks = call.args[0]
+        for chunk in chunks:
+            assert chunk.source.startswith("vocab:h.example:1:")
+
+
+def test_index_vocabularies_filter_only_writes_requested_vocab() -> None:
+    """``only_vocab='schema.X'`` indexes only that vocab; others are skipped."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    vocabs = [
+        _vocab_table("deriva-ml", "Dataset_Type"),
+        _vocab_table("deriva-ml", "Workflow_Type"),
+    ]
+    fake_ml = MagicMock()
+    fake_ml.find_vocabularies.return_value = vocabs
+    fake_ml.list_vocabulary_terms.return_value = [_vocab_term("X", None, [], "1-T")]
+
+    fake_store = MagicMock()
+    fake_store.delete_source = AsyncMock()
+    fake_store.add = AsyncMock()
+
+    with (
+        patch.object(rag_module, "get_rag_store", return_value=fake_store),
+        patch.object(rag_module, "get_ml", return_value=fake_ml),
+    ):
+        result = _run(
+            rag_module._index_vocabularies("h.example", "1", only_vocab="deriva-ml.Workflow_Type")
+        )
+
+    assert result == {"deriva-ml.Workflow_Type": 1}
+    deleted_sources = [c.args[0] for c in fake_store.delete_source.call_args_list]
+    assert deleted_sources == ["vocab:h.example:1:deriva-ml.Workflow_Type"]
+
+
+def test_index_vocabularies_per_vocab_failures_are_isolated(caplog) -> None:
+    """A fetch error on one vocab does not abort the whole pass."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    bad = _vocab_table("deriva-ml", "Broken_Vocab")
+    good = _vocab_table("deriva-ml", "Working_Vocab")
+    fake_ml = MagicMock()
+    fake_ml.find_vocabularies.return_value = [bad, good]
+
+    def fake_terms(t):
+        if t is bad:
+            raise RuntimeError("boom")
+        return [_vocab_term("ok", None, [], "1-OK")]
+
+    fake_ml.list_vocabulary_terms.side_effect = fake_terms
+
+    fake_store = MagicMock()
+    fake_store.delete_source = AsyncMock()
+    fake_store.add = AsyncMock()
+
+    with (
+        patch.object(rag_module, "get_rag_store", return_value=fake_store),
+        patch.object(rag_module, "get_ml", return_value=fake_ml),
+        caplog.at_level("ERROR", logger="deriva_ml_mcp.resources.rag"),
+    ):
+        result = _run(rag_module._index_vocabularies("h.example", "1"))
+
+    assert result == {"deriva-ml.Working_Vocab": 1}
+    assert any("Broken_Vocab" in record.message for record in caplog.records)
+
+
+def test_index_vocabularies_short_circuits_when_store_none() -> None:
+    """``get_rag_store() is None`` -> empty result, no ml call."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    fake_ml = MagicMock()  # should not even be touched
+    with (
+        patch.object(rag_module, "get_rag_store", return_value=None),
+        patch.object(rag_module, "get_ml", return_value=fake_ml),
+    ):
+        result = _run(rag_module._index_vocabularies("h.example", "1"))
+
+    assert result == {}
+    fake_ml.find_vocabularies.assert_not_called()
+
+
+def test_index_vocabularies_uses_shared_source_across_users() -> None:
+    """Two consecutive runs (different identities) write under the SAME source name.
+
+    Vocabularies have no per-user ACL -- the source name is keyed only
+    by (hostname, catalog_id, vocab qname). Two runs back-to-back must
+    target the same ``vocab:...`` source regardless of caller, so the
+    second run replaces the first (drain-then-add) instead of forking
+    a per-user partition.
+    """
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    vocabs = [_vocab_table("deriva-ml", "Dataset_Type")]
+    fake_ml = MagicMock()
+    fake_ml.find_vocabularies.return_value = vocabs
+    fake_ml.list_vocabulary_terms.return_value = [_vocab_term("Training", None, [], "1-T")]
+
+    fake_store = MagicMock()
+    fake_store.delete_source = AsyncMock()
+    fake_store.add = AsyncMock()
+
+    with (
+        patch.object(rag_module, "get_rag_store", return_value=fake_store),
+        patch.object(rag_module, "get_ml", return_value=fake_ml),
+    ):
+        _run(rag_module._index_vocabularies("h.example", "1"))
+        _run(rag_module._index_vocabularies("h.example", "1"))
+
+    deleted_sources = [c.args[0] for c in fake_store.delete_source.call_args_list]
+    expected = "vocab:h.example:1:deriva-ml.Dataset_Type"
+    assert deleted_sources == [expected, expected]
+
+
+# ---------------------------------------------------------------------------
+# 9. Vocab on_catalog_connect hook
+# ---------------------------------------------------------------------------
+
+
+def test_vocab_hook_calls_index_vocabularies_with_args() -> None:
+    """The vocab hook forwards (hostname, catalog_id) to ``_index_vocabularies``."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    fake = AsyncMock(return_value={})
+    with patch.object(rag_module, "_index_vocabularies", new=fake):
+        _run(_hook_at(_VOCAB_HOOK_IDX)("h.example", "1", "hash", {}))
+
+    fake.assert_awaited_once_with("h.example", "1")
+
+
+def test_vocab_hook_swallows_index_exception() -> None:
+    """If _index_vocabularies raises, the hook logs and does not propagate."""
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    fake = AsyncMock(side_effect=RuntimeError("boom"))
+    with patch.object(rag_module, "_index_vocabularies", new=fake):
+        # Must not raise.
+        _run(_hook_at(_VOCAB_HOOK_IDX)("h.example", "1", "hash", {}))
+
+
+# ---------------------------------------------------------------------------
+# 10. _write_vocab_chunks delete-then-add semantics
+# ---------------------------------------------------------------------------
+
+
+def test_write_vocab_chunks_deletes_then_adds() -> None:
+    """``delete_source`` is called first, then chunks are added via ``store.add``."""
+    from deriva_ml_mcp.resources.rag import _VocabSerializer, _write_vocab_chunks
+
+    fake_store = MagicMock()
+    fake_store.delete_source = AsyncMock()
+    fake_store.add = AsyncMock()
+    terms = [
+        {"name": "a", "description": "alpha", "synonyms": [], "rid": "1-A"},
+        {"name": "b", "description": "beta", "synonyms": ["B"], "rid": "1-B"},
+    ]
+    count = _run(
+        _write_vocab_chunks(
+            fake_store,
+            "vocab:h:1:s.t",
+            "s.t",
+            terms,
+            _VocabSerializer(),
+        )
+    )
+
+    assert count == 2
+    fake_store.delete_source.assert_awaited_once_with("vocab:h:1:s.t")
+    assert fake_store.add.await_count == 1
+    chunks = fake_store.add.await_args.args[0]
+    assert all(c.source == "vocab:h:1:s.t" for c in chunks)
+    assert all(c.doc_type == "catalog-data" for c in chunks)
+
+
+def test_write_vocab_chunks_empty_terms_drains_only() -> None:
+    """An empty term list still drains the prior source but does not call add."""
+    from deriva_ml_mcp.resources.rag import _VocabSerializer, _write_vocab_chunks
+
+    fake_store = MagicMock()
+    fake_store.delete_source = AsyncMock()
+    fake_store.add = AsyncMock()
+    count = _run(_write_vocab_chunks(fake_store, "vocab:h:1:s.t", "s.t", [], _VocabSerializer()))
+
+    assert count == 0
+    fake_store.delete_source.assert_awaited_once_with("vocab:h:1:s.t")
+    fake_store.add.assert_not_called()

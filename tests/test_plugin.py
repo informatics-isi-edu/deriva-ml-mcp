@@ -87,9 +87,20 @@ _EXECUTION_TOOLS = frozenset(
     }
 )
 
-# Union of all per-domain tool sets. Phase 5 registers dataset + feature
-# + workflow + execution.
-_ALL_REGISTERED_TOOLS = _DATASET_TOOLS | _FEATURE_TOOLS | _WORKFLOW_TOOLS | _EXECUTION_TOOLS
+# v1.1 vocabulary domain -- one tool: a manual RAG re-index trigger.
+# It mutates the vector store but not catalog state, so mutates=False
+# (audit log treats cache refreshes as reads).
+_VOCABULARY_TOOLS = frozenset(
+    {
+        "deriva_ml_reindex_vocabularies",
+    }
+)
+
+# Union of all per-domain tool sets. Phase 5 registered dataset + feature
+# + workflow + execution; v1.1 adds vocabulary.
+_ALL_REGISTERED_TOOLS = (
+    _DATASET_TOOLS | _FEATURE_TOOLS | _WORKFLOW_TOOLS | _EXECUTION_TOOLS | _VOCABULARY_TOOLS
+)
 
 # All ML-domain MCP resource URIs registered by ``resources/ml.py``.
 # Mirrors the per-domain tool frozensets above so the same exact-equality
@@ -244,15 +255,17 @@ def test_register_wires_rag_github_source(ctx):
     assert ctx._rag_sources[0].name == "deriva-ml-docs"
 
 
-def test_register_wires_three_catalog_connect_hooks(ctx):
-    """``register(ctx)`` must wire the three per-user RAG catalog hooks.
+def test_register_wires_four_catalog_connect_hooks(ctx):
+    """``register(ctx)`` must wire the four RAG catalog hooks.
 
-    Hook identity is already covered by ``tests/test_rag.py``; this
-    test only pins the count so that dropping one hook from
-    ``register_rag_sources`` is also caught at the plugin level.
+    Three per-user row indexers (Dataset, Workflow, Execution) plus
+    one catalog-public vocab indexer (added in v1.1). Hook identity
+    is already covered by ``tests/test_rag.py``; this test only pins
+    the count so that dropping one hook from ``register_rag_sources``
+    is also caught at the plugin level.
     """
     register(ctx)
-    assert len(ctx._catalog_connect_hooks) == 3
+    assert len(ctx._catalog_connect_hooks) == 4
 
 
 def test_register_wires_three_prompts(ctx, capturing_mcp):
@@ -275,10 +288,78 @@ def test_register_does_not_use_rag_dataset_indexer(ctx):
     shared across all users (the enricher fires under whichever
     credential happens to connect first), which would leak per-user ACL
     rows across users. Phase 6.3 deliberately rejected this API in
-    favor of per-user ``on_catalog_connect`` hooks. If a future commit
-    accidentally introduces a call to ``ctx.rag_dataset_indexer(...)``
-    anywhere in the plugin (in ``tools/``, ``resources/``, or any new
-    file), this test catches it at the plugin level.
+    favor of per-user ``on_catalog_connect`` hooks. v1.1 vocab indexing
+    likewise rejects it -- vocab chunks land via direct store writes
+    under a custom ``vocab:`` prefix, not via ``rag_dataset_indexer``.
+    If a future commit accidentally introduces a call to
+    ``ctx.rag_dataset_indexer(...)`` anywhere in the plugin (in
+    ``tools/``, ``resources/``, or any new file), this test catches it
+    at the plugin level.
     """
     register(ctx)
     assert len(ctx._rag_dataset_indexers) == 0
+
+
+def test_vocab_hook_writes_to_vocab_prefix_not_data_prefix(ctx):
+    """Architectural carve-out pin: vocab chunks land under ``vocab:``, never ``data:``.
+
+    The vocab hook is the fourth ``on_catalog_connect`` hook registered
+    by ``register_rag_sources``. It MUST write to the vector store
+    under a ``vocab:`` source prefix (catalog-public, no per-user
+    partitioning) and MUST NOT route through ``index_table_data``
+    (whose source naming is hardcoded to ``data:{host}:{cat}:{user_id}``
+    -- which would (a) over-partition vocabularies per user, and (b)
+    get caught by upstream's ``data:`` user-id filter for any caller
+    whose user_id differs from the indexer's).
+
+    The test fires the registered vocab hook with a mocked ``ml`` and
+    ``store``, then asserts every chunk passed to ``store.add`` carries
+    a source starting with ``vocab:``. If a future refactor pushes
+    vocab indexing through ``index_table_data`` instead, the chunks
+    would carry ``data:`` and this test would fail.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    register(ctx)
+    vocab_hook = ctx._catalog_connect_hooks[3]
+
+    # Mock the vocab table the hook iterates over.
+    vocab_table = MagicMock()
+    vocab_table.name = "Dataset_Type"
+    vocab_table.schema.name = "deriva-ml"
+    term = MagicMock()
+    term.name = "Training"
+    term.description = "training-data partition"
+    term.synonyms = []
+    term.rid = "1-TRAIN"
+
+    fake_ml = MagicMock()
+    fake_ml.find_vocabularies.return_value = [vocab_table]
+    fake_ml.list_vocabulary_terms.return_value = [term]
+
+    fake_store = MagicMock()
+    fake_store.delete_source = AsyncMock()
+    fake_store.add = AsyncMock()
+
+    from deriva_ml_mcp.resources import rag as rag_module
+
+    with (
+        patch.object(rag_module, "get_rag_store", return_value=fake_store),
+        patch.object(rag_module, "get_ml", return_value=fake_ml),
+    ):
+        import asyncio
+
+        asyncio.run(vocab_hook("h.example", "1", "hash", {}))
+
+    # All chunks land under vocab:..., never data:... .
+    add_calls = fake_store.add.await_args_list
+    assert add_calls, "vocab hook should have written at least one chunk batch"
+    for call in add_calls:
+        chunks = call.args[0]
+        for chunk in chunks:
+            assert chunk.source.startswith("vocab:"), (
+                f"vocab hook produced non-vocab source: {chunk.source!r}"
+            )
+            assert not chunk.source.startswith("data:"), (
+                f"vocab hook accidentally routed through data: prefix: {chunk.source!r}"
+            )
