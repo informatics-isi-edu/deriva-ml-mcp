@@ -109,6 +109,7 @@ _ASSET_TOOLS = frozenset(
 _VOCABULARY_TOOLS = frozenset(
     {
         "deriva_ml_reindex_vocabularies",
+        "deriva_ml_resync_indexes",
     }
 )
 

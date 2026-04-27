@@ -577,6 +577,165 @@ async def _delete_dataset_source(hostname: str, catalog_id: str, dataset_rid: st
         return False
 
 
+async def _resync_user_sources(
+    hostname: str,
+    catalog_id: str,
+    target: str | None = None,
+) -> dict[str, int]:
+    """Refresh the calling user's per-user-trio RAG sources.
+
+    Wrapping orchestrator for the v1.4 manual cross-user-resync tool.
+    The v1.3 surgical re-index covers freshness for the calling user's
+    OWN mutations, but mutations by OTHER users (or by non-MCP clients
+    like Chaise) leave the calling user's per-user sources stale until
+    they reconnect. This helper is the bridge: when called, it re-runs
+    the same per-RID re-index loop that ``_make_hook`` runs at first
+    connect, but on demand instead of on connect.
+
+    Two modes:
+
+    - ``target=None`` (default): refresh ALL of the calling user's
+      per-user sources for this catalog. Iterates dataset / workflow
+      / execution row fetchers, calls ``_reindex_<entity>`` per RID.
+      The bigger hammer; LLM-friendly default.
+
+    - ``target="<table>:<rid>"``: refresh just one source. ``<table>``
+      is one of ``dataset`` / ``workflow`` / ``execution``; ``<rid>``
+      is the row RID. For when the LLM (or a skill) knows exactly
+      which RID needs refreshing.
+
+    Best-effort throughout: per-RID failures are logged and swallowed
+    (same contract as ``_make_hook``). The returned dict reports the
+    count of sources successfully refreshed per table -- a partial
+    success is normal (e.g. one RID raised; the rest landed).
+
+    Args:
+        hostname: Deriva hostname.
+        catalog_id: Catalog ID or alias.
+        target: Optional ``"<table>:<rid>"`` selector. ``None`` means
+            refresh all of the calling user's per-user sources.
+
+    Returns:
+        Dict with keys ``dataset``, ``workflow``, ``execution`` mapping
+        to the count of sources successfully refreshed in each table.
+        For ``target="<table>:<rid>"`` mode, only the targeted table's
+        key has a non-zero value.
+
+    Raises:
+        ValueError: If ``target`` is malformed (not ``"<table>:<rid>"``
+            shape or ``<table>`` not in the supported set). Caller
+            should wrap and surface as an error envelope.
+    """
+    counts: dict[str, int] = {"dataset": 0, "workflow": 0, "execution": 0}
+
+    if target is not None:
+        # Surgical mode: parse "table:rid" and dispatch to one helper.
+        if ":" not in target:
+            raise ValueError(
+                f"target must be in '<table>:<rid>' form (e.g. 'dataset:1-AAAA'); got {target!r}"
+            )
+        table_token, rid = target.split(":", 1)
+        if table_token == _DATASET_TOKEN:
+            chunks = await _reindex_dataset(hostname, catalog_id, rid)
+            if chunks > 0:
+                counts["dataset"] = 1
+        elif table_token == _WORKFLOW_TOKEN:
+            chunks = await _reindex_workflow(hostname, catalog_id, rid)
+            if chunks > 0:
+                counts["workflow"] = 1
+        elif table_token == _EXECUTION_TOKEN:
+            chunks = await _reindex_execution(hostname, catalog_id, rid)
+            if chunks > 0:
+                counts["execution"] = 1
+        else:
+            raise ValueError(
+                f"target table must be one of dataset/workflow/execution; got {table_token!r}"
+            )
+        return counts
+
+    # All-of-user-sources mode: iterate each table's row fetcher and
+    # re-index every visible RID for the calling user. Per-RID
+    # try/except so one failure doesn't cancel the rest -- defense in
+    # depth (the helpers swallow internally, but if a fetcher itself
+    # raises we still want partial progress reported).
+    try:
+        dataset_rows = _fetch_dataset_rows(hostname, catalog_id)
+    except Exception:  # noqa: BLE001 -- best-effort, log + continue
+        logger.exception(
+            "deriva-ml RAG: failed to enumerate datasets for resync in %s/%s",
+            hostname,
+            catalog_id,
+        )
+        dataset_rows = []
+    for row in dataset_rows:
+        rid = row.get("rid")
+        if not rid:
+            continue
+        try:
+            chunks = await _reindex_dataset(hostname, catalog_id, rid)
+            if chunks > 0:
+                counts["dataset"] += 1
+        except Exception:  # noqa: BLE001 -- best-effort, per-RID
+            logger.exception(
+                "deriva-ml RAG: resync failed for dataset %s in %s/%s",
+                rid,
+                hostname,
+                catalog_id,
+            )
+
+    try:
+        workflow_rows = _fetch_workflow_rows(hostname, catalog_id)
+    except Exception:  # noqa: BLE001 -- best-effort, log + continue
+        logger.exception(
+            "deriva-ml RAG: failed to enumerate workflows for resync in %s/%s",
+            hostname,
+            catalog_id,
+        )
+        workflow_rows = []
+    for row in workflow_rows:
+        rid = row.get("rid")
+        if not rid:
+            continue
+        try:
+            chunks = await _reindex_workflow(hostname, catalog_id, rid)
+            if chunks > 0:
+                counts["workflow"] += 1
+        except Exception:  # noqa: BLE001 -- best-effort, per-RID
+            logger.exception(
+                "deriva-ml RAG: resync failed for workflow %s in %s/%s",
+                rid,
+                hostname,
+                catalog_id,
+            )
+
+    try:
+        execution_rows = _fetch_execution_rows(hostname, catalog_id)
+    except Exception:  # noqa: BLE001 -- best-effort, log + continue
+        logger.exception(
+            "deriva-ml RAG: failed to enumerate executions for resync in %s/%s",
+            hostname,
+            catalog_id,
+        )
+        execution_rows = []
+    for row in execution_rows:
+        rid = row.get("rid")
+        if not rid:
+            continue
+        try:
+            chunks = await _reindex_execution(hostname, catalog_id, rid)
+            if chunks > 0:
+                counts["execution"] += 1
+        except Exception:  # noqa: BLE001 -- best-effort, per-RID
+            logger.exception(
+                "deriva-ml RAG: resync failed for execution %s in %s/%s",
+                rid,
+                hostname,
+                catalog_id,
+            )
+
+    return counts
+
+
 # ---------------------------------------------------------------------------
 # Hook factory (first-connect bulk index, per-RID source naming)
 # ---------------------------------------------------------------------------

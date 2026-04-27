@@ -1,17 +1,25 @@
-"""Vocabulary management tools for deriva-ml-mcp.
+"""RAG cache management tools for deriva-ml-mcp.
 
-Currently exposes one tool:
+Both tools in this module are **manual cache-refresh** verbs --
+``mutates=False``, no audit emission, no catalog-state change. They
+exist because RAG indexes can fall out of sync with catalog state in
+two scenarios the framework's lifecycle hooks don't cover:
 
-- ``deriva_ml_reindex_vocabularies`` -- force re-index of vocabulary
-  tables in the RAG vector store. Use after adding/removing terms via
-  core's ``add_term`` / ``delete_term`` tools (which don't fire any
-  framework lifecycle hook -- tracked upstream as
+- ``deriva_ml_reindex_vocabularies`` (v1.1) -- after adding/removing
+  terms via core's ``add_term`` / ``delete_term`` (which don't fire
+  any framework lifecycle hook; tracked upstream as
   ``deriva-mcp-core#3``).
 
-Why this is a tool, not a resource: it has a side effect (vector
-store mutation), even though catalog state is unchanged. ``mutates=False``
-because it doesn't change *catalog* state -- the audit log doesn't
-care about cache refreshes.
+- ``deriva_ml_resync_indexes`` (v1.4) -- to refresh the calling
+  user's per-user-trio (Dataset / Workflow / Execution) sources
+  after **another user** (or a non-MCP client like Chaise) has
+  mutated catalog state the calling user can see. v1.3's surgical
+  re-index covers OWN mutations; this tool is the bridge for
+  cross-user freshness. See #9 for the design discussion (Option 4
+  in the original issue body).
+
+(The module name ``vocabulary`` predates the v1.4 addition and is
+now misleading; rename to ``maintenance`` is a v1.x cleanup.)
 """
 
 from __future__ import annotations
@@ -104,6 +112,103 @@ def register(ctx: PluginContext) -> None:
             return _error_envelope(
                 exc,
                 operation="reindex_vocabularies",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,  # not a catalog mutation
+            )
+
+    @ctx.tool(mutates=False)
+    async def deriva_ml_resync_indexes(
+        hostname: str,
+        catalog_id: str,
+        target: str | None = None,
+    ) -> str:
+        """Refresh the calling user's per-user RAG sources for this catalog.
+
+        v1.3's surgical per-RID re-indexing handles freshness for the
+        calling user's OWN mutations. This tool is the bridge for
+        **cross-user freshness**: when another user (or a non-MCP
+        client like Chaise) has mutated catalog state the calling user
+        can see, those changes don't appear in the calling user's
+        per-user RAG sources until the user explicitly resyncs.
+
+        Two modes:
+
+        - ``target=None`` (default): refresh ALL of the calling user's
+          per-user sources for this catalog (datasets + workflows +
+          executions). The bigger hammer; LLM-friendly default for
+          "I think my view is stale, refresh everything."
+
+        - ``target="<table>:<rid>"``: refresh just one source.
+          ``<table>`` is one of ``dataset`` / ``workflow`` /
+          ``execution``; ``<rid>`` is the row's RID. For when the
+          caller knows exactly which row is stale.
+
+        ``mutates=False`` because the call does not change catalog
+        state -- it only refreshes the RAG vector store. No audit
+        emission on success or failure (cache refresh, not catalog
+        mutation).
+
+        Best-effort throughout: per-RID failures during a resync are
+        logged and swallowed; the response reports the count of
+        sources successfully refreshed per table. A partial success
+        (e.g. dataset 5/6 refreshed because one raised) is still a
+        success-shape response.
+
+        WHEN TO USE THIS TOOL. ``deriva_ml_getting_started``'s
+        cross-user freshness section explains the trigger conditions.
+        Common cases: collaborative curation (another user just
+        released a dataset visible to you); cross-client edits (a
+        colleague just renamed an execution via Chaise); or a generic
+        "I'm not sure my RAG view is current" hedge before a
+        consequential ``rag_search``.
+
+        Args:
+            hostname: The Deriva server hostname.
+            catalog_id: The catalog ID as a string.
+            target: Optional ``"<table>:<rid>"`` selector. ``None``
+                (default) refreshes all of the calling user's
+                per-user sources.
+
+        Returns:
+            JSON string. Success:
+            ``{"resynced": {"dataset": N, "workflow": M, "execution": K}}``
+            -- counts of sources successfully refreshed per table.
+            For ``target="<table>:<rid>"`` mode, only the targeted
+            table's count is non-zero. Failure: ``{"error": str}``.
+
+        Raises:
+            ValueError: If ``target`` is malformed (not
+                ``"<table>:<rid>"`` shape, or ``<table>`` not in
+                ``dataset`` / ``workflow`` / ``execution``). Wrapped
+                as ``{"error": ...}``.
+
+        Example:
+            Refresh everything (most common pattern)::
+
+                deriva_ml_resync_indexes(hostname="myhost", catalog_id="1")
+
+            Surgical refresh of one dataset::
+
+                deriva_ml_resync_indexes(
+                    hostname="myhost",
+                    catalog_id="1",
+                    target="dataset:1-AAAA",
+                )
+        """
+        try:
+            with deriva_call():
+                # Lazy import per the established pattern -- keeps
+                # module import time cheap and lets tests patch
+                # rag._resync_user_sources at the use-site.
+                from deriva_ml_mcp.resources.rag import _resync_user_sources
+
+                counts = await _resync_user_sources(hostname, catalog_id, target=target)
+            return json.dumps({"resynced": counts})
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="resync_indexes",
                 hostname=hostname,
                 catalog_id=catalog_id,
                 audit=False,  # not a catalog mutation

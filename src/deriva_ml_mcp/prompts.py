@@ -201,10 +201,22 @@ The picker pattern works for these categories. Freshness varies:
     modified row is searchable via rag_search on the very next
     call from the same user.
 
-    Cross-user freshness is still imperfect: user A's mutation
-    does NOT refresh user B's per-user sources, so user B sees
-    A's change only at next first-connect (deriva-ml-mcp#9 tracks
-    the cross-user invalidation work for v1.4).
+    Cross-user freshness is best-effort. User A's mutation does
+    NOT refresh user B's per-user sources -- B sees A's change only
+    at B's next first-connect to the catalog. Same gap applies to
+    mutations from non-MCP clients (Chaise UI, ERMrest direct,
+    other deriva-ml scripts): they don't propagate to your per-user
+    sources at all.
+
+    When working on multi-user collaborative catalogs, treat RAG
+    hits for shared-visible rows as hints, NOT as ground truth. The
+    recovery pattern: when an LLM hit feels stale, verify with the
+    corresponding deriva_ml_get_<entity> tool, which always reads
+    live catalog state. If you have reason to believe your view is
+    significantly stale (e.g., a colleague just released a dataset),
+    call deriva_ml_resync_indexes(hostname, catalog_id) first to
+    refresh your per-user sources -- or pass target="<table>:<rid>"
+    to refresh just one source surgically.
 
 MUTATION: WORKFLOW -> EXECUTION -> OUTPUTS
 ------------------------------------------
