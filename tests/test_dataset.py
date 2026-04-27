@@ -143,6 +143,11 @@ async def test_get_dataset_success(dataset_ctx, capturing_mcp, mock_ml):
 
 
 async def test_get_dataset_with_history(dataset_ctx, capturing_mcp, mock_ml):
+    """v2.0 wire change: ``deriva_ml_get_dataset`` returns ``version_history``
+    (was ``history`` in v1.x). The tool now shares the wire shape with the
+    ``deriva://catalog/{h}/{c}/ml/dataset/{rid}`` resource so consumers can
+    switch between tool and resource without re-mapping fields.
+    """
     ds = _make_dataset_mock("1-AAAA")
     history_entry = MagicMock()
     history_entry.dataset_version = "1.0.0"
@@ -160,7 +165,7 @@ async def test_get_dataset_with_history(dataset_ctx, capturing_mcp, mock_ml):
             include_history=True,
         )
     )
-    assert out["history"] == [
+    assert out["version_history"] == [
         {
             "version": "1.0.0",
             "snapshot": "snap1",

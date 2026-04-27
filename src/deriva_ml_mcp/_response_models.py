@@ -294,14 +294,101 @@ class ExecutionSummary(BaseModel):
     duration: timedelta | str | None
 
 
-# NOTE: ExecutionDetail is intentionally NOT modeled in PR 1 (v1.6).
-# The v1.x wire shape from ``_get_execution_detail_impl`` is a complex
-# nested-dict payload (``inputs.datasets``, ``inputs.assets``,
-# ``outputs.assets``, optional ``experiment``) that warrants its own
-# design pass. PR 2 (v2.0) will redesign the wire shape and add the
-# corresponding Pydantic model. Until then the helper returns
-# ``dict[str, Any]`` and the wrapper / resource serialize via plain
-# ``json.dumps(..., default=str)``.
+class ExecutionInputDatasetRef(BaseModel):
+    """One input dataset on an Execution detail's ``inputs.datasets`` list."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rid: str
+    version: str | None
+
+
+class ExecutionAssetRef(BaseModel):
+    """One asset on an Execution detail's ``inputs.assets`` / ``outputs.assets``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rid: str | None
+    filename: str | None
+
+
+class ExecutionInputs(BaseModel):
+    """Inputs grouping on an Execution detail.
+
+    Datasets and assets are intentionally separate lists -- a dataset
+    is a typed bundle of catalog rows (with a version), an asset is a
+    single file. Treating them uniformly would lose type information
+    that consumers care about (e.g. version pinning).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    datasets: list[ExecutionInputDatasetRef] = Field(default_factory=list)
+    assets: list[ExecutionAssetRef] = Field(default_factory=list)
+
+
+class ExecutionOutputs(BaseModel):
+    """Outputs grouping on an Execution detail.
+
+    Outputs are asset-only today -- DerivaML doesn't currently model
+    "this execution produced this dataset" as a first-class output
+    relationship (datasets are produced by features that link back to
+    their producing execution; the relationship is reachable but not
+    direct). Kept as a single-key dict for forward compatibility with
+    a possible future ``outputs.datasets`` field.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    assets: list[ExecutionAssetRef] = Field(default_factory=list)
+
+
+class ExecutionExperiment(BaseModel):
+    """Experiment association on an Execution detail.
+
+    Present only when the execution is part of a Hydra-driven
+    experiment run. The ``model_config`` field name conflicts with
+    Pydantic's reserved attribute, so it's aliased to ``model_cfg``
+    in Python while the wire JSON key remains ``"model_config"``.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, protected_namespaces=())
+
+    name: str | None
+    config_choices: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    # Aliased: Python attribute is ``model_cfg``; wire key is ``"model_config"``
+    # to preserve the v1.x wire shape. Pydantic's protected_namespaces=() above
+    # is needed because ``model_*`` is a reserved prefix.
+    model_cfg: dict[str, str | int | float | bool | None] = Field(
+        default_factory=dict, alias="model_config"
+    )
+
+
+class ExecutionDetail(ExecutionSummary):
+    """Full Execution detail: summary + inputs + outputs + optional experiment.
+
+    Produced by ``_get_execution_detail_impl``. Used by the
+    ``deriva://catalog/{h}/{c}/ml/execution/{rid}`` resource.
+
+    The ``experiment`` key is None when the execution is not a
+    Hydra-driven experiment (the common case). The ``inputs.datasets``
+    list is best-effort -- if ``record.list_input_datasets()`` raises
+    (e.g. record not bound to a catalog), the list comes back empty
+    rather than aborting the whole detail payload. Same best-effort
+    semantics for ``inputs.assets`` and ``outputs.assets``.
+
+    The ``metadata`` key from the v1.x design (Deriva_Config /
+    Execution_Config / Hydra_Config / Runtime_Env) is intentionally
+    OMITTED until upstream provides a generic enumerator -- see the
+    TODO comment in ``_get_execution_detail_impl``.
+
+    v2.0 wire shape: identical to v1.x (this PR Pydantic-izes the
+    contract; there's no field rename or restructure on this model).
+    """
+
+    inputs: ExecutionInputs = Field(default_factory=ExecutionInputs)
+    outputs: ExecutionOutputs = Field(default_factory=ExecutionOutputs)
+    experiment: ExecutionExperiment | None = None
 
 
 class ExecutionListResponse(_PaginationFields):
