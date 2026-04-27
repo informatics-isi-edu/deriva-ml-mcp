@@ -160,6 +160,52 @@ This was decided after the v1.0 reviews surfaced dataset/workflow/execution
 read endpoints landing as both tools (paginated) and resources (snapshot).
 Don't replay the debate — write the helper once, register it twice.
 
+### Response models (Pydantic, v1.6+)
+
+Every list / detail / summary response shape is declared as a
+`pydantic.BaseModel` in `src/deriva_ml_mcp/_response_models.py`. The shared
+`_<verb>_impl` helpers return Pydantic instances; the wrapper and resource
+serialize via `payload.model_dump_json(by_alias=True)` (replaces the v1.5
+pattern of `json.dumps(payload)` over a plain dict).
+
+This is a **named, validated** contract -- helpers declare `-> DatasetSummary`
+instead of `-> dict[str, Any]`, and `model_config = ConfigDict(extra="forbid")`
+on every model catches helper-side typos and upstream-shape drift at
+construction time (raises `ValidationError` -- caught by the wrapper's
+`_error_envelope` and returned as `{"error": "..."}` on the wire).
+
+When adding a new shared helper:
+
+1. Add a Pydantic model to `_response_models.py` for the response shape.
+   Use `extra="forbid"` and explicit field types. For nullable fields, use
+   `T | None` and provide a `= None` default if the helper might omit the
+   field.
+2. Annotate the helper's return type as the new model.
+3. Construct the model directly: `return DatasetListResponse(datasets=...,
+   count=..., truncated=..., next_after_rid=...)`.
+4. In wrappers and resources, replace `json.dumps(payload)` with
+   `payload.model_dump_json(by_alias=True)` (the `by_alias=True` flag
+   handles fields like `AssetTableRef.schema_` that alias to wire keys
+   like `"schema"`).
+5. The intermediate `_summarize_*` helpers (e.g. `_summarize_dataset`)
+   still return `dict[str, Any]` — they're called from many ad-hoc payload
+   sites and converting at every call site is out of scope for v1.6 (PR 2
+   in the v2.0 sprint will sweep those). The list response helpers
+   construct the model from the dicts these helpers produce:
+   `DatasetSummary(**_summarize_dataset(d))`.
+
+Two `_*_impl` helpers are intentionally NOT Pydantic-ized in v1.6 because
+their wire shapes warrant their own design pass:
+
+- `_get_execution_detail_impl` — complex nested-dict shape with
+  `inputs.datasets`, `inputs.assets`, `outputs.assets`, optional
+  `experiment`. PR 2 (v2.0) is expected to redesign this.
+- The `deriva_ml_get_dataset` tool wrapper — uses an inline mini-detail
+  shape with `history` (list of 4-key dicts). PR 2 will unify the tool
+  and resource shapes (resource uses `version_history`).
+
+Both keep returning `dict[str, Any]` until PR 2.
+
 ## Coverage Report
 
 `docs/coverage.md` records what happened to every old `deriva-mcp` tool. Update it

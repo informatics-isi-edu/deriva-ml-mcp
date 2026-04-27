@@ -127,7 +127,7 @@ def register(ctx: PluginContext) -> None:
                     after_rid=None,
                     limit=_MAX_LIMIT,
                 )
-            return json.dumps(payload)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
                 exc,
@@ -149,7 +149,7 @@ def register(ctx: PluginContext) -> None:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
                 payload = _get_dataset_detail_impl(ml, dataset_rid)
-            return json.dumps(payload)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
                 exc,
@@ -172,7 +172,7 @@ def register(ctx: PluginContext) -> None:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
                 payload = _list_dataset_members_summary_impl(ml, dataset_rid)
-            return json.dumps(payload)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
                 exc,
@@ -193,7 +193,7 @@ def register(ctx: PluginContext) -> None:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
                 payload = _list_workflows_impl(ml, after_rid=None, limit=_MAX_LIMIT)
-            return json.dumps(payload)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
                 exc,
@@ -210,7 +210,7 @@ def register(ctx: PluginContext) -> None:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
                 payload = _get_workflow_impl(ml, workflow_rid)
-            return json.dumps(payload)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
                 exc,
@@ -238,7 +238,7 @@ def register(ctx: PluginContext) -> None:
                     after_rid=None,
                     limit=_MAX_LIMIT,
                 )
-            return json.dumps(payload, default=str)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
                 exc,
@@ -293,7 +293,7 @@ def register(ctx: PluginContext) -> None:
                     after_rid=None,
                     limit=_MAX_LIMIT,
                 )
-            return json.dumps(payload)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
                 exc,
@@ -316,7 +316,7 @@ def register(ctx: PluginContext) -> None:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
                 payload = _list_asset_tables_impl(ml)
-            return json.dumps(payload)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
                 exc,
@@ -344,7 +344,7 @@ def register(ctx: PluginContext) -> None:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
                 payload = _get_asset_detail_impl(ml, asset_rid)
-            return json.dumps(payload)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
                 exc,

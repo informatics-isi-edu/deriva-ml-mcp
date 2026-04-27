@@ -44,6 +44,10 @@ from deriva_ml_mcp._helpers import (
     _paginate,
     _read_rid,
 )
+from deriva_ml_mcp._response_models import (
+    ExecutionListResponse,
+    ExecutionSummary,
+)
 from deriva_ml_mcp.ml_context import get_ml
 
 if TYPE_CHECKING:
@@ -97,10 +101,10 @@ def _summarize_execution(record: Any) -> dict[str, Any]:
         record: An ``ExecutionRecord`` (preferred) or ``Execution`` mock.
 
     Returns:
-        Dict with ``rid``, ``workflow_rid``, ``status`` (str),
-        ``description``, ``start_time``, ``stop_time``, ``duration``.
-        Datetime fields serialize via ``json.dumps(default=str)`` at the
-        call sites.
+        Dict matching the ``ExecutionSummary`` Pydantic model shape.
+        ``_list_executions_impl`` constructs the model from these
+        dicts. Kept dict-returning to avoid touching ad-hoc payload
+        sites in PR 1; PR 2 may switch to Pydantic-throughout.
 
     Example:
         >>> from unittest.mock import MagicMock
@@ -137,7 +141,7 @@ def _list_executions_impl(
     status: str | None,
     after_rid: str | None,
     limit: int,
-) -> dict[str, Any]:
+) -> ExecutionListResponse:
     """Fetch + paginate executions. Pure helper -- shared by tool and resource.
 
     Args:
@@ -148,7 +152,7 @@ def _list_executions_impl(
         limit: Max executions per page (already capped by caller).
 
     Returns:
-        Dict ``{"executions": [...], "count", "truncated", "next_after_rid"}``.
+        ``ExecutionListResponse`` -- see ``deriva_ml_mcp._response_models``.
     """
     status_enum = ExecutionStatus(status) if status else None
     executions = sorted(
@@ -161,12 +165,12 @@ def _list_executions_impl(
         limit=limit,
         key=partial(_read_rid, rid_key="execution_rid"),
     )
-    return {
-        "executions": [_summarize_execution(e) for e in page],
-        "count": len(page),
-        "truncated": truncated,
-        "next_after_rid": next_after,
-    }
+    return ExecutionListResponse(
+        executions=[ExecutionSummary(**_summarize_execution(e)) for e in page],
+        count=len(page),
+        truncated=truncated,
+        next_after_rid=next_after,
+    )
 
 
 def _get_execution_detail_impl(ml: Any, execution_rid: str) -> dict[str, Any]:
@@ -199,10 +203,18 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> dict[str, Any]:
         execution_rid: The RID of the execution to look up.
 
     Returns:
-        Dict with ``rid``, ``workflow_rid``, ``status``, ``description``,
-        ``start_time``, ``stop_time``, ``duration``, ``inputs``,
-        ``outputs``. The ``experiment`` key is present only when the
-        execution is an Experiment.
+        Dict with keys: ``rid``, ``workflow_rid``, ``status``,
+        ``description``, ``start_time``, ``stop_time``, ``duration``,
+        ``inputs`` (``{datasets, assets}`` nested), ``outputs``
+        (``{assets}`` nested), and optional ``experiment``
+        (``{name, config_choices, model_config}``).
+
+        Note: PR 1 (v1.6) leaves this helper dict-returning. The
+        ``ExecutionDetail`` Pydantic model in ``_response_models.py``
+        currently models a flat-list ``inputs/outputs`` shape that
+        does NOT match this helper's nested-dict output -- the model
+        is positioned for PR 2 (v2.0) to redesign the wire shape.
+        Until then, this helper preserves the v1.x wire format.
     """
     record = ml.lookup_execution(execution_rid)
     payload = _summarize_execution(record)
@@ -401,7 +413,7 @@ def register(ctx: PluginContext) -> None:
                     after_rid=after_rid,
                     limit=capped,
                 )
-            return json.dumps(payload, default=str)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,

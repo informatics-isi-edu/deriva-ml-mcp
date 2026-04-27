@@ -42,6 +42,14 @@ from deriva_ml_mcp._helpers import (
     _read_rid,
     _table_to_dict,
 )
+from deriva_ml_mcp._response_models import (
+    DatasetDetail,
+    DatasetListResponse,
+    DatasetMemberRef,
+    DatasetMembersSummaryResponse,
+    DatasetSummary,
+    DatasetVersionEntry,
+)
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
@@ -54,7 +62,16 @@ def _summarize_dataset(ds: Any) -> dict[str, Any]:
         ds: A ``deriva_ml.dataset.dataset.Dataset`` instance.
 
     Returns:
-        Dict with ``rid``, ``description``, ``dataset_types``, ``current_version``.
+        Dict matching the ``DatasetSummary`` Pydantic model shape. The
+        Pydantic model lives in ``deriva_ml_mcp._response_models`` and
+        is the validated form -- ``_list_datasets_impl`` constructs
+        the model from the dicts this helper produces. We keep this
+        helper dict-returning because it's called from ad-hoc payload
+        sites (e.g. parents/children blocks in
+        ``deriva_ml_list_dataset_relations``) that don't want a
+        validated Pydantic instance, and converting at every call
+        site would expand v1.6's scope. Those sites get tightened in
+        PR 2 (v2.0).
     """
     current = ds.current_version
     return {
@@ -71,7 +88,7 @@ def _list_datasets_impl(
     after_rid: str | None,
     limit: int,
     include_deleted: bool = False,
-) -> dict[str, Any]:
+) -> DatasetListResponse:
     """Fetch + paginate datasets. Pure helper -- shared by tool and resource.
 
     Args:
@@ -81,14 +98,7 @@ def _list_datasets_impl(
         include_deleted: Forward to ``find_datasets(deleted=...)``.
 
     Returns:
-        Dict ``{"datasets": [...], "count", "truncated", "next_after_rid"}``.
-
-    Example:
-        >>> from unittest.mock import MagicMock
-        >>> ml = MagicMock()
-        >>> ml.find_datasets.return_value = []
-        >>> _list_datasets_impl(ml, after_rid=None, limit=100)
-        {'datasets': [], 'count': 0, 'truncated': False, 'next_after_rid': None}
+        ``DatasetListResponse`` -- see ``deriva_ml_mcp._response_models``.
     """
     datasets = sorted(
         ml.find_datasets(deleted=include_deleted),
@@ -100,71 +110,72 @@ def _list_datasets_impl(
         limit=limit,
         key=partial(_read_rid, rid_key="dataset_rid"),
     )
-    return {
-        "datasets": [_summarize_dataset(d) for d in page],
-        "count": len(page),
-        "truncated": truncated,
-        "next_after_rid": next_after,
-    }
+    return DatasetListResponse(
+        datasets=[DatasetSummary(**_summarize_dataset(d)) for d in page],
+        count=len(page),
+        truncated=truncated,
+        next_after_rid=next_after,
+    )
 
 
-def _get_dataset_detail_impl(ml: Any, dataset_rid: str) -> dict[str, Any]:
+def _get_dataset_detail_impl(ml: Any, dataset_rid: str) -> DatasetDetail:
     """Build the dataset detail payload (summary + chaise URL + version history).
 
     Used by the ``deriva://catalog/{h}/{c}/ml/dataset/{rid}`` resource.
-    The shape mirrors ``deriva_ml_get_dataset(include_history=True)`` but always
-    includes ``version_history`` (renamed from the tool's ``history``
-    key per the resource design in coverage.md).
+    The shape mirrors ``deriva_ml_get_dataset(include_history=True)``
+    but always includes ``version_history``.
 
     Args:
         ml: A connected ``deriva_ml.DerivaML`` instance.
         dataset_rid: The RID of the dataset to look up.
 
     Returns:
-        Dict with ``rid``, ``description``, ``dataset_types``,
-        ``current_version``, ``chaise_url``, ``version_history``.
-
-    Example:
-        >>> # Illustrative -- exercises a live ml in real use.
+        ``DatasetDetail`` -- see ``deriva_ml_mcp._response_models``.
+        ``version_history`` is a list of deriva-ml ``DatasetHistory``
+        Pydantic models (no re-declaration of the version-row shape on
+        our side).
     """
     ds = ml.lookup_dataset(dataset_rid)
-    payload = _summarize_dataset(ds)
-    payload["chaise_url"] = ds.get_chaise_url()
-    payload["version_history"] = [
-        {
-            "version": str(h.dataset_version),
-            "snapshot": h.snapshot,
-            "description": h.description,
-            "execution_rid": h.execution_rid,
-        }
+    summary = _summarize_dataset(ds)
+    version_history = [
+        DatasetVersionEntry(
+            version=str(h.dataset_version),
+            snapshot=h.snapshot,
+            description=h.description,
+            execution_rid=h.execution_rid,
+        )
         for h in ds.dataset_history()
     ]
-    return payload
+    return DatasetDetail(
+        **summary,
+        chaise_url=ds.get_chaise_url(),
+        version_history=version_history,
+    )
 
 
-def _list_dataset_members_summary_impl(ml: Any, dataset_rid: str) -> dict[str, Any]:
+def _list_dataset_members_summary_impl(ml: Any, dataset_rid: str) -> DatasetMembersSummaryResponse:
     """Build the dataset members summary (table -> count map + total).
 
     Resource-only convenience: returns the per-table counts plus a
     flattened ``members`` list of ``{table, rid}`` dicts capped at
     ``_MAX_LIMIT`` rows for the bundled summary view. The ``truncated``
     flag is True when the flattened list was capped; callers should
-    use the ``deriva_ml_list_dataset_members`` tool with pagination to drill in.
+    use the ``deriva_ml_list_dataset_members`` tool with pagination to
+    drill in.
 
     Args:
         ml: A connected ``deriva_ml.DerivaML`` instance.
         dataset_rid: The RID of the dataset to inspect.
 
     Returns:
-        Dict ``{"dataset_rid", "summary": {<table>: count, ...},
-        "total_count", "members": [{"table", "rid"}, ...],
-        "truncated": bool, "tables": [...]}``.
+        ``DatasetMembersSummaryResponse`` -- see
+        ``deriva_ml_mcp._response_models``.
     """
     ds = ml.lookup_dataset(dataset_rid)
     members_by_table = ds.list_dataset_members()
     summary = {tname: len(rows) for tname, rows in members_by_table.items()}
     total = sum(summary.values())
-    flattened: list[dict[str, Any]] = []
+    flattened: list[DatasetMemberRef] = []
     # When total > _MAX_LIMIT, this loop stops mid-way through whichever
     # table happens to be iterated last (dict iteration order = insertion
     # order). Per-table counts in `summary` remain accurate; only the
@@ -174,17 +185,17 @@ def _list_dataset_members_summary_impl(ml: Any, dataset_rid: str) -> dict[str, A
         for row in rows:
             if len(flattened) >= _MAX_LIMIT:
                 break
-            flattened.append({"table": tname, "rid": row.get("RID", "")})
+            flattened.append(DatasetMemberRef(table=tname, rid=row.get("RID", "")))
         if len(flattened) >= _MAX_LIMIT:
             break
-    return {
-        "dataset_rid": dataset_rid,
-        "summary": summary,
-        "total_count": total,
-        "members": flattened,
-        "truncated": total > len(flattened),
-        "tables": list(members_by_table.keys()),
-    }
+    return DatasetMembersSummaryResponse(
+        dataset_rid=dataset_rid,
+        summary=summary,
+        total_count=total,
+        members=flattened,
+        truncated=total > len(flattened),
+        tables=list(members_by_table.keys()),
+    )
 
 
 def register(ctx: PluginContext) -> None:
@@ -260,7 +271,7 @@ def register(ctx: PluginContext) -> None:
                     limit=capped,
                     include_deleted=include_deleted,
                 )
-            return json.dumps(payload)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             # Read-only tool: log+return without an audit row (I-2 fix).
             return _error_envelope(
@@ -288,6 +299,12 @@ def register(ctx: PluginContext) -> None:
             JSON string with the full dataset summary:
             ``{"rid", "description", "dataset_types", "current_version",
             "chaise_url", "history": [...] | omitted}``.
+
+        Note:
+            The tool's ``history`` key and the resource's
+            ``version_history`` key carry the same data. The two will
+            be unified to ``version_history`` in v2.0; v1.x preserves
+            the legacy ``history`` key for backward compatibility.
 
         Raises:
             RuntimeError: If the dataset RID doesn't exist, propagated from
