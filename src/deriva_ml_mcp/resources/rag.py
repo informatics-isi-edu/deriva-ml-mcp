@@ -88,6 +88,7 @@ from deriva_ml_mcp.tools.workflow import _list_workflows_impl
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
+    from deriva_mcp_core.rag.store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +253,13 @@ class _VocabSerializer(RowSerializer):
 
     def serialize(self, table_name: str, row: dict) -> str | None:  # noqa: D401
         """Serialize one vocabulary term, or return None when ``name`` is absent."""
+        # Contract divergence vs _DatasetSerializer/_WorkflowSerializer/
+        # _ExecutionSerializer: those gate on table_name to dispatch among
+        # multiple known table types. This serializer accepts ANY vocab
+        # table; dispatch is handled by the caller's discovery loop in
+        # _index_vocabularies (which iterates ml.find_vocabularies()), not
+        # by the serializer itself. table_name is only used for the inline
+        # header so a search hit carries its parent vocab inline.
         name = row.get("name") or row.get("Name")
         if not name:
             return None
@@ -428,7 +436,7 @@ def _vocab_source_name(hostname: str, catalog_id: str, qname: str) -> str:
 
 
 async def _write_vocab_chunks(
-    store: Any,
+    store: VectorStore,
     source: str,
     vocab_table: str,
     terms: list[dict[str, Any]],
