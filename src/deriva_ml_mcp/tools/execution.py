@@ -967,6 +967,92 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
+    async def deriva_ml_update_execution(
+        hostname: str,
+        catalog_id: str,
+        execution_rid: str,
+        description: str | None = None,
+    ) -> str:
+        """Update an execution's description.
+
+        Description-only by design. The Execution table has no
+        ``Execution_Type`` field (no curation symmetry to add there),
+        and ``Status`` edits remain forbidden -- they are state-machine
+        territory driven by ``deriva_ml_start_execution`` /
+        ``deriva_ml_commit_execution`` / ``deriva_ml_abort_execution``,
+        not freely editable. Free-form status writes were deliberately
+        rejected in v1.0 (see the ``update_execution_status`` row in
+        ``docs/coverage.md``).
+
+        ``description`` is a free-text overwrite of the execution row's
+        ``Description`` column. Setting it on the catalog-bound
+        ``ExecutionRecord`` writes through to the catalog directly via
+        the deriva-ml setter hook.
+
+        Args:
+            hostname: The Deriva server hostname.
+            catalog_id: The catalog ID as a string.
+            execution_rid: The RID of the execution to update.
+            description: New description text. Required (must be
+                non-None); passing ``None`` returns an error envelope
+                because there is nothing else to update.
+
+        Returns:
+            JSON string ``{"status": "updated", "execution_rid",
+            "updated_fields": ["description"]}``.
+
+        Raises:
+            RuntimeError: Wrapped, propagated from
+                ``deriva_ml.DerivaML.lookup_execution`` or the
+                ``ExecutionRecord.description`` catalog-write hook
+                (e.g. unknown RID, read-only catalog snapshot).
+
+        Example:
+            ``{"status": "updated", "execution_rid": "1-EXEC",
+            "updated_fields": ["description"]}``.
+        """
+        if description is None:
+            return json.dumps(
+                {
+                    "error": (
+                        "description must be provided; no other fields are editable on Execution "
+                        "(status changes go through start/commit/abort)"
+                    )
+                }
+            )
+
+        updated_fields: list[str] = []
+        try:
+            with deriva_call():
+                ml = get_ml(hostname, catalog_id)
+                record = ml.lookup_execution(execution_rid)
+                record.description = description
+                updated_fields.append("description")
+            audit_event(
+                "deriva_ml_update_execution",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                execution_rid=execution_rid,
+                updated_fields=updated_fields,
+            )
+            return json.dumps(
+                {
+                    "status": "updated",
+                    "execution_rid": execution_rid,
+                    "updated_fields": updated_fields,
+                }
+            )
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="update_execution",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                execution_rid=execution_rid,
+                updated_fields=updated_fields,
+            )
+
+    @ctx.tool(mutates=True)
     async def deriva_ml_abort_execution(
         hostname: str,
         catalog_id: str,

@@ -838,63 +838,50 @@ async def test_delete_dataset_members_error(dataset_ctx, capturing_mcp, mock_ml)
 
 
 # ---------------------------------------------------------------------------
-# update_dataset_types
+# update_dataset (v1.2 -- renamed from update_dataset_types and widened to
+# take optional `dataset_types` (set-style diff) + optional `description`.)
 # ---------------------------------------------------------------------------
 
 
-async def test_update_dataset_types_add_and_remove(dataset_ctx, capturing_mcp, mock_ml):
-    ds = _make_dataset_mock(
-        "1-AAAA", dataset_types=["Training", "Validation"], current_version="1.4.0"
-    )
+async def test_update_dataset_types_set_diff_adds_and_removes(dataset_ctx, capturing_mcp, mock_ml):
+    """`dataset_types` is set-style: diff against current types, add+remove."""
+    ds = _make_dataset_mock("1-AAAA", dataset_types=["Training", "Stale"], current_version="1.4.0")
     mock_ml.lookup_dataset.return_value = ds
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["deriva_ml_update_dataset_types"](
+            await capturing_mcp.tools["deriva_ml_update_dataset"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
-                add=["Validation"],
-                remove=["Stale"],
+                dataset_types=["Training", "Validation"],
             )
         )
     assert out["status"] == "updated"
+    assert out["updated_fields"] == ["dataset_types"]
     assert out["added"] == ["Validation"]
     assert out["removed"] == ["Stale"]
     assert out["new_version"] == "1.4.0"
-    assert out["dataset_types"] == ["Training", "Validation"]
+    # add_dataset_types is called with the diff-add list (not the desired
+    # final list) -- Training is already present and not re-added.
     ds.add_dataset_types.assert_called_once_with(["Validation"])
     ds.remove_dataset_type.assert_called_once_with("Stale")
-    success = _success_calls(mock_audit, "deriva_ml_update_dataset_types")
+    success = _success_calls(mock_audit, "deriva_ml_update_dataset")
     assert success
     assert success[0].kwargs["added"] == ["Validation"]
     assert success[0].kwargs["removed"] == ["Stale"]
 
 
-async def test_update_dataset_types_remove_only_loops_per_term(dataset_ctx, capturing_mcp, mock_ml):
-    """Multiple removes call remove_dataset_type once per term (single-term API)."""
-    ds = _make_dataset_mock("1-AAAA", dataset_types=["Keep"])
-    mock_ml.lookup_dataset.return_value = ds
-    with patch("deriva_ml_mcp.tools.dataset.audit_event"):
-        await capturing_mcp.tools["deriva_ml_update_dataset_types"](
-            hostname="h",
-            catalog_id="1",
-            dataset_rid="1-AAAA",
-            remove=["A", "B", "C"],
-        )
-    # add_dataset_types should not be called when add list is empty/None.
-    ds.add_dataset_types.assert_not_called()
-    assert ds.remove_dataset_type.call_count == 3
-    assert [c.args[0] for c in ds.remove_dataset_type.call_args_list] == ["A", "B", "C"]
-
-
-async def test_update_dataset_types_noop(dataset_ctx, capturing_mcp, mock_ml):
-    """Empty add+remove returns success without touching add/remove APIs."""
+async def test_update_dataset_types_no_diff_skips_calls(dataset_ctx, capturing_mcp, mock_ml):
+    """If desired == current, neither add_dataset_types nor remove fire."""
     ds = _make_dataset_mock("1-AAAA", dataset_types=["Training"])
     mock_ml.lookup_dataset.return_value = ds
     with patch("deriva_ml_mcp.tools.dataset.audit_event"):
         out = json.loads(
-            await capturing_mcp.tools["deriva_ml_update_dataset_types"](
-                hostname="h", catalog_id="1", dataset_rid="1-AAAA"
+            await capturing_mcp.tools["deriva_ml_update_dataset"](
+                hostname="h",
+                catalog_id="1",
+                dataset_rid="1-AAAA",
+                dataset_types=["Training"],
             )
         )
     assert out["status"] == "updated"
@@ -904,17 +891,51 @@ async def test_update_dataset_types_noop(dataset_ctx, capturing_mcp, mock_ml):
     ds.remove_dataset_type.assert_not_called()
 
 
+async def test_update_dataset_remove_only_loops_per_term(dataset_ctx, capturing_mcp, mock_ml):
+    """Diff-remove of multiple terms loops through remove_dataset_type."""
+    ds = _make_dataset_mock("1-AAAA", dataset_types=["Keep", "A", "B", "C"])
+    mock_ml.lookup_dataset.return_value = ds
+    with patch("deriva_ml_mcp.tools.dataset.audit_event"):
+        await capturing_mcp.tools["deriva_ml_update_dataset"](
+            hostname="h",
+            catalog_id="1",
+            dataset_rid="1-AAAA",
+            dataset_types=["Keep"],
+        )
+    # add_dataset_types should not be called when no diff-add.
+    ds.add_dataset_types.assert_not_called()
+    assert ds.remove_dataset_type.call_count == 3
+    # Removes happen in sorted order (the diff is computed via set
+    # arithmetic and then sorted for determinism).
+    assert [c.args[0] for c in ds.remove_dataset_type.call_args_list] == ["A", "B", "C"]
+
+
+async def test_update_dataset_validation_both_none(dataset_ctx, capturing_mcp, mock_ml):
+    """update_dataset() with no fields returns the validation error envelope."""
+    with _patch_audit() as mock_audit:
+        out = json.loads(
+            await capturing_mcp.tools["deriva_ml_update_dataset"](
+                hostname="h", catalog_id="1", dataset_rid="1-AAAA"
+            )
+        )
+    assert "error" in out
+    assert "at least one" in out["error"]
+    # No catalog work and no audit on validation failure.
+    mock_ml.lookup_dataset.assert_not_called()
+    assert mock_audit.call_count == 0
+
+
 async def test_update_dataset_types_error(dataset_ctx, capturing_mcp, mock_ml):
     ds = _make_dataset_mock("1-AAAA")
     ds.add_dataset_types.side_effect = RuntimeError("unknown term")
     mock_ml.lookup_dataset.return_value = ds
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["deriva_ml_update_dataset_types"](
+            await capturing_mcp.tools["deriva_ml_update_dataset"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
-                add=["BadTerm"],
+                dataset_types=["BadTerm"],
             )
         )
     # Error response now includes partial-state fields so the LLM can
@@ -924,7 +945,7 @@ async def test_update_dataset_types_error(dataset_ctx, capturing_mcp, mock_ml):
     assert out["added_done"] == []  # add_dataset_types raised; nothing committed
     assert out["removed_done"] == []
     assert out["added_requested"] == ["BadTerm"]
-    failed = _success_calls(mock_audit, "deriva_ml_update_dataset_types_failed")
+    failed = _success_calls(mock_audit, "deriva_ml_update_dataset_failed")
     assert failed
     assert failed[0].kwargs["added"] == ["BadTerm"]
     assert failed[0].kwargs["added_done"] == []
@@ -935,8 +956,11 @@ async def test_update_dataset_types_partial_remove_failure_surfaces_progress(
     dataset_ctx, capturing_mcp, mock_ml
 ):
     """If a remove mid-way through the loop fails, the error response and
-    audit must surface which terms were already removed (M-2 fix)."""
-    ds = _make_dataset_mock("1-AAAA")
+    audit must surface which terms were already removed."""
+    # Current types include the two we're going to remove (A, B) plus
+    # one we're keeping ("Keep") -- since dataset_types is set-style,
+    # passing ["Keep", "NewTag"] diffs to add=[NewTag], remove=[A, B].
+    ds = _make_dataset_mock("1-AAAA", dataset_types=["Keep", "A", "B"])
     # add_dataset_types succeeds; first remove succeeds; second remove fails.
     call_count = {"n": 0}
 
@@ -950,12 +974,11 @@ async def test_update_dataset_types_partial_remove_failure_surfaces_progress(
 
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["deriva_ml_update_dataset_types"](
+            await capturing_mcp.tools["deriva_ml_update_dataset"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
-                add=["NewTag"],
-                remove=["A", "B"],
+                dataset_types=["Keep", "NewTag"],
             )
         )
 
@@ -967,10 +990,82 @@ async def test_update_dataset_types_partial_remove_failure_surfaces_progress(
     assert out["removed_requested"] == ["A", "B"]
 
     # Audit also captures partial state.
-    failed = _success_calls(mock_audit, "deriva_ml_update_dataset_types_failed")
+    failed = _success_calls(mock_audit, "deriva_ml_update_dataset_failed")
     assert failed
     assert failed[0].kwargs["added_done"] == ["NewTag"]
     assert failed[0].kwargs["removed_done"] == ["A"]
+
+
+async def test_update_dataset_description_only(dataset_ctx, capturing_mcp, mock_ml):
+    """description-only update writes via pathBuilder; types untouched."""
+    ds = _make_dataset_mock("1-AAAA", dataset_types=["Training"], current_version="2.0.0")
+    mock_ml.lookup_dataset.return_value = ds
+    # The implementation reads ml._dataset_table for the schema/name pair
+    # and then writes through pb.schemas[X].tables[Y].update(...). Mock
+    # those out so the patched pathBuilder records the update call.
+    table_mock = MagicMock()
+    table_mock.schema.name = "deriva-ml"
+    table_mock.name = "Dataset"
+    mock_ml._dataset_table = table_mock
+    update_mock = MagicMock()
+    mock_ml.pathBuilder.return_value.schemas = {
+        "deriva-ml": MagicMock(tables={"Dataset": MagicMock(update=update_mock)})
+    }
+
+    with _patch_audit() as mock_audit:
+        out = json.loads(
+            await capturing_mcp.tools["deriva_ml_update_dataset"](
+                hostname="h",
+                catalog_id="1",
+                dataset_rid="1-AAAA",
+                description="new desc",
+            )
+        )
+    assert out["status"] == "updated"
+    assert out["updated_fields"] == ["description"]
+    # types fields are NOT present when only description was edited.
+    assert "dataset_types" not in out
+    assert "added" not in out
+    # pathBuilder write happened with the right shape.
+    update_mock.assert_called_once_with([{"RID": "1-AAAA", "Description": "new desc"}])
+    # In-memory mirror updated too.
+    assert ds.description == "new desc"
+    # No type-mutation API was touched.
+    ds.add_dataset_types.assert_not_called()
+    ds.remove_dataset_type.assert_not_called()
+    success = _success_calls(mock_audit, "deriva_ml_update_dataset")
+    assert success
+    assert success[0].kwargs["updated_fields"] == ["description"]
+
+
+async def test_update_dataset_types_and_description_together(dataset_ctx, capturing_mcp, mock_ml):
+    """Passing both fields edits both; updated_fields lists both."""
+    ds = _make_dataset_mock("1-AAAA", dataset_types=["Training"], current_version="1.0.0")
+    mock_ml.lookup_dataset.return_value = ds
+    table_mock = MagicMock()
+    table_mock.schema.name = "deriva-ml"
+    table_mock.name = "Dataset"
+    mock_ml._dataset_table = table_mock
+    update_mock = MagicMock()
+    mock_ml.pathBuilder.return_value.schemas = {
+        "deriva-ml": MagicMock(tables={"Dataset": MagicMock(update=update_mock)})
+    }
+
+    with patch("deriva_ml_mcp.tools.dataset.audit_event"):
+        out = json.loads(
+            await capturing_mcp.tools["deriva_ml_update_dataset"](
+                hostname="h",
+                catalog_id="1",
+                dataset_rid="1-AAAA",
+                dataset_types=["Training", "Validation"],
+                description="combined edit",
+            )
+        )
+    assert out["status"] == "updated"
+    assert sorted(out["updated_fields"]) == ["dataset_types", "description"]
+    # Diff add ran for the new term; description write also ran.
+    ds.add_dataset_types.assert_called_once_with(["Validation"])
+    update_mock.assert_called_once_with([{"RID": "1-AAAA", "Description": "combined edit"}])
 
 
 # ---------------------------------------------------------------------------

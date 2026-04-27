@@ -34,7 +34,9 @@ _DATASET_TOOLS = frozenset(
         "deriva_ml_delete_dataset",
         "deriva_ml_add_dataset_members",
         "deriva_ml_delete_dataset_members",
-        "deriva_ml_update_dataset_types",
+        # v1.2: renamed (was deriva_ml_update_dataset_types) and
+        # widened to take both `dataset_types` and `description`.
+        "deriva_ml_update_dataset",
         "deriva_ml_add_dataset_element_type",
         "deriva_ml_increment_dataset_version",
         # Complex / local-FS tools
@@ -81,9 +83,23 @@ _EXECUTION_TOOLS = frozenset(
         "deriva_ml_create_execution",
         "deriva_ml_start_execution",
         "deriva_ml_commit_execution",
+        # v1.2: net-new curation tool (description-only).
+        "deriva_ml_update_execution",
         "deriva_ml_abort_execution",
         "deriva_ml_create_execution_dataset",
         "deriva_ml_add_nested_execution",
+    }
+)
+
+# v1.2 asset domain -- 4 tools (3 read + 1 metadata-mutation). File I/O
+# is intentionally NOT covered here; that lives in the deriva-skills
+# `work-with-assets` skill which generates Python the user runs locally.
+_ASSET_TOOLS = frozenset(
+    {
+        "deriva_ml_list_asset_tables",
+        "deriva_ml_list_assets",
+        "deriva_ml_lookup_asset",
+        "deriva_ml_update_asset",
     }
 )
 
@@ -97,9 +113,14 @@ _VOCABULARY_TOOLS = frozenset(
 )
 
 # Union of all per-domain tool sets. Phase 5 registered dataset + feature
-# + workflow + execution; v1.1 adds vocabulary.
+# + workflow + execution; v1.1 adds vocabulary; v1.2 adds asset.
 _ALL_REGISTERED_TOOLS = (
-    _DATASET_TOOLS | _FEATURE_TOOLS | _WORKFLOW_TOOLS | _EXECUTION_TOOLS | _VOCABULARY_TOOLS
+    _DATASET_TOOLS
+    | _FEATURE_TOOLS
+    | _WORKFLOW_TOOLS
+    | _EXECUTION_TOOLS
+    | _VOCABULARY_TOOLS
+    | _ASSET_TOOLS
 )
 
 # All ML-domain MCP resource URIs registered by ``resources/ml.py``.
@@ -117,6 +138,9 @@ _ML_RESOURCE_URIS = frozenset(
         "deriva://catalog/{hostname}/{catalog_id}/ml/executions",
         "deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}",
         "deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}",
+        # v1.2 asset resources.
+        "deriva://catalog/{hostname}/{catalog_id}/ml/asset-tables",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/asset/{asset_rid}",
         "deriva://catalog/{hostname}/{catalog_id}/ml/registries",
     }
 )

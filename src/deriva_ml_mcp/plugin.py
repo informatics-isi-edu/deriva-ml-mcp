@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from deriva_ml_mcp import prompts as _ml_prompts
 from deriva_ml_mcp.resources import ml as _ml_resources
 from deriva_ml_mcp.resources import rag as _ml_rag
+from deriva_ml_mcp.tools import asset as _asset
 from deriva_ml_mcp.tools import dataset as _dataset
 from deriva_ml_mcp.tools import execution as _execution
 from deriva_ml_mcp.tools import feature as _feature
@@ -51,6 +52,16 @@ def register(ctx: PluginContext) -> None:
     fire any framework lifecycle hook -- tracked upstream as
     deriva-mcp-core#3).
 
+    v1.2 added the asset domain (4 tools + 2 resources, all
+    catalog-state operations -- file I/O remains in the
+    deriva-skills ``work-with-assets`` skill) plus curation symmetry:
+    every typed entity (Dataset, Workflow, Asset, Execution) now has
+    one ``deriva_ml_update_<entity>(rid, *fields)`` tool that mutates
+    only the kwargs provided. The pre-v1.2
+    ``deriva_ml_update_dataset_types`` tool was renamed (and widened)
+    to ``deriva_ml_update_dataset``; ``deriva_ml_update_execution``
+    is net-new.
+
     Args:
         ctx: PluginContext supplied by deriva-mcp-core at startup.
 
@@ -66,6 +77,7 @@ def register(ctx: PluginContext) -> None:
     _feature.register(ctx)
     _workflow.register(ctx)
     _execution.register(ctx)
+    _asset.register(ctx)
     _vocabulary.register(ctx)
     _ml_resources.register(ctx)
     _ml_rag.register_rag_sources(ctx)

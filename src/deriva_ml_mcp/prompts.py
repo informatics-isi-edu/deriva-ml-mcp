@@ -4,7 +4,7 @@ These are MCP prompts (registered via ``@ctx.prompt(...)``), not Python
 docstrings. FastMCP surfaces them through the MCP ``prompts/list`` and
 ``prompts/get`` endpoints so an LLM client can pull them up by name at
 the start of a conversation -- they are the cold-start anchor for the
-plugin's 39 tools and 9 resources.
+plugin's 45 tools and 11 resources.
 
 The three prompts complement the four built-in core prompts shipped by
 ``deriva-mcp-core`` (``query_guide``, ``entity_guide``,
@@ -70,9 +70,9 @@ Pass the same pair on every call. The catalog connection is opened on
 demand and cached behind the scenes; passing different ``catalog_id``
 values just talks to different catalogs.
 
-THE FOUR ML DOMAINS
+THE FIVE ML DOMAINS
 -------------------
-The 39 tools are organized into four domain modules. Pick the domain
+The 45 tools are organized into five domain modules. Pick the domain
 first, then the verb. All actual tool names are prefixed
 ``deriva_ml_<verb>`` (e.g. the ``create`` verb under ``dataset`` is
 the ``deriva_ml_create_dataset`` tool). The bare verbs below name the
@@ -82,7 +82,7 @@ for the wire name.
     dataset    -- 17 tools. Curated bundles of catalog rows (image
                   collections, training subsets, splits). Verbs:
                   list / get / create / add_members / delete_members /
-                  update_types / increment_version / cache /
+                  update / increment_version / cache /
                   denormalize / split / get_dataset_spec / bag_info.
 
     feature    -- 6 tools. Per-row labels, scores, and asset attachments
@@ -94,12 +94,18 @@ for the wire name.
                   URL + checksum + workflow_type). Verbs: list / get /
                   find_workflow_by_url / create / update.
 
-    execution  -- 11 tools. A single run of a workflow against datasets
+    execution  -- 12 tools. A single run of a workflow against datasets
                   and assets. Carries the lifecycle state machine.
                   Verbs: list / get / find_workflow_executions /
                   list_execution_children / list_execution_parents /
-                  create / start / commit / abort /
+                  create / start / commit / update / abort /
                   create_execution_dataset / add_nested_execution.
+
+    asset      -- 4 tools. File-backed catalog rows (images, model
+                  weights, etc.) -- catalog-state operations only.
+                  File I/O lives in deriva-skills's work-with-assets
+                  skill. Verbs: list_asset_tables / list_assets /
+                  lookup / update.
 
 DISCOVERY: PREFER RESOURCES AND RAG OVER PAGINATED TOOL SCANS
 -------------------------------------------------------------
@@ -115,6 +121,8 @@ would otherwise be several tool calls into one URI fetch:
     deriva://catalog/{h}/{c}/ml/executions       -- all executions
     deriva://catalog/{h}/{c}/ml/execution/{rid}  -- one execution + inputs/outputs/metadata
     deriva://catalog/{h}/{c}/ml/features/{table} -- features defined on one table
+    deriva://catalog/{h}/{c}/ml/asset-tables     -- all asset tables in the catalog
+    deriva://catalog/{h}/{c}/ml/asset/{rid}      -- one asset + bundled executions
     deriva://catalog/{h}/{c}/ml/registries       -- the four ML vocabularies bundled
 
 For semantic discovery ("which workflows train CNN models", "find
@@ -212,10 +220,83 @@ should only be used when no domain-specific tool exists.
 For the lifecycle state machine details, see the
 ``deriva_ml_execution_lifecycle`` prompt.
 
+ASSETS: METADATA HERE, FILE I/O IN THE SKILL
+--------------------------------------------
+v1.2 added a 4-tool asset surface that covers the catalog-state half of
+the asset lifecycle:
+
+    deriva_ml_list_asset_tables  -- which asset tables exist in this catalog
+    deriva_ml_list_assets        -- rows in one asset table (paginated)
+    deriva_ml_lookup_asset       -- bundled detail for one asset RID
+                                    (filename, length, md5, url,
+                                     description, asset_types, executions)
+    deriva_ml_update_asset       -- mutate asset_type tags + description
+
+Plus two matching resources:
+
+    deriva://catalog/{h}/{c}/ml/asset-tables    -- snapshot of asset tables
+    deriva://catalog/{h}/{c}/ml/asset/{rid}     -- bundled per-asset detail
+
+What these tools do NOT do: register a new asset from a local file, or
+download asset bytes back to a local path. The MCP server has no
+general way to access the user's local filesystem, so file I/O is
+deliberately out of scope here. For those two flows, use the
+``work-with-assets`` skill in the deriva-skills plugin -- it generates
+the Python the user runs locally (which talks to the catalog directly
+via deriva-ml's ``execution.asset_file_path()`` for upload, and
+``asset.download()`` for fetch).
+
+The MCP <-> skill round trip looks like this:
+
+    1. Inside an execution, the user wants to register a new file as an
+       asset. Use the ``work-with-assets`` skill -- it produces a small
+       Python snippet calling ``execution.asset_file_path(...)``,
+       writing the file, and tying it to the running execution.
+    2. The user runs the snippet locally; the file is staged and the
+       asset row is created.
+    3. Come back here for ``deriva_ml_commit_execution`` (uploads the
+       staged file) and any ``deriva_ml_lookup_asset`` /
+       ``deriva_ml_update_asset`` follow-ups.
+
+CURATION PATTERN: ONE update_<entity> PER TYPED ENTITY
+------------------------------------------------------
+Every typed entity (Dataset, Workflow, Asset, Execution) has exactly
+one ``deriva_ml_update_<entity>(rid, *fields)`` tool. Pass only the
+kwargs you want to change; leave others as ``None``. At least one
+field must be non-None or the tool returns ``{"error": ...}``.
+
+    deriva_ml_update_dataset    (dataset_types? + description?)
+    deriva_ml_update_workflow   (workflow_type? + description?)
+    deriva_ml_update_asset      (asset_types? + description?)
+    deriva_ml_update_execution  (description?)  -- description-only
+
+For the type-list fields (``dataset_types``, ``workflow_type``,
+``asset_types``): SET-STYLE. Pass the desired final list. The tool
+fetches the current types and computes the diff -- terms in the new
+list that aren't in the current set get added; terms in the current
+set that aren't in the new list get removed; terms in both are left
+alone.
+
+For ``description``: free-form text overwrite of the catalog row's
+``Description`` column.
+
+Execution is the asymmetric one. There is no ``Execution_Type``
+vocabulary, so no type-list field appears. ``Status`` edits remain
+forbidden -- they are state-machine territory driven by
+``deriva_ml_start_execution`` / ``deriva_ml_commit_execution`` /
+``deriva_ml_abort_execution``, NOT freely editable. Free-form status
+writes were rejected in v1.0 (they let an LLM drive the lifecycle
+into invalid states).
+
+v1.2 breaking rename. The pre-v1.2 ``deriva_ml_update_dataset_types``
+tool (with ``add`` / ``remove`` kwargs) was renamed to
+``deriva_ml_update_dataset`` and widened to take both ``dataset_types``
+and ``description``. There is no compat shim; update any references.
+
 THE MENU
 --------
-Quick orientation: 39 tools across 4 domains (dataset, feature, workflow,
-execution) + 9 read-only resources under the
+Quick orientation: 45 tools across 5 domains (dataset, feature, workflow,
+execution, asset) + 11 read-only resources under the
 ``deriva://catalog/{h}/{c}/ml/...`` URI prefix + 1 GitHub doc source
 indexed for RAG (``deriva-ml-docs``) + 3 per-user RAG indexes that
 ingest Dataset / Workflow / Execution rows on first connect to a

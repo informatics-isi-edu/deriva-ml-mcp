@@ -1,10 +1,10 @@
-"""Unit tests for resources/ml.py (9 ML-domain MCP resources).
+"""Unit tests for resources/ml.py (11 ML-domain MCP resources, v1.2).
 
 Resources are read-only and emit no audit on success or failure. The
 fixture wires ``mock_ml`` into the resources/ml.py registration call so
 each test can stub the deriva-ml call surface independently.
 
-Coverage target: at least 18 tests (2 per resource * 9 resources). List
+Coverage target: at least 22 tests (2 per resource * 11 resources). List
 resources also get a ``truncated`` test; detail resources get a 404 path.
 """
 
@@ -45,6 +45,8 @@ _WORKFLOW_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{wo
 _EXECUTIONS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/executions"
 _EXECUTION_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}"
 _FEATURES_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}"
+_ASSET_TABLES_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/asset-tables"
+_ASSET_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/asset/{asset_rid}"
 _REGISTRIES_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/registries"
 
 
@@ -138,8 +140,8 @@ def _make_vocab_term_mock(name: str, description: str = "") -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
-def test_register_adds_nine_resources(resource_ctx, capturing_mcp):
-    """resources/ml.py.register() must register exactly 9 URIs."""
+def test_register_adds_eleven_resources(resource_ctx, capturing_mcp):
+    """resources/ml.py.register() must register exactly 11 URIs (9 + 2 asset, v1.2)."""
     expected = {
         "deriva://catalog/{hostname}/{catalog_id}/ml/datasets",
         "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}",
@@ -149,6 +151,8 @@ def test_register_adds_nine_resources(resource_ctx, capturing_mcp):
         "deriva://catalog/{hostname}/{catalog_id}/ml/executions",
         "deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}",
         "deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/asset-tables",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/asset/{asset_rid}",
         "deriva://catalog/{hostname}/{catalog_id}/ml/registries",
     }
     actual = set(capturing_mcp.resources.keys())
@@ -568,3 +572,87 @@ async def test_ml_registries_missing_vocab_yields_empty_list(resource_ctx, captu
     assert out["execution_statuses"] == []
     # No audit on the per-vocab failures (resource is read-only).
     assert mock_audit.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# ml/asset-tables (v1.2)
+# ---------------------------------------------------------------------------
+
+
+def _make_asset_table_mock(name: str, schema: str = "demo-schema") -> MagicMock:
+    t = MagicMock()
+    t.name = name
+    t.schema.name = schema
+    return t
+
+
+async def test_ml_asset_tables_smoke(resource_ctx, capturing_mcp, mock_ml):
+    """asset-tables resource returns the same shape as the tool."""
+    mock_ml.list_asset_tables.return_value = [
+        _make_asset_table_mock("Image", "demo-schema"),
+        _make_asset_table_mock("Execution_Metadata", "deriva-ml"),
+    ]
+    out = json.loads(await capturing_mcp.resources[_ASSET_TABLES_URI](hostname="h", catalog_id="1"))
+    assert out["count"] == 2
+    assert {t["name"] for t in out["asset_tables"]} == {"Image", "Execution_Metadata"}
+
+
+# ---------------------------------------------------------------------------
+# ml/asset/{rid} (v1.2)
+# ---------------------------------------------------------------------------
+
+
+def _make_asset_detail_mock(
+    asset_rid: str = "1-AAAA",
+    description: str = "MRI scan",
+    asset_types: list[str] | None = None,
+    executions: list | None = None,
+) -> MagicMock:
+    a = MagicMock()
+    a.asset_rid = asset_rid
+    a.filename = "scan.png"
+    a.length = 12345
+    a.md5 = "abc"
+    a.url = "/hatrac/scan.png"
+    a.description = description
+    a.asset_table = "Image"
+    a.asset_types = list(asset_types) if asset_types else []
+    a.list_executions.return_value = list(executions) if executions else []
+    return a
+
+
+async def test_ml_asset_detail_bundles_executions(resource_ctx, capturing_mcp, mock_ml):
+    """asset/{rid} resource returns the bundled detail with executions."""
+    exec_record = MagicMock()
+    exec_record.execution_rid = "1-EXEC"
+    exec_record.asset_role = "Output"
+    asset = _make_asset_detail_mock(asset_types=["Training_Data"], executions=[exec_record])
+    mock_ml.lookup_asset.return_value = asset
+
+    out = json.loads(
+        await capturing_mcp.resources[_ASSET_DETAIL_URI](
+            hostname="h", catalog_id="1", asset_rid="1-AAAA"
+        )
+    )
+    assert out["rid"] == "1-AAAA"
+    assert out["asset_table"] == "Image"
+    assert out["asset_types"] == ["Training_Data"]
+    assert out["executions"] == [{"rid": "1-EXEC", "asset_role": "Output"}]
+
+
+async def test_ml_asset_detail_omits_no_data(resource_ctx, capturing_mcp, mock_ml):
+    """Asset with no executions and no description still serializes cleanly."""
+    asset = _make_asset_detail_mock(description="", executions=[])
+    mock_ml.lookup_asset.return_value = asset
+
+    out = json.loads(
+        await capturing_mcp.resources[_ASSET_DETAIL_URI](
+            hostname="h", catalog_id="1", asset_rid="1-AAAA"
+        )
+    )
+    # Empty containers come back as actual empty values, not missing keys --
+    # the resource is part of the contract surface (LLM reads `executions`
+    # unconditionally), so absent keys would force defensive get(...) calls.
+    assert out["description"] == ""
+    assert out["executions"] == []
+    assert out["asset_types"] == []

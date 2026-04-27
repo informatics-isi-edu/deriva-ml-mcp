@@ -27,7 +27,7 @@ captured every success-path emission in one shot.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from deriva_mcp_core import deriva_call
 from deriva_ml.dataset.aux_classes import DatasetVersion, VersionPart
@@ -371,98 +371,161 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def deriva_ml_update_dataset_types(
+    async def deriva_ml_update_dataset(
         hostname: str,
         catalog_id: str,
         dataset_rid: str,
-        add: list[str] | None = None,
-        remove: list[str] | None = None,
+        dataset_types: list[str] | None = None,
+        description: str | None = None,
     ) -> str:
-        """Add and/or remove dataset-type tags on a dataset in one call.
+        """Update dataset metadata (types and/or description).
 
-        Either or both of ``add`` and ``remove`` may be empty; an empty
-        call is a no-op (still returns success with the unchanged type
-        list). Adds happen before removes.
+        Curation tool: pass only the fields you want to change. Both
+        arguments are optional; at least one must be non-None.
+
+        For ``dataset_types``: set-style. Pass the desired final list
+        of Dataset_Type term names; the tool fetches the current types
+        and computes the diff (add the terms in the new list that
+        aren't in the current set; remove the terms in the current set
+        that aren't in the new list). Adds happen before removes.
+
+        For ``description``: free-form text overwrite of the dataset
+        row's ``Description`` column, written through pathBuilder
+        (deriva-ml's ``Dataset`` class doesn't expose a catalog-write
+        setter for description -- only ``Workflow`` and
+        ``ExecutionRecord`` do).
+
+        v1.2 breaking rename. This tool used to be
+        ``deriva_ml_update_dataset_types`` with separate ``add`` /
+        ``remove`` kwargs. The new shape mirrors the curation pattern
+        shared with ``update_workflow`` / ``update_asset`` /
+        ``update_execution``: a single per-entity update tool with
+        only-the-changed-fields semantics. Skill consumers (the
+        ``deriva-skills`` plugin) must update references to the new
+        name and signature.
 
         Args:
             hostname: The Deriva server hostname.
             catalog_id: The catalog ID as a string.
-            dataset_rid: The RID of the dataset whose types to update.
-            add: Dataset_Type term names to add.
-            remove: Dataset_Type term names to remove.
+            dataset_rid: The RID of the dataset to update.
+            dataset_types: Desired final list of Dataset_Type term
+                names. ``None`` leaves types unchanged.
+            description: New description text. ``None`` leaves the
+                description unchanged.
 
         Returns:
             JSON string ``{"status": "updated", "dataset_rid",
-            "dataset_types", "added", "removed", "new_version"}``.
+            "updated_fields": [...], "dataset_types", "added",
+            "removed", "new_version"}``. ``dataset_types`` /
+            ``added`` / ``removed`` are present only when
+            ``dataset_types`` was actually edited. ``new_version`` is
+            the dataset's version after the update (the underlying
+            type-mutation APIs auto-bump the minor version).
 
         Raises:
             RuntimeError: Wrapped, propagated from
-                ``deriva_ml.dataset.dataset.Dataset.add_dataset_types`` or
-                ``remove_dataset_type`` (e.g. unknown vocabulary term).
+                ``deriva_ml.dataset.dataset.Dataset.add_dataset_types``
+                / ``remove_dataset_type`` (e.g. unknown vocabulary
+                term) or the Description pathBuilder write (e.g.
+                read-only catalog).
 
         Example:
             ``{"status": "updated", "dataset_rid": "1-AAAA",
+            "updated_fields": ["dataset_types", "description"],
             "dataset_types": ["Training", "Validation"],
-            "added": ["Validation"], "removed": [], "new_version":
-            "1.4.0"}``.
+            "added": ["Validation"], "removed": [],
+            "new_version": "1.4.0"}``.
         """
-        adds = list(add or [])
-        removes = list(remove or [])
-        # Track partial progress for the failure path: an `add_dataset_types`
-        # call is atomic-per-call (all-or-none for the list), but `remove`
-        # is a per-term loop that can fail mid-way. The LLM caller needs
-        # visibility into which removes succeeded before failure so it can
-        # reason about partial state.
+        # Argument validation -- return errors directly without audit.
+        if dataset_types is None and description is None:
+            return json.dumps(
+                {"error": ("at least one of dataset_types or description must be provided")}
+            )
+
+        # Track partial progress for the failure path: dataset_types is a
+        # per-term loop on the remove half, so an LLM caller benefits
+        # from seeing which terms landed before the failure.
         adds_done: list[str] = []
         removes_done: list[str] = []
+        adds_requested: list[str] = []
+        removes_requested: list[str] = []
+        updated_fields: list[str] = []
+        updated_types: list[str] = []
+        new_version: str | None = None
         try:
             with deriva_call():
                 ml = _pkg.get_ml(hostname, catalog_id)
                 ds = ml.lookup_dataset(dataset_rid)
-                if adds:
-                    ds.add_dataset_types(adds)
-                    adds_done = list(adds)
-                for term in removes:
-                    ds.remove_dataset_type(term)
-                    removes_done.append(term)
-                updated_types = list(ds.dataset_types) if ds.dataset_types else []
+
+                if dataset_types is not None:
+                    desired = set(dataset_types)
+                    current = set(ds.dataset_types or [])
+                    adds_requested = sorted(desired - current)
+                    removes_requested = sorted(current - desired)
+                    if adds_requested:
+                        ds.add_dataset_types(adds_requested)
+                        adds_done = list(adds_requested)
+                    for term in removes_requested:
+                        ds.remove_dataset_type(term)
+                        removes_done.append(term)
+                    updated_types = list(ds.dataset_types) if ds.dataset_types else []
+                    updated_fields.append("dataset_types")
+
+                if description is not None:
+                    # The deriva-ml Dataset class stores description as
+                    # a plain instance attribute (no catalog-write
+                    # setter), so we write the row directly via
+                    # pathBuilder. Mirrors what dataset.create_dataset
+                    # itself does for the Description column.
+                    pb = ml.pathBuilder()
+                    dataset_table = ml._dataset_table
+                    dataset_path = pb.schemas[dataset_table.schema.name].tables[dataset_table.name]
+                    dataset_path.update([{"RID": dataset_rid, "Description": description}])
+                    ds.description = description
+                    updated_fields.append("description")
+
                 new_version = str(ds.current_version) if ds.current_version is not None else None
+
             _pkg.audit_event(
-                "deriva_ml_update_dataset_types",
+                "deriva_ml_update_dataset",
                 hostname=hostname,
                 catalog_id=catalog_id,
                 dataset_rid=dataset_rid,
-                added=adds,
-                removed=removes,
+                updated_fields=updated_fields,
+                added=adds_requested,
+                removed=removes_requested,
                 new_version=new_version,
             )
-            return json.dumps(
-                {
-                    "status": "updated",
-                    "dataset_rid": dataset_rid,
-                    "dataset_types": updated_types,
-                    "added": adds,
-                    "removed": removes,
-                    "new_version": new_version,
-                }
-            )
+            payload: dict[str, Any] = {
+                "status": "updated",
+                "dataset_rid": dataset_rid,
+                "updated_fields": updated_fields,
+                "new_version": new_version,
+            }
+            if "dataset_types" in updated_fields:
+                payload["dataset_types"] = updated_types
+                payload["added"] = adds_requested
+                payload["removed"] = removes_requested
+            return json.dumps(payload)
         except Exception as exc:
             return _error_envelope(
                 exc,
-                operation="update_dataset_types",
+                operation="update_dataset",
                 hostname=hostname,
                 catalog_id=catalog_id,
                 dataset_rid=dataset_rid,
-                added=adds,
-                removed=removes,
+                updated_fields=updated_fields,
+                added=adds_requested,
+                removed=removes_requested,
                 added_done=adds_done,
                 removed_done=removes_done,
                 response_fields={
                     "dataset_rid": dataset_rid,
+                    "updated_fields": updated_fields,
                     "added_done": adds_done,
                     "removed_done": removes_done,
-                    "added_requested": adds,
-                    "removed_requested": removes,
+                    "added_requested": adds_requested,
+                    "removed_requested": removes_requested,
                 },
             )
 

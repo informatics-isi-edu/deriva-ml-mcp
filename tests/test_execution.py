@@ -566,6 +566,68 @@ async def test_commit_execution_failure_emits_failed_audit(execution_ctx, captur
 
 
 # ---------------------------------------------------------------------------
+# update_execution (v1.2 -- description-only)
+# ---------------------------------------------------------------------------
+
+
+async def test_update_execution_description_emits_audit(execution_ctx, capturing_mcp, mock_ml):
+    """Setting description on the catalog-bound record fires the write hook + audit."""
+    record = _make_execution_record_mock(rid="1-EXEC")
+    mock_ml.lookup_execution.return_value = record
+    with _patch_execution_audit() as mock_audit:
+        result = await capturing_mcp.tools["deriva_ml_update_execution"](
+            hostname="h",
+            catalog_id="1",
+            execution_rid="1-EXEC",
+            description="renamed run",
+        )
+    payload = json.loads(result)
+    assert payload["status"] == "updated"
+    assert payload["execution_rid"] == "1-EXEC"
+    assert payload["updated_fields"] == ["description"]
+    # The catalog-bound setter on ExecutionRecord fires the catalog write
+    # hook on the mock; we just assert the assignment landed.
+    assert record.description == "renamed run"
+    success = _success_calls(mock_audit, "deriva_ml_update_execution")
+    assert len(success) == 1
+    assert success[0].kwargs["execution_rid"] == "1-EXEC"
+    assert success[0].kwargs["updated_fields"] == ["description"]
+
+
+async def test_update_execution_validation_no_description(execution_ctx, capturing_mcp, mock_ml):
+    """update_execution() with description=None returns the validation error."""
+    with _patch_execution_audit() as mock_audit:
+        result = await capturing_mcp.tools["deriva_ml_update_execution"](
+            hostname="h", catalog_id="1", execution_rid="1-EXEC"
+        )
+    payload = json.loads(result)
+    assert "error" in payload
+    assert "description must be provided" in payload["error"]
+    # No catalog work and no audit on validation failure.
+    mock_ml.lookup_execution.assert_not_called()
+    assert mock_audit.call_count == 0
+
+
+async def test_update_execution_failure_emits_failed_audit(execution_ctx, capturing_mcp, mock_ml):
+    """Lookup failure surfaces as error envelope + _failed audit row."""
+    mock_ml.lookup_execution.side_effect = RuntimeError("execution not found")
+    with _patch_execution_audit() as mock_audit:
+        result = await capturing_mcp.tools["deriva_ml_update_execution"](
+            hostname="h",
+            catalog_id="1",
+            execution_rid="1-MISSING",
+            description="anything",
+        )
+    payload = json.loads(result)
+    assert "error" in payload
+    assert "execution not found" in payload["error"]
+    failed = _success_calls(mock_audit, "deriva_ml_update_execution_failed")
+    assert len(failed) == 1
+    assert failed[0].kwargs["execution_rid"] == "1-MISSING"
+    assert failed[0].kwargs["updated_fields"] == []
+
+
+# ---------------------------------------------------------------------------
 # abort_execution
 # ---------------------------------------------------------------------------
 
