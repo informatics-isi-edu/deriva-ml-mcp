@@ -843,7 +843,7 @@ async def test_delete_dataset_members_error(dataset_ctx, capturing_mcp, mock_ml)
 # ---------------------------------------------------------------------------
 
 
-async def test_update_dataset_types_set_diff_adds_and_removes(dataset_ctx, capturing_mcp, mock_ml):
+async def test_update_dataset_set_diff_adds_and_removes(dataset_ctx, capturing_mcp, mock_ml):
     """`dataset_types` is set-style: diff against current types, add+remove."""
     ds = _make_dataset_mock("1-AAAA", dataset_types=["Training", "Stale"], current_version="1.4.0")
     mock_ml.lookup_dataset.return_value = ds
@@ -871,7 +871,7 @@ async def test_update_dataset_types_set_diff_adds_and_removes(dataset_ctx, captu
     assert success[0].kwargs["removed"] == ["Stale"]
 
 
-async def test_update_dataset_types_no_diff_skips_calls(dataset_ctx, capturing_mcp, mock_ml):
+async def test_update_dataset_no_diff_skips_calls(dataset_ctx, capturing_mcp, mock_ml):
     """If desired == current, neither add_dataset_types nor remove fire."""
     ds = _make_dataset_mock("1-AAAA", dataset_types=["Training"])
     mock_ml.lookup_dataset.return_value = ds
@@ -925,7 +925,7 @@ async def test_update_dataset_validation_both_none(dataset_ctx, capturing_mcp, m
     assert mock_audit.call_count == 0
 
 
-async def test_update_dataset_types_error(dataset_ctx, capturing_mcp, mock_ml):
+async def test_update_dataset_error(dataset_ctx, capturing_mcp, mock_ml):
     ds = _make_dataset_mock("1-AAAA")
     ds.add_dataset_types.side_effect = RuntimeError("unknown term")
     mock_ml.lookup_dataset.return_value = ds
@@ -952,7 +952,7 @@ async def test_update_dataset_types_error(dataset_ctx, capturing_mcp, mock_ml):
     assert failed[0].kwargs["removed_done"] == []
 
 
-async def test_update_dataset_types_partial_remove_failure_surfaces_progress(
+async def test_update_dataset_partial_remove_failure_surfaces_progress(
     dataset_ctx, capturing_mcp, mock_ml
 ):
     """If a remove mid-way through the loop fails, the error response and
@@ -1038,7 +1038,9 @@ async def test_update_dataset_description_only(dataset_ctx, capturing_mcp, mock_
     assert success[0].kwargs["updated_fields"] == ["description"]
 
 
-async def test_update_dataset_types_and_description_together(dataset_ctx, capturing_mcp, mock_ml):
+async def test_update_dataset_types_and_description_in_one_call(
+    dataset_ctx, capturing_mcp, mock_ml
+):
     """Passing both fields edits both; updated_fields lists both."""
     ds = _make_dataset_mock("1-AAAA", dataset_types=["Training"], current_version="1.0.0")
     mock_ml.lookup_dataset.return_value = ds
