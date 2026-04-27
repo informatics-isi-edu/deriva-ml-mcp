@@ -235,8 +235,6 @@ def register(ctx: PluginContext) -> None:
         tables, so no pagination is offered.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
 
         Returns:
             JSON string ``{"asset_tables": [{"name", "schema"}, ...],
@@ -276,15 +274,9 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """List the rows in one asset table, with cursor pagination.
 
-        PAGINATION: When the count is unknown, call with
-        ``preflight_count=True`` first. Then choose a limit and call
-        again with ``preflight_count=False``. Use ``after_rid`` (the
-        RID of the last asset from the previous page) to advance the
-        cursor.
+        See ``deriva_ml_getting_started`` (PAGINATION CONTRACT) for the two-step pagination flow.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             asset_table: Name of the asset table to list (e.g.
                 ``"Image"``, ``"Trained_Model"``).
             limit: Max assets per page (default 100, max 1000).
@@ -293,7 +285,7 @@ def register(ctx: PluginContext) -> None:
             preflight_count: If True, return only the total count.
 
         Returns:
-            JSON string. Page: ``{"assets": [{"rid", "filename",
+            Page: ``{"assets": [{"rid", "filename",
             "length", "md5", "asset_table", "asset_types"}, ...],
             "count", "truncated", "next_after_rid"}``. Preflight:
             ``{"total_count", "entities_fetched": False,
@@ -369,8 +361,6 @@ def register(ctx: PluginContext) -> None:
         share an internal helper so the payloads cannot drift.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             asset_rid: The RID of the asset to look up.
 
         Returns:
@@ -437,8 +427,6 @@ def register(ctx: PluginContext) -> None:
         ``ExecutionRecord`` do).
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             asset_rid: The RID of the asset to update.
             asset_types: Desired final list of Asset_Type term names.
                 ``None`` leaves types unchanged.

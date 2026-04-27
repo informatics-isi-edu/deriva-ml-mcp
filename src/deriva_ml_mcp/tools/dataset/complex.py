@@ -82,8 +82,6 @@ def register(ctx: PluginContext) -> None:
         filesystem — but no catalog state is mutated.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             dataset_rid: RID of the dataset to cache.
             version: Specific version (semver string). If None, looks up the
                 dataset's current_version automatically.
@@ -190,8 +188,6 @@ def register(ctx: PluginContext) -> None:
         bag and querying it locally rather than paging through this tool.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             include_tables: Tables to include in the denormalized join.
                 REQUIRED in both modes.
             dataset_rid: If set, scope to one dataset. If None, catalog-wide
@@ -206,7 +202,7 @@ def register(ctx: PluginContext) -> None:
                 estimate. Dataset mode only.
 
         Returns:
-            JSON string. Catalog-shape: ``{"mode": "catalog_shape",
+            Catalog-shape: ``{"mode": "catalog_shape",
             "include_tables", "columns", "join_path", "tables",
             "total_rows", "total_asset_bytes", "total_asset_size"}``.
             Dataset shape only: ``{"mode": "dataset_shape", "dataset_rid",
@@ -408,8 +404,6 @@ def register(ctx: PluginContext) -> None:
         strategies. For custom selection, use the Python API directly.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             source_dataset_rid: RID of the source dataset to split.
             test_size: Float (0-1) fraction of data for testing. Default 0.2.
             train_size: Optional float (0-1) fraction for training. If None,

@@ -213,22 +213,16 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """Browse all datasets in the catalog with optional pagination.
 
-        PAGINATION: When the dataset count is unknown, call with
-        ``preflight_count=True`` first to get just the total count. Present
-        that to the user, choose a limit, then call again with
-        ``preflight_count=False``. Use ``after_rid`` (the RID of the last row
-        from the previous page) to advance the cursor.
+        See ``deriva_ml_getting_started`` (PAGINATION CONTRACT) for the two-step pagination flow.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             include_deleted: Include soft-deleted datasets if True.
             limit: Max datasets per page (default 100, max 1000).
             after_rid: RID of last row from previous page to advance cursor.
             preflight_count: If True, return only total count.
 
         Returns:
-            JSON string. Preflight:
+            Preflight:
             ``{"total_count": N, "entities_fetched": False, "action_required": "..."}``.
             Page: ``{"datasets": [{"rid", "description", "dataset_types",
             "current_version"}, ...], "count": N, "truncated": bool,
@@ -287,8 +281,6 @@ def register(ctx: PluginContext) -> None:
         """Read one dataset's full summary, optionally with version history.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             dataset_rid: The RID of the dataset to retrieve.
             include_history: If True, include the dataset's version history.
 
@@ -366,8 +358,6 @@ def register(ctx: PluginContext) -> None:
         with the same ``recurse`` value will return.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             dataset_rid: The RID of the dataset to inspect.
             element_table: Table name to drill into; ``None`` for summary.
             limit: Max rows per page (default 100, max 1000). Page mode only.
@@ -377,7 +367,7 @@ def register(ctx: PluginContext) -> None:
             version: Optional dataset version to query.
 
         Returns:
-            JSON string. Summary: ``{"summary": {<tname>: count, ...},
+            Summary: ``{"summary": {<tname>: count, ...},
             "total": N, "tables": [...]}``. Page (preflight):
             ``{"element_table", "total_count", "entities_fetched": False,
             "action_required": "..."}``. Page (rows):
@@ -472,16 +462,9 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """Walk a dataset's nesting hierarchy in either direction.
 
-        PAGINATION: ``after_rid`` only applies when ``direction`` is
-        ``"parents"`` or ``"children"``. When ``direction="both"``, parents
-        and children come from disjoint RID-spaces and a single cursor is
-        incoherent — ``after_rid`` is ignored and a ``warning`` field is
-        included in the response. To page both sides, call once per
-        direction with that side's own ``after_rid``.
+        See ``deriva_ml_getting_started`` (PAGINATION CONTRACT) for the two-step pagination flow.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             dataset_rid: The RID of the dataset whose relations to list.
             direction: Which side(s) to walk: ``"parents"``, ``"children"``,
                 or ``"both"``.
@@ -580,8 +563,6 @@ def register(ctx: PluginContext) -> None:
         No pagination — element types are bounded (typically 1-20 per catalog).
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
 
         Returns:
             JSON string ``{"element_types": [{"name", "schema"}, ...],
@@ -626,8 +607,6 @@ def register(ctx: PluginContext) -> None:
         """Describe a dataset bag's size and cache status without downloading.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             dataset_rid: The RID of the dataset to inspect.
             version: The exact version (e.g. ``"1.0.0"``). Required — use
                 ``deriva_ml_get_dataset`` to find the ``current_version`` if needed.
@@ -681,8 +660,6 @@ def register(ctx: PluginContext) -> None:
         """Generate a ``DatasetSpecConfig(...)`` snippet for a hydra-zen config.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             dataset_rid: The RID of the dataset.
             version: Specific version to pin. If omitted, falls back to the
                 dataset's current version and emits a warning recommending an

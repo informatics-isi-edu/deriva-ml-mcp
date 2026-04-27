@@ -82,8 +82,6 @@ def register(ctx: PluginContext) -> None:
         """Register a new dataset under an execution for provenance tracking.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             execution_rid: RID of the parent Execution. Required -- the new
                 dataset's provenance is rooted in this execution.
             dataset_types: Optional list of dataset-type term names to tag
@@ -167,8 +165,6 @@ def register(ctx: PluginContext) -> None:
         nested in another dataset) cannot be deleted; the upstream raises.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             dataset_rid: The RID of the dataset to delete.
             recurse: If True, also soft-delete nested child datasets.
 
@@ -248,8 +244,6 @@ def register(ctx: PluginContext) -> None:
         element types (see ``deriva_ml_add_dataset_element_type``).
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             dataset_rid: The RID of the dataset to add members to.
             member_rids: Mixed-table list of RIDs to add.
             members_by_table: Map of table name to list of RIDs.
@@ -353,8 +347,6 @@ def register(ctx: PluginContext) -> None:
         increments the dataset's minor version.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             dataset_rid: The RID of the dataset to remove members from.
             member_rids: List of member RIDs to remove.
             description: Free-text description recorded with the version
@@ -456,8 +448,6 @@ def register(ctx: PluginContext) -> None:
         name and signature.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             dataset_rid: The RID of the dataset to update.
             dataset_types: Desired final list of Dataset_Type term
                 names. ``None`` leaves types unchanged.
@@ -600,8 +590,6 @@ def register(ctx: PluginContext) -> None:
         ``table_name``. The caller must have catalog admin privileges.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             table_name: Name of the domain table to register.
 
         Returns:
@@ -662,8 +650,6 @@ def register(ctx: PluginContext) -> None:
         lower-order components to zero.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             dataset_rid: The RID of the dataset to bump.
             component: Which semver component to increment.
             description: Free-text description recorded with the bump.
