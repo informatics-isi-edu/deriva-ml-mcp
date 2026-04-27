@@ -293,18 +293,24 @@ def register(ctx: PluginContext) -> None:
 
         Args:
             dataset_rid: The RID of the dataset to retrieve.
-            include_history: If True, include the dataset's version history.
+            include_history: If True, populate the ``version_history``
+                field with the full dataset version history. When
+                False, ``version_history`` is present but empty.
 
         Returns:
-            JSON string with the full dataset summary:
-            ``{"rid", "description", "dataset_types", "current_version",
-            "chaise_url", "history": [...] | omitted}``.
+            ``DatasetDetail`` JSON shape -- see
+            ``deriva_ml_mcp._response_models``.
 
         Note:
-            The tool's ``history`` key and the resource's
-            ``version_history`` key carry the same data. The two will
-            be unified to ``version_history`` in v2.0; v1.x preserves
-            the legacy ``history`` key for backward compatibility.
+            v2.0 wire change vs v1.x: the field key is
+            ``version_history`` (was ``history`` in v1.x). This unifies
+            the tool's wire shape with the resource's wire shape (the
+            ``deriva://catalog/{h}/{c}/ml/dataset/{rid}`` resource has
+            always used ``version_history``). The two surfaces now
+            return identical wire shapes; consumers can switch freely
+            between tool and resource without re-mapping field names.
+            The field is always present (was conditionally omitted in
+            v1.x); when ``include_history=False`` it's an empty list.
 
         Raises:
             RuntimeError: If the dataset RID doesn't exist, propagated from
@@ -314,25 +320,28 @@ def register(ctx: PluginContext) -> None:
         Example:
             ``{"rid": "1-AAAA", "description": "Training set",
             "dataset_types": ["Training"], "current_version": "1.0.0",
-            "chaise_url": "https://example.org/chaise/..."}``.
+            "chaise_url": "https://example.org/chaise/...",
+            "version_history": []}``.
         """
         try:
             with deriva_call():
                 ml = _pkg.get_ml(hostname, catalog_id)
-                ds = ml.lookup_dataset(dataset_rid)
-                summary = _summarize_dataset(ds)
-                summary["chaise_url"] = ds.get_chaise_url()
                 if include_history:
-                    summary["history"] = [
-                        {
-                            "version": str(h.dataset_version),
-                            "snapshot": h.snapshot,
-                            "description": h.description,
-                            "execution_rid": h.execution_rid,
-                        }
-                        for h in ds.dataset_history()
-                    ]
-            return json.dumps(summary)
+                    payload = _get_dataset_detail_impl(ml, dataset_rid)
+                else:
+                    # Skip the dataset_history() call entirely when not
+                    # requested -- it can be expensive on long-lived
+                    # datasets. Construct a DatasetDetail with an empty
+                    # version_history list to preserve the unified wire
+                    # shape.
+                    ds = ml.lookup_dataset(dataset_rid)
+                    summary = _summarize_dataset(ds)
+                    payload = DatasetDetail(
+                        **summary,
+                        chaise_url=ds.get_chaise_url(),
+                        version_history=[],
+                    )
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             # Read-only tool: log+return without an audit row (I-2 fix).
             return _error_envelope(

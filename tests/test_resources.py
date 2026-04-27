@@ -429,8 +429,11 @@ async def test_ml_execution_detail_includes_inputs_outputs(resource_ctx, capturi
     # No metadata bucket (omit-when-no-upstream-API; see TODO in
     # _get_execution_detail_impl).
     assert "metadata" not in out
-    # No experiment key when the execution is not an Experiment.
-    assert "experiment" not in out
+    # v2.0 wire change: experiment is always present, set to None when
+    # the execution is not a Hydra-driven Experiment. v1.x omitted the
+    # key entirely; the typed contract from PR 2 (#6) now surfaces it
+    # explicitly so consumers can introspect without a KeyError.
+    assert out["experiment"] is None
 
 
 async def test_ml_execution_detail_includes_experiment_when_present(

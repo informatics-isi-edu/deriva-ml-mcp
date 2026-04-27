@@ -267,7 +267,7 @@ def register(ctx: PluginContext) -> None:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
                 payload = _get_execution_detail_impl(ml, execution_rid)
-            return json.dumps(payload, default=str)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
                 exc,

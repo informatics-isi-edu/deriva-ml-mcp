@@ -194,17 +194,36 @@ When adding a new shared helper:
    construct the model from the dicts these helpers produce:
    `DatasetSummary(**_summarize_dataset(d))`.
 
-Two `_*_impl` helpers are intentionally NOT Pydantic-ized in v1.6 because
-their wire shapes warrant their own design pass:
+v2.0 (PR 2 of #6) extended the Pydantic coverage to two more shapes
+and shipped two breaking wire-shape changes:
 
-- `_get_execution_detail_impl` — complex nested-dict shape with
-  `inputs.datasets`, `inputs.assets`, `outputs.assets`, optional
-  `experiment`. PR 2 (v2.0) is expected to redesign this.
-- The `deriva_ml_get_dataset` tool wrapper — uses an inline mini-detail
-  shape with `history` (list of 4-key dicts). PR 2 will unify the tool
-  and resource shapes (resource uses `version_history`).
+- `_get_execution_detail_impl` is now Pydantic-typed (`ExecutionDetail`
+  with `ExecutionInputs` / `ExecutionOutputs` / `ExecutionExperiment`
+  sub-models). Wire shape: same nested structure as v1.x, but the
+  `experiment` field is now ALWAYS present (set to `null` when the
+  execution is not a Hydra-driven experiment) instead of conditionally
+  omitted. Consumers that did `if "experiment" in payload:` should
+  switch to `if payload.get("experiment") is not None:`.
+- The `deriva_ml_get_dataset` tool wrapper now returns the same wire
+  shape as the `deriva://catalog/{h}/{c}/ml/dataset/{rid}` resource:
+  the field is `version_history` (was `history` in v1.x), and it's
+  always present (empty list when `include_history=False`). This
+  unifies the tool + resource shapes so consumers can switch freely
+  between them.
 
-Both keep returning `dict[str, Any]` until PR 2.
+Future v2.x sweeps (each its own PR):
+
+- `_summarize_*` building-block helpers still return `dict[str, Any]`.
+  Pydantic-izing them requires touching every ad-hoc consumer call
+  site (parents/children blocks in `deriva_ml_list_dataset_relations`,
+  inline sub-payloads in `deriva_ml_find_workflow_executions` /
+  `_list_execution_children` / `_list_execution_parents`,
+  description-update wrapper response shapes, etc.).
+- Ad-hoc preflight-count responses (`{total_count, entities_fetched,
+  action_required}`) are duplicated across every paginated tool.
+  Worth a shared `PreflightCountResponse` model.
+- Mutating-tool response shapes (insert/update/delete) are still
+  ad-hoc dicts. Their own coherent design pass (PR 3 of #6).
 
 ## Coverage Report
 

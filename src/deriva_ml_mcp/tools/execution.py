@@ -45,7 +45,13 @@ from deriva_ml_mcp._helpers import (
     _read_rid,
 )
 from deriva_ml_mcp._response_models import (
+    ExecutionAssetRef,
+    ExecutionDetail,
+    ExecutionExperiment,
+    ExecutionInputDatasetRef,
+    ExecutionInputs,
     ExecutionListResponse,
+    ExecutionOutputs,
     ExecutionSummary,
 )
 from deriva_ml_mcp.ml_context import get_ml
@@ -173,7 +179,7 @@ def _list_executions_impl(
     )
 
 
-def _get_execution_detail_impl(ml: Any, execution_rid: str) -> dict[str, Any]:
+def _get_execution_detail_impl(ml: Any, execution_rid: str) -> ExecutionDetail:
     """Build the execution detail payload (summary + inputs + outputs + experiment).
 
     Used by the ``deriva://catalog/{h}/{c}/ml/execution/{rid}`` resource.
@@ -203,91 +209,92 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> dict[str, Any]:
         execution_rid: The RID of the execution to look up.
 
     Returns:
-        Dict with keys: ``rid``, ``workflow_rid``, ``status``,
-        ``description``, ``start_time``, ``stop_time``, ``duration``,
-        ``inputs`` (``{datasets, assets}`` nested), ``outputs``
-        (``{assets}`` nested), and optional ``experiment``
-        (``{name, config_choices, model_config}``).
+        ``ExecutionDetail`` Pydantic model -- see
+        ``deriva_ml_mcp._response_models``. Wire shape matches v1.x
+        verbatim: ``{...summary fields..., "inputs": {"datasets":
+        [...], "assets": [...]}, "outputs": {"assets": [...]},
+        "experiment": {...} | null}``.
 
-        Note: PR 1 (v1.6) leaves this helper dict-returning. The
-        ``ExecutionDetail`` Pydantic model in ``_response_models.py``
-        currently models a flat-list ``inputs/outputs`` shape that
-        does NOT match this helper's nested-dict output -- the model
-        is positioned for PR 2 (v2.0) to redesign the wire shape.
-        Until then, this helper preserves the v1.x wire format.
+        v2.0 wire change vs v1.x: the ``experiment`` key is now
+        always present (set to ``null`` when the execution is not a
+        Hydra-driven experiment). v1.x omitted the key entirely. This
+        is a small breaking change but the typed contract makes
+        introspection easier.
     """
     record = ml.lookup_execution(execution_rid)
-    payload = _summarize_execution(record)
+    summary = _summarize_execution(record)
 
     # Inputs: datasets + input assets.
-    input_datasets: list[dict[str, Any]] = []
+    input_datasets: list[ExecutionInputDatasetRef] = []
     try:
         for ds in record.list_input_datasets():
             current = getattr(ds, "current_version", None)
             input_datasets.append(
-                {
-                    "rid": ds.dataset_rid,
-                    "version": str(current) if current is not None else None,
-                }
+                ExecutionInputDatasetRef(
+                    rid=ds.dataset_rid,
+                    version=str(current) if current is not None else None,
+                )
             )
     except Exception:  # noqa: BLE001 -- record may not be bound on all paths
         input_datasets = []
 
-    input_assets: list[dict[str, Any]] = []
-    output_assets: list[dict[str, Any]] = []
+    input_assets: list[ExecutionAssetRef] = []
+    output_assets: list[ExecutionAssetRef] = []
     try:
         for asset in record.list_assets(asset_role="Input"):
             input_assets.append(
-                {
-                    "rid": getattr(asset, "asset_rid", None),
-                    "filename": getattr(asset, "filename", None),
-                }
+                ExecutionAssetRef(
+                    rid=getattr(asset, "asset_rid", None),
+                    filename=getattr(asset, "filename", None),
+                )
             )
         for asset in record.list_assets(asset_role="Output"):
             output_assets.append(
-                {
-                    "rid": getattr(asset, "asset_rid", None),
-                    "filename": getattr(asset, "filename", None),
-                }
+                ExecutionAssetRef(
+                    rid=getattr(asset, "asset_rid", None),
+                    filename=getattr(asset, "filename", None),
+                )
             )
     except Exception:  # noqa: BLE001 -- assets are optional
         pass
-
-    payload["inputs"] = {
-        "datasets": input_datasets,
-        "assets": input_assets,
-    }
-    payload["outputs"] = {
-        "assets": output_assets,
-    }
 
     # TODO(deriva-ml-execution-metadata-api): no generic API on
     # ExecutionRecord to enumerate Execution_Metadata files by role
     # (Deriva_Config / Execution_Config / Hydra_Config / Runtime_Env --
     # they're stored as Asset rows joined through Execution_Metadata,
     # not under list_assets's asset_role filter which only handles
-    # Input/Output). Until an upstream enumerator exists, omit the
-    # metadata key entirely rather than emit four hard-coded nulls
-    # that promise a contract we can't deliver. The Experiment-bound
-    # hydra_config below covers the most common reader use case.
+    # Input/Output). Until an upstream enumerator exists, no metadata
+    # field on ExecutionDetail -- the Experiment-bound hydra_config
+    # below covers the most common reader use case.
 
     # Experiment: try lookup_experiment(execution_rid). The deriva-ml
     # API raises if the execution has no Experiment row; treat that as
-    # "not an experiment" and omit the key. When present, surface the
-    # cheap fields (name + config_choices + model_config) but NOT the
-    # full hydra_config payload -- it can be 10-100 KB and a caller
-    # wanting it should fetch the metadata asset directly.
+    # "not an experiment" and set experiment=None. When present,
+    # surface the cheap fields (name + config_choices + model_config)
+    # but NOT the full hydra_config payload -- it can be 10-100 KB and
+    # a caller wanting it should fetch the metadata asset directly.
+    experiment: ExecutionExperiment | None = None
     try:
         exp = ml.lookup_experiment(execution_rid)
-        payload["experiment"] = {
-            "name": getattr(exp, "name", None),
-            "config_choices": getattr(exp, "config_choices", {}) or {},
-            "model_config": getattr(exp, "model_config", {}) or {},
-        }
+        experiment = ExecutionExperiment.model_validate(
+            {
+                "name": getattr(exp, "name", None),
+                "config_choices": getattr(exp, "config_choices", {}) or {},
+                # The wire key is "model_config" (alias) -- pass the dict
+                # under the wire-key form to take advantage of model_validate's
+                # alias-aware construction.
+                "model_config": getattr(exp, "model_config", {}) or {},
+            }
+        )
     except Exception:  # noqa: BLE001 -- absent experiment is the common case
-        pass
+        experiment = None
 
-    return payload
+    return ExecutionDetail(
+        **summary,
+        inputs=ExecutionInputs(datasets=input_datasets, assets=input_assets),
+        outputs=ExecutionOutputs(assets=output_assets),
+        experiment=experiment,
+    )
 
 
 def _summarize_upload_dict(
