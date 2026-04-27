@@ -70,6 +70,54 @@ Pass the same pair on every call. The catalog connection is opened on
 demand and cached behind the scenes; passing different ``catalog_id``
 values just talks to different catalogs.
 
+These two arguments mean the same thing in every tool, so individual
+tool docstrings DO NOT redocument them in their ``Args:`` blocks. If
+you see a tool whose ``Args:`` starts on its third parameter, this is
+why -- ``hostname`` is a Deriva server hostname (e.g.
+``"www.example.org"``) and ``catalog_id`` is the catalog ID as a
+string (e.g. ``"1"`` or an alias like ``"production"``).
+
+PAGINATION CONTRACT
+-------------------
+Every tool whose name is ``deriva_ml_list_*`` follows the same
+two-step pagination contract; individual ``list_*`` tool docstrings
+do NOT redocument it.
+
+Step 1 -- preflight: call with ``preflight_count=True`` to learn the
+total count without fetching rows. The response is
+``{"total_count": N, "entities_fetched": false, "action_required":
+"Found N <items>. Choose a limit and call again with
+preflight_count=False."}``. Present the count to the user and choose a
+``limit`` (or accept the default).
+
+Step 2 -- fetch a page: call with ``preflight_count=False`` (the
+default) and the chosen ``limit`` (default 100, max 1000). The
+response is ``{"<items>": [...], "count": N, "truncated": bool,
+"next_after_rid": <last-rid> | null}``.
+
+Step 3 -- advance: when ``truncated`` is true, pass the response's
+``next_after_rid`` value as the ``after_rid`` argument on the next
+call. ``after_rid`` is opaque -- treat it as a cursor token; do not
+parse it.
+
+Use the preflight step whenever the count could be surprising
+(e.g. you're about to fetch all executions for a workflow). For
+fixed-shape "give me the latest 10" queries, skip preflight and call
+directly with ``limit=10``.
+
+ERROR ENVELOPE
+--------------
+Every tool that can fail returns ``{"error": "<message>"}`` as its
+JSON payload on failure (instead of the success-shape payload). The
+error message is a short string; sometimes it includes the failing
+RID or qname. ``mutates=True`` tools also emit an audit-log row with
+the same operation name suffixed ``_failed`` (e.g.
+``deriva_ml_create_dataset_failed``).
+
+Individual tool ``Returns:`` blocks document only the success shape;
+the failure shape is implicit. Individual tool docstrings DO NOT
+redocument the error envelope.
+
 THE FIVE ML DOMAINS
 -------------------
 The 45 tools are organized into five domain modules. Pick the domain

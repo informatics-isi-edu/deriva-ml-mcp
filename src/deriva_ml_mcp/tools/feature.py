@@ -130,14 +130,9 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """Discover features defined on a table (or across the catalog).
 
-        PAGINATION: When the count is unknown, call with
-        ``preflight_count=True`` first. Then choose a limit and call
-        again with ``preflight_count=False``. Use ``after_rid`` (the
-        ``feature_table`` name from the previous page) to advance.
+        See ``deriva_ml_getting_started`` (PAGINATION CONTRACT) for the two-step pagination flow.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             table: If set, filter to features on this target table. If
                 None, return all features in the catalog.
             limit: Max features per page (default 100, max 1000).
@@ -147,7 +142,7 @@ def register(ctx: PluginContext) -> None:
             preflight_count: If True, return only the total count.
 
         Returns:
-            JSON string. Page: ``{"features": [{"feature_name",
+            Page: ``{"features": [{"feature_name",
             "target_table", "feature_table", "term_columns",
             "asset_columns", "value_columns"}, ...], "count",
             "truncated", "next_after_rid"}``. Preflight:
@@ -208,13 +203,11 @@ def register(ctx: PluginContext) -> None:
         """Read the full schema of one feature for building value records.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             table: Target table the feature is defined on.
             feature_name: Name of the feature to inspect.
 
         Returns:
-            JSON string. ``{"feature_name", "target_table",
+            ``{"feature_name", "target_table",
             "feature_table", "comment", "term_columns": [{"name",
             "nullok"}, ...], "asset_columns": [{"name", "nullok"}, ...],
             "value_columns": [{"name", "type", "nullok", "default"},
@@ -305,14 +298,9 @@ def register(ctx: PluginContext) -> None:
         - ``by_execution`` -- filter to records from one execution.
           Requires ``selector_execution_rid``.
 
-        PAGINATION: When the count is unknown, call with
-        ``preflight_count=True`` first. Then choose a limit and call
-        again with ``preflight_count=False``. Use ``after_rid`` (the
-        target RID from the previous page) to advance.
+        See ``deriva_ml_getting_started`` (PAGINATION CONTRACT) for the two-step pagination flow.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             table: Target table the feature is defined on.
             feature_name: Name of the feature to query.
             selector: Selector strategy. See above for semantics.
@@ -327,7 +315,7 @@ def register(ctx: PluginContext) -> None:
             preflight_count: If True, return only the materialized count.
 
         Returns:
-            JSON string. Page: ``{"records": [<model_dump>, ...], "count",
+            Page: ``{"records": [<model_dump>, ...], "count",
             "truncated", "next_after_rid"}``. Preflight:
             ``{"total_count", "entities_fetched": False,
             "action_required"}``.
@@ -453,8 +441,6 @@ def register(ctx: PluginContext) -> None:
         """Register a new feature schema on a domain table.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             target_table: Domain table the feature attaches to.
             feature_name: Unique name within the target table.
             terms: Vocabulary tables whose terms can be feature values.
@@ -529,8 +515,6 @@ def register(ctx: PluginContext) -> None:
         """Remove a feature definition and all its values.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             table: Target table the feature is defined on.
             feature_name: Name of the feature to delete.
 
@@ -613,8 +597,6 @@ def register(ctx: PluginContext) -> None:
           ``add_features`` on a stopped execution has no defined behaviour.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             table: Target table the feature is defined on.
             feature_name: Name of the feature to write values for.
             execution_rid: RID of the parent execution.

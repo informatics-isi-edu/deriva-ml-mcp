@@ -148,21 +148,15 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """Browse all workflows registered in the catalog.
 
-        PAGINATION: When the count is unknown, call with
-        ``preflight_count=True`` first. Then choose a limit and call
-        again with ``preflight_count=False``. Use ``after_rid`` (the
-        RID of the last workflow from the previous page) to advance
-        the cursor.
+        See ``deriva_ml_getting_started`` (PAGINATION CONTRACT) for the two-step pagination flow.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             limit: Max workflows per page (default 100, max 1000).
             after_rid: RID of last row from previous page to advance cursor.
             preflight_count: If True, return only total count.
 
         Returns:
-            JSON string. Preflight:
+            Preflight:
             ``{"total_count": N, "entities_fetched": False, "action_required": "..."}``.
             Page: ``{"workflows": [{"rid", "name", "url", "checksum",
             "version", "workflow_type", "description"}, ...], "count": N,
@@ -217,8 +211,6 @@ def register(ctx: PluginContext) -> None:
         """Read full details of one workflow by RID.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             workflow_rid: The RID of the workflow to retrieve.
 
         Returns:
@@ -264,8 +256,6 @@ def register(ctx: PluginContext) -> None:
         object hash (checksum) of the workflow file.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             url_or_checksum: GitHub URL with commit hash, or Git object
                 hash (checksum) of the workflow file.
 
@@ -328,8 +318,6 @@ def register(ctx: PluginContext) -> None:
         passes them in. The MCP server never runs git introspection.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             name: Human-readable name of the workflow.
             workflow_type: Type(s) tag — single string or list. Each
                 must be a term in the ``Workflow_Type`` vocabulary.
@@ -459,8 +447,6 @@ def register(ctx: PluginContext) -> None:
         catalog directly via the Workflow's __setattr__ hook.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             workflow_rid: The RID of the workflow to update.
             description: New description text. None leaves unchanged.
             workflow_type: New list of workflow_type tag terms. None

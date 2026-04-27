@@ -351,14 +351,9 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """Browse executions in the catalog, optionally filtered by workflow or status.
 
-        PAGINATION: When the count is unknown, call with
-        ``preflight_count=True`` first. Then choose a limit and call
-        again with ``preflight_count=False``. Use ``after_rid`` (the
-        RID of the last execution from the previous page) to advance.
+        See ``deriva_ml_getting_started`` (PAGINATION CONTRACT) for the two-step pagination flow.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             workflow_rid: If set, return only executions of this workflow.
             status: If set, restrict to one ``ExecutionStatus`` value
                 (e.g. ``"Running"``, ``"Uploaded"``).
@@ -367,7 +362,7 @@ def register(ctx: PluginContext) -> None:
             preflight_count: If True, return only total count.
 
         Returns:
-            JSON string. Page: ``{"executions": [...], "count",
+            Page: ``{"executions": [...], "count",
             "truncated", "next_after_rid"}``. Preflight: ``{"total_count",
             "entities_fetched": False, "action_required"}``.
 
@@ -425,8 +420,6 @@ def register(ctx: PluginContext) -> None:
         """Read full details of one execution by RID.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             execution_rid: The RID of the execution to retrieve.
 
         Returns:
@@ -476,8 +469,6 @@ def register(ctx: PluginContext) -> None:
         general "browse executions" intent.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             workflow_rid: The RID of the workflow whose executions to list.
             status: Optional ``ExecutionStatus`` filter.
             limit: Max executions per page (default 100, max 1000).
@@ -559,8 +550,6 @@ def register(ctx: PluginContext) -> None:
         add it then.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             execution_rid: The RID of the parent execution.
             recurse: If True, include all descendants, not just direct
                 children.
@@ -615,8 +604,6 @@ def register(ctx: PluginContext) -> None:
         the whole ancestry chain.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             execution_rid: The RID of the child execution.
             recurse: If True, include all ancestors, not just direct parents.
 
@@ -679,8 +666,6 @@ def register(ctx: PluginContext) -> None:
         bare RID strings for assets (wrapped in ``AssetSpec``).
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             workflow_rid: The RID of the parent workflow.
             description: Free-text description of this execution.
             dataset_rids: Input dataset RIDs in ``"RID@version"`` form
@@ -799,8 +784,6 @@ def register(ctx: PluginContext) -> None:
         state machine.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             execution_rid: The RID of the execution to start.
 
         Returns:
@@ -892,8 +875,6 @@ def register(ctx: PluginContext) -> None:
         (idempotent at the per-step level).
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             execution_rid: The RID of the execution to commit.
             retry_failed: If True, retry rows and assets that previously
                 failed upload.
@@ -1024,8 +1005,6 @@ def register(ctx: PluginContext) -> None:
         the deriva-ml setter hook.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             execution_rid: The RID of the execution to update.
             description: New description text. Required (must be
                 non-None); passing ``None`` returns an error envelope
@@ -1110,8 +1089,6 @@ def register(ctx: PluginContext) -> None:
         does not have a per-execution abort-reason column to write to.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             execution_rid: The RID of the execution to abort.
             reason: Optional bounded admin annotation (audit only).
 
@@ -1193,8 +1170,6 @@ def register(ctx: PluginContext) -> None:
         the executions that produced it.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             execution_rid: The RID of the producing execution.
             description: Free-text description of the dataset.
             dataset_types: Optional list of ``Dataset_Type`` vocabulary
@@ -1291,8 +1266,6 @@ def register(ctx: PluginContext) -> None:
         display order in the parent's child list.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             parent_execution_rid: The RID of the parent execution.
             child_execution_rid: The RID of the child execution.
             sequence: Optional integer sequence position. ``None`` lets

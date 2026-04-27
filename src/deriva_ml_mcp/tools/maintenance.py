@@ -78,14 +78,11 @@ def register(ctx: PluginContext) -> None:
         audit row is emitted on success or failure.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             vocab: Optional vocab qname (``"schema.table"``). If
                 ``None``, re-indexes all vocabularies in the catalog.
 
         Returns:
-            JSON string. Success: ``{"reindexed": {qname: term_count, ...}}``.
-            Failure: ``{"error": str}``.
+            ``{"reindexed": {qname: term_count, ...}}``.
 
         Raises:
             RuntimeError: Wrapped as ``{"error": ...}``, propagated
@@ -173,18 +170,15 @@ def register(ctx: PluginContext) -> None:
         consequential ``rag_search``.
 
         Args:
-            hostname: The Deriva server hostname.
-            catalog_id: The catalog ID as a string.
             target: Optional ``"<table>:<rid>"`` selector. ``None``
                 (default) refreshes all of the calling user's
                 per-user sources.
 
         Returns:
-            JSON string. Success:
             ``{"resynced": {"dataset": N, "workflow": M, "execution": K}}``
             -- counts of sources successfully refreshed per table.
             For ``target="<table>:<rid>"`` mode, only the targeted
-            table's count is non-zero. Failure: ``{"error": str}``.
+            table's count is non-zero.
 
         Raises:
             ValueError: If ``target`` is malformed (not
