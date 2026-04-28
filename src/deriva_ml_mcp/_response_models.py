@@ -849,3 +849,91 @@ class CommitExecutionReport(BaseModel):
     per_table: dict[str, int]
     errors: list[str]
     errors_truncated: bool
+
+
+class CreateExecutionResponse(BaseModel):
+    """Response from ``deriva_ml_create_execution``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["created"]
+    execution_rid: str
+    workflow_rid: str
+    dataset_count: int
+    asset_count: int
+    dry_run: bool
+
+
+class StartExecutionResponse(BaseModel):
+    """Response from ``deriva_ml_start_execution``.
+
+    ``status="running"`` on a real start, ``status="already_running"``
+    on the idempotent no-op when the execution was already in Running
+    state. v3.0: replaced the optional ``note`` field with a
+    discriminator status value.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["running", "already_running"]
+    execution_rid: str
+
+
+class CommitExecutionResponse(BaseModel):
+    """Response from ``deriva_ml_commit_execution``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["uploaded"]
+    execution_rid: str
+    report: CommitExecutionReport
+
+
+class UpdateExecutionResponse(BaseModel):
+    """Response from ``deriva_ml_update_execution``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["updated"]
+    execution_rid: str
+    updated_fields: list[str]
+
+
+class AbortExecutionResponse(BaseModel):
+    """Response from ``deriva_ml_abort_execution``.
+
+    ``status="aborted"`` on a real abort, ``status="already_aborted"``
+    on the idempotent no-op. v3.0: replaced the optional ``note``
+    field with a discriminator status value. ``reason`` is always
+    present (``null`` when no reason was given OR when the call was a
+    no-op).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["aborted", "already_aborted"]
+    execution_rid: str
+    reason: str | None = None
+
+
+class CreateExecutionDatasetResponse(BaseModel):
+    """Response from ``deriva_ml_create_execution_dataset``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["created"]
+    dataset_rid: str
+    execution_rid: str
+    dataset_types: list[str]
+    description: str
+
+
+class AddNestedExecutionResponse(BaseModel):
+    """Response from ``deriva_ml_add_nested_execution``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["added"]
+    parent_rid: str
+    child_rid: str
+    sequence: int

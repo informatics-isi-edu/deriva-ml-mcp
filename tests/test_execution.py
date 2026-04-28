@@ -418,8 +418,8 @@ async def test_start_execution_idempotent_when_already_running(
             hostname="h", catalog_id="1", execution_rid="1-EXEC"
         )
     payload = json.loads(result)
-    assert payload["status"] == "running"
-    assert payload["note"] == "already running"
+    assert payload["status"] == "already_running"
+    assert "note" not in payload
     execution.execution_start.assert_not_called()
     # Idempotent no-op: no audit row.
     assert mock_audit.call_count == 0
@@ -659,8 +659,9 @@ async def test_abort_execution_idempotent_when_already_aborted(
             hostname="h", catalog_id="1", execution_rid="1-EXEC"
         )
     payload = json.loads(result)
-    assert payload["status"] == "aborted"
-    assert payload["note"] == "already aborted"
+    assert payload["status"] == "already_aborted"
+    assert "note" not in payload
+    assert payload["reason"] is None
     execution.abort.assert_not_called()
     assert mock_audit.call_count == 0
 
