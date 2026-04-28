@@ -332,6 +332,47 @@ respects both metric-storage patterns: features-as-scalars (use
 `execution_rids=` on `list_feature_values`) and metrics-as-JSONL-
 asset files (download via `work-with-assets`, parse locally).
 
+## Cross-Repo Sync: `deriva_ml_concepts` prompt ↔ `deriva-ml-context` skill
+
+The `_CONCEPTS_GUIDE` constant in `src/deriva_ml_mcp/prompts.py`
+(rendered as the `deriva_ml_concepts` MCP prompt) and the
+`skills/deriva-ml-context/SKILL.md` file in the companion
+`deriva-ml-skills` Claude Code plugin share their conceptual content
+DELIBERATELY. Both must explain:
+
+- What DerivaML is (one paragraph)
+- The five core abstractions (Dataset, Workflow, Execution, Feature, Asset)
+- The provenance principle (every artifact links to its producing Execution)
+- The vocabulary-extension pattern (use core's `add_term` with `schema="deriva-ml"`)
+
+The duplication is intentional. The two surfaces serve different LLM
+clients with different invocation models:
+
+- **Claude Code clients** with the `deriva-ml-skills` plugin loaded
+  get the conceptual frame pushed into context proactively via the
+  always-on `deriva-ml-context` skill (the audit-named "load-bearing"
+  path).
+- **Non-Claude-Code clients** (Cursor, SDK-based agents, raw FastMCP
+  clients, etc.) pull the same frame in via the `deriva_ml_concepts`
+  prompt over the MCP wire.
+
+The skill is RICHER than the prompt — it adds tool-selection guidance,
+cross-references to other skills, the worked "when to reach back to
+the raw catalog surface" table, and other Claude-Code-specific
+value-add. The prompt is the conceptual FLOOR; the skill is floor +
+Claude-Code value-add.
+
+**When updating the abstractions** (rare — they're fundamental),
+update BOTH:
+
+1. `_CONCEPTS_GUIDE` in `src/deriva_ml_mcp/prompts.py` (this repo)
+2. `skills/deriva-ml-context/SKILL.md` in `../deriva-ml-skills`
+
+Both files carry an inline comment block at their top pointing at the
+other side. The matching comment lives in
+`../deriva-ml-skills/CLAUDE.md` under the same section heading so the
+constraint is visible from either repo.
+
 ## Coverage Report
 
 `docs/coverage.md` records what happened to every old `deriva-mcp` tool. Update it
