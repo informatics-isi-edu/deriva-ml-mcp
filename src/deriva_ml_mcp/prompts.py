@@ -6,7 +6,7 @@ docstrings. FastMCP surfaces them through the MCP ``prompts/list`` and
 the start of a conversation -- they are the cold-start anchor for the
 plugin's 45 tools and 11 resources.
 
-The three prompts complement the four built-in core prompts shipped by
+The four prompts complement the four built-in core prompts shipped by
 ``deriva-mcp-core`` (``query_guide``, ``entity_guide``,
 ``annotation_guide``, ``catalog_guide``) -- they do not replace them.
 Core's prompts cover generic ERMrest / annotation / catalog primitives;
@@ -16,7 +16,12 @@ dedup contract.
 
 Prompts registered here:
 
-    deriva_ml_getting_started     -- read first; orients the LLM
+    deriva_ml_concepts            -- conceptual frame; what DerivaML is,
+                                     the five abstractions, the provenance
+                                     principle. Read first if cold-starting.
+    deriva_ml_getting_started     -- operational orientation; (hostname,
+                                     catalog_id) rule, pagination, error
+                                     envelope, tool domains, discovery
     deriva_ml_execution_lifecycle -- state machine + commit semantics
     deriva_ml_workflow_dedup      -- deriva_ml_create_workflow is idempotent
 
@@ -47,11 +52,217 @@ if TYPE_CHECKING:
 #
 # Each constant is the full text returned as a single user message.
 # Plain ASCII only -- no en-dashes, smart quotes, or other Unicode.
+#
+# SYNC NOTE -- KEEP `_CONCEPTS_GUIDE` IN LOCKSTEP WITH THE
+# `deriva-ml-context` SKILL.
+#
+# `_CONCEPTS_GUIDE` deliberately mirrors the conceptual sections (what
+# DerivaML is, the five abstractions, the provenance principle / steering
+# principle, the vocabulary-extension pattern) of the `deriva-ml-context`
+# always-on skill in the companion `deriva-ml-skills` Claude Code plugin
+# (`skills/deriva-ml-context/SKILL.md`).
+#
+# The duplication is intentional:
+#   - Claude Code clients with the `deriva-ml-skills` plugin loaded get
+#     the conceptual frame pushed into context proactively via the
+#     always-on skill (the audit calls this the "load-bearing" path).
+#   - Non-Claude-Code clients (Cursor, SDK-based agents, raw FastMCP
+#     clients, etc.) pull the same frame in via the `deriva_ml_concepts`
+#     prompt over the MCP wire.
+#
+# The skill is RICHER than this prompt -- it adds tool-selection
+# guidance, cross-references to other skills, and the worked
+# "when to reach back to the raw catalog surface" table. This prompt is
+# the conceptual FLOOR; the skill is floor + Claude-Code value-add.
+#
+# When the abstractions evolve (rare -- they're fundamental), update BOTH:
+#   1. `_CONCEPTS_GUIDE` below
+#   2. `../deriva-ml-skills/skills/deriva-ml-context/SKILL.md`
+#      (the skill side carries a matching comment block at the top).
+
+
+_CONCEPTS_GUIDE = """\
+DERIVA-ML CONCEPTS -- read this if you do not already have a mental model of \
+DerivaML's domain. The deriva_ml_getting_started prompt assumes this conceptual \
+frame; if you arrived here cold, read this first.
+
+WHAT IS DERIVA-ML
+-----------------
+DerivaML is a reproducible-ML layer built on top of Deriva catalogs. It
+records the full provenance of every ML run -- inputs, code versions,
+configurations, outputs, and intermediate artifacts -- as first-class
+catalog entities so that experiments can be reproduced, audited,
+compared across users, and resumed across sessions.
+
+The stack:
+
+  - ``deriva-ml`` is the Python library; provides the ``DerivaML`` class,
+    ``Workflow``, ``ExecutionConfiguration``, dataset / feature / asset
+    APIs, and the ``with ml.create_execution(config) as exe:`` context
+    manager pattern.
+  - ``deriva-ml-mcp`` is THIS plugin (loaded by ``deriva-mcp-core``);
+    exposes the ``deriva_ml_*`` MCP tools and the
+    ``deriva://catalog/{h}/{c}/ml/...`` resource family.
+  - ``deriva-ml-skills`` is a companion Claude Code skill plugin that
+    layers workflow guidance on top -- only relevant when the LLM is
+    running inside Claude Code with that plugin loaded.
+
+THE FIVE CORE ABSTRACTIONS
+--------------------------
+These are the surface DerivaML adds on top of plain Deriva. Each is
+stored as one or more Deriva tables underneath, but TREAT THEM AS
+DERIVA-ML DOMAIN OBJECTS, NOT AS RAW TABLES.
+
+  Dataset    A versioned collection of catalog rows that an execution
+             consumed or produced. Datasets have a type
+             (``Dataset_Type`` vocabulary), an element-type spec, a
+             version history, and can be downloaded as bags. Use
+             ``deriva_ml_create_dataset``, ``deriva_ml_add_dataset_members``,
+             ``deriva_ml_increment_dataset_version``,
+             ``deriva_ml_cache_dataset``.
+
+  Workflow   A versioned reference to the code (URL + git commit hash)
+             that knows how to do a thing. A Workflow is content-
+             addressed: same URL + same commit = same Workflow row.
+             Workflows are typed (``Workflow_Type`` vocabulary). Use
+             ``deriva_ml_create_workflow``,
+             ``deriva_ml_find_workflow_by_url``. See the
+             ``deriva_ml_workflow_dedup`` prompt for idempotency.
+
+  Execution  One run of a Workflow against specific input Datasets,
+             producing output Datasets / Features / Assets. Executions
+             have a status (``Execution_Status_Type``), inputs / outputs
+             links, and a state machine that the lifecycle tools advance
+             through. Use ``deriva_ml_create_execution``,
+             ``deriva_ml_start_execution``, ``deriva_ml_commit_execution``,
+             ``deriva_ml_abort_execution``, ``deriva_ml_update_execution``.
+             See the ``deriva_ml_execution_lifecycle`` prompt for the
+             full state machine.
+
+  Feature    A typed value attached to a row of some target table (e.g.
+             a per-image classification label produced by a run, or a
+             scalar metric like ``f1_score`` per execution). Features
+             link the value back to the producing Execution for
+             provenance. Use ``deriva_ml_create_feature``,
+             ``deriva_ml_add_feature_values``,
+             ``deriva_ml_list_feature_values``.
+
+  Asset      A file uploaded to hatrac and recorded in the catalog with
+             an ``Asset_Type`` and provenance link to its producing
+             Execution. The MCP surface covers asset metadata only;
+             file bytes are out of scope (the MCP server has no general
+             access to the user's local filesystem). Use
+             ``deriva_ml_list_asset_tables``, ``deriva_ml_lookup_asset``,
+             ``deriva_ml_update_asset``. For asset bytes, hand off to
+             local Python via the user's environment (``ml.download_asset``,
+             ``exe.asset_file_path()``).
+
+THE PROVENANCE PRINCIPLE
+------------------------
+Every artifact (Dataset, Feature value, output Asset) MUST be linked to
+the Execution that produced it. This is why:
+
+  - You create an Execution BEFORE writing outputs, not after.
+  - You ``deriva_ml_start_execution`` to advance the state machine
+    BEFORE writing outputs (the alternative is the auto-wrap path of
+    ``deriva_ml_add_feature_values``; see the lifecycle prompt).
+  - You ``deriva_ml_commit_execution`` AFTER writing outputs, so the
+    staged values become visible to downstream queries.
+  - ``deriva_ml_update_execution`` deliberately does NOT accept a
+    ``status=`` argument -- the state machine is enforced by the
+    lifecycle tools, NOT by free-form status edits. Manual status
+    flips would let an LLM put the catalog into a state where the
+    upload-outputs side effect of commit never ran.
+
+The provenance principle is what makes ML runs reproducible across
+users, sessions, and time. Bypassing it (e.g. via raw entity CRUD on
+the underlying Deriva tables) breaks reproducibility silently.
+
+DERIVA-ML ABSTRACTIONS TAKE PRECEDENCE
+--------------------------------------
+A loaded deriva-ml-mcp plugin sits on top of ``deriva-mcp-core``, which
+exposes generic catalog primitives (``insert_records``, ``update_record``,
+``get_record``, schema CRUD, etc). For the FIVE ABSTRACTIONS above, you
+must use the ``deriva_ml_*`` tools, NEVER the raw core tools. The
+``deriva_ml_*`` tools enforce:
+
+  - Business logic (e.g. ``deriva_ml_add_dataset_members`` validates RIDs
+    against the dataset's element-type spec; raw inserts will let you
+    add wrong-table rows that break the dataset on materialization).
+  - FK validation across the Dataset / Workflow / Execution graph (every
+    Execution links to a Workflow; every output Dataset links to its
+    producing Execution; raw inserts can create dangling references).
+  - Provenance tracking (each mutation links back to the active
+    Execution; raw inserts have no Execution context).
+  - Version management (``deriva_ml_increment_dataset_version`` creates
+    a new snapshot; raw inserts skip the version bump and leave consumers
+    pointed at stale data).
+  - RAG re-indexing (the ``deriva_ml_*`` tools fire surgical re-index
+    hooks so freshly mutated rows are searchable on the next
+    ``rag_search``; raw inserts do not).
+  - Audit emission (every ``deriva_ml_*`` mutation emits an audit event
+    with the operation name; raw inserts use the generic core audit
+    which lacks DerivaML-specific context).
+
+For catalog objects that are NOT one of the five abstractions (custom
+domain tables like ``Subject`` / ``Image``, generic vocabularies, schema
+introspection, display annotations), use the core tools.
+
+VOCABULARIES AND THE EXTENSION PATTERN
+--------------------------------------
+DerivaML ships four built-in controlled vocabularies:
+
+  Dataset_Type            -- tag a Dataset's purpose (e.g. ``Training``,
+                             ``Test``, ``Validation``)
+  Workflow_Type           -- tag a Workflow's role (e.g. ``Model_Training``,
+                             ``Inference``, ``Data_Curation``)
+  Asset_Type              -- tag an Asset's file kind (e.g. ``Metrics_File``,
+                             ``Model_Weights``, ``Image``)
+  Execution_Status_Type   -- managed automatically by the state machine;
+                             do NOT extend manually
+
+These are CONTROLLED enumerations: a Dataset's type must be a registered
+term, not free-form text. Pass term values that already exist; if the
+right term doesn't exist, EXTEND the vocabulary first using core's
+generic ``add_term`` tool with ``schema="deriva-ml"``:
+
+    add_term(hostname=..., catalog_id=..., schema="deriva-ml",
+             table="Dataset_Type", name="My_New_Type",
+             description="...")
+
+(Legacy dedicated wrappers like ``add_dataset_type`` were retired; the
+generic ``add_term`` from ``deriva-mcp-core`` handles all four
+DerivaML vocabularies.)
+
+For YOUR OWN domain vocabularies (``Sample_Type``, ``Tissue_Type``,
+``Image_Quality``, etc.), use the same generic ``add_term`` with your
+domain schema name instead of ``"deriva-ml"``.
+
+WHERE TO GO NEXT
+----------------
+Now that you have the conceptual frame, read these in this order:
+
+  1. ``deriva_ml_getting_started``  -- operational orientation:
+     stateless model, pagination, error envelope, the five tool
+     domains, discovery via resources / RAG, the mutation chain.
+
+  2. ``deriva_ml_execution_lifecycle``  -- before doing any execution
+     work. The state machine is non-obvious and the wrong call order
+     can leave executions stuck.
+
+  3. ``deriva_ml_workflow_dedup``  -- before calling
+     ``deriva_ml_create_workflow``. It is idempotent; do not preflight.
+"""
 
 
 _GETTING_STARTED_GUIDE = """\
 DERIVA-ML GETTING STARTED -- read this before using any deriva-ml-mcp tool \
 or resource.
+
+If you do not already have a mental model of DerivaML's domain (what a
+Dataset / Workflow / Execution / Feature / Asset is, why every artifact
+is linked to its producing Execution), read the ``deriva_ml_concepts``
+prompt FIRST. This prompt assumes that conceptual frame.
 
 This plugin exposes DerivaML's ML-workflow surface (datasets, features,
 workflows, executions) on top of any Deriva catalog. It is layered above
@@ -579,7 +790,7 @@ For one workflow's full detail (name, type, url, checksum, version, etc.):
 
 
 def register(ctx: PluginContext) -> None:
-    """Register the three deriva-ml MCP prompts with the plugin context.
+    """Register the four deriva-ml MCP prompts with the plugin context.
 
     Args:
         ctx: PluginContext supplied by deriva-mcp-core at startup.
@@ -594,10 +805,26 @@ def register(ctx: PluginContext) -> None:
     """
 
     @ctx.prompt(
+        "deriva_ml_concepts",
+        description=(
+            "Conceptual frame for any LLM client cold-starting on deriva-ml-mcp: "
+            "what DerivaML is, the five core abstractions (Dataset, Workflow, "
+            "Execution, Feature, Asset), the provenance principle, and the "
+            "vocabulary-extension pattern. Read this BEFORE deriva_ml_getting_started "
+            "if you do not already have a DerivaML mental model. Mirrors the "
+            "deriva-ml-context skill in the deriva-ml-skills Claude Code plugin "
+            "for non-Claude-Code clients (Cursor, SDK-based agents, etc.)."
+        ),
+    )
+    def deriva_ml_concepts() -> str:
+        return _CONCEPTS_GUIDE
+
+    @ctx.prompt(
         "deriva_ml_getting_started",
         description=(
             "Cold-start orientation for deriva-ml-mcp: the (hostname, catalog_id) rule, "
-            "the four ML domains, discovery via resources/RAG, the workflow->execution->outputs chain"
+            "the four ML domains, discovery via resources/RAG, the workflow->execution->outputs chain. "
+            "Assumes the conceptual frame from deriva_ml_concepts."
         ),
     )
     def deriva_ml_getting_started() -> str:
