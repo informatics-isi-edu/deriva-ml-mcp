@@ -104,6 +104,7 @@ The list of deriva-ml models we'd consider embedding in PR 2:
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -746,3 +747,13 @@ class ErrorEnvelope(BaseModel):
 # 4. ``cache_dataset`` nests upstream bag-info keys under a ``bag_info``
 #    field instead of spreading them top-level.
 # ---------------------------------------------------------------------------
+
+
+class UpdateAssetResponse(BaseModel):
+    """Response from ``deriva_ml_update_asset``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["updated"]
+    asset_rid: str
+    updated_fields: list[str]
