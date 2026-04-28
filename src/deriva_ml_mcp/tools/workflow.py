@@ -50,27 +50,34 @@ if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
 
 
-def _summarize_workflow(wf: Any) -> dict[str, Any]:
-    """Render a Workflow object into the JSON-friendly summary used by list endpoints.
+def _summarize_workflow(wf: Any) -> WorkflowSummary:
+    """Render a Workflow object into the validated summary used by list endpoints.
 
     Args:
         wf: A ``deriva_ml.execution.workflow.Workflow`` instance.
 
     Returns:
-        Dict matching the ``WorkflowSummary`` Pydantic model shape.
-        ``_list_workflows_impl`` constructs the model from these dicts.
-        Kept dict-returning to avoid touching ad-hoc payload sites
-        in PR 1; PR 2 may switch to Pydantic-throughout.
+        ``WorkflowSummary`` Pydantic instance -- see
+        ``deriva_ml_mcp._response_models``. Construction validates
+        the field types; bad data from ``deriva-ml`` raises
+        ``ValidationError`` here rather than surfacing as malformed
+        JSON downstream.
+
+    Note:
+        v2.2 sweep: this helper now returns Pydantic. Consumers that
+        previously dict-accessed (``summary["rid"]``) must use
+        attribute access (``summary.rid``) or call ``.model_dump()``
+        to get a plain dict back.
     """
-    return {
-        "rid": wf.rid,
-        "name": wf.name,
-        "url": wf.url,
-        "checksum": wf.checksum,
-        "version": wf.version,
-        "workflow_type": list(wf.workflow_type) if wf.workflow_type else [],
-        "description": wf.description,
-    }
+    return WorkflowSummary(
+        rid=wf.rid,
+        name=wf.name,
+        url=wf.url,
+        checksum=wf.checksum,
+        version=wf.version,
+        workflow_type=list(wf.workflow_type) if wf.workflow_type else [],
+        description=wf.description,
+    )
 
 
 def _list_workflows_impl(
@@ -97,7 +104,7 @@ def _list_workflows_impl(
         key=partial(_read_rid, rid_key="rid"),
     )
     return WorkflowListResponse(
-        workflows=[WorkflowSummary(**_summarize_workflow(w)) for w in page],
+        workflows=[_summarize_workflow(w) for w in page],
         count=len(page),
         truncated=truncated,
         next_after_rid=next_after,
@@ -116,7 +123,8 @@ def _get_workflow_impl(ml: Any, workflow_rid: str) -> WorkflowDetail:
         (Currently shape-equivalent to ``WorkflowSummary``.)
     """
     wf = ml.lookup_workflow(workflow_rid)
-    return WorkflowDetail(**_summarize_workflow(wf))
+    summary = _summarize_workflow(wf)
+    return WorkflowDetail(**summary.model_dump())
 
 
 def register(ctx: PluginContext) -> None:
@@ -274,7 +282,7 @@ def register(ctx: PluginContext) -> None:
                 ml = get_ml(hostname, catalog_id)
                 wf = ml.lookup_workflow_by_url(url_or_checksum)
                 summary = _summarize_workflow(wf)
-            return json.dumps(summary)
+            return summary.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,

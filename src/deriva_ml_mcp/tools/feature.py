@@ -48,25 +48,29 @@ if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
 
 
-def _summarize_feature(feature: Any) -> dict[str, Any]:
-    """Render a Feature object into the JSON-friendly shape used by list endpoints.
+def _summarize_feature(feature: Any) -> FeatureSummary:
+    """Render a Feature object into the validated summary used by list endpoints.
 
     Args:
         feature: A ``deriva_ml.feature.Feature`` instance.
 
     Returns:
-        Dict matching the ``FeatureSummary`` Pydantic model shape.
-        ``_list_features_impl`` constructs the model from these dicts.
-        Kept dict-returning to preserve PR 1 scope.
+        ``FeatureSummary`` Pydantic instance -- see
+        ``deriva_ml_mcp._response_models``.
+
+    Note:
+        v2.2 sweep: this helper now returns Pydantic. Consumers that
+        previously dict-accessed must use attribute access or call
+        ``.model_dump()`` to get a plain dict back.
     """
-    return {
-        "feature_name": feature.feature_name,
-        "target_table": feature.target_table.name,
-        "feature_table": feature.feature_table.name,
-        "term_columns": [c.name for c in feature.term_columns],
-        "asset_columns": [c.name for c in feature.asset_columns],
-        "value_columns": [c.name for c in feature.value_columns],
-    }
+    return FeatureSummary(
+        feature_name=feature.feature_name,
+        target_table=feature.target_table.name,
+        feature_table=feature.feature_table.name,
+        term_columns=[c.name for c in feature.term_columns],
+        asset_columns=[c.name for c in feature.asset_columns],
+        value_columns=[c.name for c in feature.value_columns],
+    )
 
 
 def _list_features_impl(
@@ -102,7 +106,7 @@ def _list_features_impl(
         key=lambda f: f.feature_table.name,
     )
     return FeatureListResponse(
-        features=[FeatureSummary(**_summarize_feature(f)) for f in page],
+        features=[_summarize_feature(f) for f in page],
         count=len(page),
         truncated=truncated,
         next_after_rid=next_after,
@@ -491,9 +495,9 @@ def register(ctx: PluginContext) -> None:
                 feature_name=feature_name,
                 n_term_cols=len(terms_list),
                 n_asset_cols=len(assets_list),
-                n_value_cols=len(summary["value_columns"]),
+                n_value_cols=len(summary.value_columns),
             )
-            return json.dumps({"status": "created", **summary})
+            return json.dumps({"status": "created", **summary.model_dump()})
         except Exception as exc:
             return _error_envelope(
                 exc,

@@ -211,19 +211,39 @@ and shipped two breaking wire-shape changes:
   unifies the tool + resource shapes so consumers can switch freely
   between them.
 
+v2.1 introduced `PreflightCountResponse` — one shared model used by
+the `preflight_count=True` branch of every paginated tool. Removes
+the DRY violation where each paginated tool built the same
+`{total_count, entities_fetched, action_required}` dict inline.
+The model uses `extra="allow"` to permit per-call-site context
+fields (`element_table`, `mode`, `dataset_rid`).
+
+v2.2 swept the `_summarize_*` building-block helpers to return
+Pydantic instances (`DatasetSummary`, `WorkflowSummary`,
+`ExecutionSummary`, `FeatureSummary`, `AssetSummary`). Consumers
+that previously dict-accessed the summary now use attribute access
+or call `.model_dump()` to get a plain dict back. Ad-hoc payload
+sites (parents/children in `deriva_ml_list_dataset_relations`,
+inline sub-payloads in `deriva_ml_find_workflow_executions` /
+`_list_execution_children` / `_list_execution_parents`) call
+`.model_dump()` to bridge to the surrounding `json.dumps(...)`. The
+RAG indexer's `_fetch_*_rows` and `_reindex_*` helpers were updated
+to use `.model_dump(mode="json")` (replaces the v1.x
+`json.loads(json.dumps(row, default=str))` round-trip; cleaner
+single-call coercion of datetimes etc.).
+
 Future v2.x sweeps (each its own PR):
 
-- `_summarize_*` building-block helpers still return `dict[str, Any]`.
-  Pydantic-izing them requires touching every ad-hoc consumer call
-  site (parents/children blocks in `deriva_ml_list_dataset_relations`,
-  inline sub-payloads in `deriva_ml_find_workflow_executions` /
-  `_list_execution_children` / `_list_execution_parents`,
-  description-update wrapper response shapes, etc.).
-- Ad-hoc preflight-count responses (`{total_count, entities_fetched,
-  action_required}`) are duplicated across every paginated tool.
-  Worth a shared `PreflightCountResponse` model.
-- Mutating-tool response shapes (insert/update/delete) are still
-  ad-hoc dicts. Their own coherent design pass (PR 3 of #6).
+- v2.3: ad-hoc payload Pydantic models. The list_dataset_relations,
+  find_workflow_executions, list_execution_children, and
+  list_execution_parents wrappers each build inline
+  `{<plural>: [...], count, ...}` shapes with one-off context fields
+  that should become named models. v2.2's `.model_dump()` bridge
+  gets replaced by directly constructing the model.
+- v3.0 (PR 3 of #6): mutating-tool response shapes (currently
+  heterogeneous: `{"status": "created", ...}`, `{"status": "deleted",
+  ...}`, partial-result shapes for failures). Their own coherent
+  design pass.
 
 ## Coverage Report
 

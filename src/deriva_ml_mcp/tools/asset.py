@@ -88,16 +88,20 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def _summarize_asset(asset: Any) -> dict[str, Any]:
-    """Render an Asset object into the JSON-friendly summary used by list endpoints.
+def _summarize_asset(asset: Any) -> AssetSummary:
+    """Render an Asset object into the validated summary used by list endpoints.
 
     Args:
         asset: A ``deriva_ml.asset.asset.Asset`` instance.
 
     Returns:
-        Dict matching the ``AssetSummary`` Pydantic model shape. Kept
-        dict-returning to preserve PR 1 scope -- consumers that build
-        list responses construct the model from these dicts.
+        ``AssetSummary`` Pydantic instance -- see
+        ``deriva_ml_mcp._response_models``.
+
+    Note:
+        v2.2 sweep: this helper now returns Pydantic. Consumers that
+        previously dict-accessed must use attribute access or call
+        ``.model_dump()`` to get a plain dict back.
 
     Example:
         >>> from unittest.mock import MagicMock
@@ -108,17 +112,17 @@ def _summarize_asset(asset: Any) -> dict[str, Any]:
         >>> a.md5 = "abc"
         >>> a.asset_table = "Image"
         >>> a.asset_types = ["Training_Data"]
-        >>> _summarize_asset(a)["rid"]
+        >>> _summarize_asset(a).rid
         '1-AAAA'
     """
-    return {
-        "rid": asset.asset_rid,
-        "filename": asset.filename,
-        "length": asset.length,
-        "md5": asset.md5,
-        "asset_table": asset.asset_table,
-        "asset_types": list(asset.asset_types) if asset.asset_types else [],
-    }
+    return AssetSummary(
+        rid=asset.asset_rid,
+        filename=asset.filename,
+        length=asset.length,
+        md5=asset.md5,
+        asset_table=asset.asset_table,
+        asset_types=list(asset.asset_types) if asset.asset_types else [],
+    )
 
 
 def _list_asset_tables_impl(ml: Any) -> AssetTablesResponse:
@@ -334,7 +338,7 @@ def register(ctx: PluginContext) -> None:
                     key=partial(_read_rid, rid_key="asset_rid"),
                 )
             return AssetListResponse(
-                assets=[AssetSummary(**_summarize_asset(a)) for a in page],
+                assets=[_summarize_asset(a) for a in page],
                 count=len(page),
                 truncated=truncated,
                 next_after_rid=next_after,

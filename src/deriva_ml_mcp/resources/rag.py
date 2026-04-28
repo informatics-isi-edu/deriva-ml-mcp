@@ -303,20 +303,21 @@ class _VocabSerializer(RowSerializer):
 def _fetch_dataset_rows(hostname: str, catalog_id: str) -> list[dict[str, Any]]:
     """Fetch up to ``_MAX_LIMIT`` Dataset summary rows under the caller's credential.
 
-    Wraps ``_list_datasets_impl`` and pulls the ``"datasets"`` array. The
-    helper already returns JSON-friendly dicts so no shape conversion is
-    needed before passing to the serializer.
+    Wraps ``_list_datasets_impl`` and pulls the ``"datasets"`` array.
+    Since v2.2 the helper returns a ``DatasetListResponse`` Pydantic
+    instance; ``.model_dump(mode="json")`` produces JSON-serializable
+    dicts (datetimes coerced) for the chunk serializer.
     """
     ml = get_ml(hostname, catalog_id)
     payload = _list_datasets_impl(ml, after_rid=None, limit=_MAX_LIMIT)
-    return list(payload.get("datasets", []))
+    return [d.model_dump(mode="json") for d in payload.datasets]
 
 
 def _fetch_workflow_rows(hostname: str, catalog_id: str) -> list[dict[str, Any]]:
     """Fetch up to ``_MAX_LIMIT`` Workflow summary rows under the caller's credential."""
     ml = get_ml(hostname, catalog_id)
     payload = _list_workflows_impl(ml, after_rid=None, limit=_MAX_LIMIT)
-    return list(payload.get("workflows", []))
+    return [w.model_dump(mode="json") for w in payload.workflows]
 
 
 def _fetch_execution_rows(hostname: str, catalog_id: str) -> list[dict[str, Any]]:
@@ -329,7 +330,7 @@ def _fetch_execution_rows(hostname: str, catalog_id: str) -> list[dict[str, Any]
         after_rid=None,
         limit=_MAX_LIMIT,
     )
-    return list(payload.get("executions", []))
+    return [e.model_dump(mode="json") for e in payload.executions]
 
 
 def _coerce_for_index(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -475,10 +476,11 @@ async def _reindex_dataset(hostname: str, catalog_id: str, dataset_rid: str) -> 
     try:
         ml = get_ml(hostname, catalog_id)
         ds = ml.lookup_dataset(dataset_rid)
-        row = _summarize_dataset(ds)
-        # Round-trip through json so any stray non-serializable values
-        # (e.g. Pydantic versions) become plain strings before chunking.
-        row = json.loads(json.dumps(row, default=str))
+        # _summarize_dataset returns a Pydantic ``DatasetSummary`` (since v2.2);
+        # ``model_dump(mode="json")`` produces a JSON-serializable dict
+        # (datetimes etc. coerced) -- equivalent to the old
+        # ``json.loads(json.dumps(row, default=str))`` round-trip.
+        row = _summarize_dataset(ds).model_dump(mode="json")
         user_id = resolve_user_identity(hostname)
         source = _row_source_name(hostname, catalog_id, user_id, _DATASET_TOKEN, dataset_rid)
         return await _write_row_chunk(store, source, _DATASET_TABLE, row, _DatasetSerializer())
@@ -503,8 +505,8 @@ async def _reindex_workflow(hostname: str, catalog_id: str, workflow_rid: str) -
     try:
         ml = get_ml(hostname, catalog_id)
         wf = ml.lookup_workflow(workflow_rid)
-        row = _summarize_workflow(wf)
-        row = json.loads(json.dumps(row, default=str))
+        # See _reindex_dataset for the v2.2 ``model_dump(mode="json")`` rationale.
+        row = _summarize_workflow(wf).model_dump(mode="json")
         user_id = resolve_user_identity(hostname)
         source = _row_source_name(hostname, catalog_id, user_id, _WORKFLOW_TOKEN, workflow_rid)
         return await _write_row_chunk(store, source, _WORKFLOW_TABLE, row, _WorkflowSerializer())
@@ -529,8 +531,8 @@ async def _reindex_execution(hostname: str, catalog_id: str, execution_rid: str)
     try:
         ml = get_ml(hostname, catalog_id)
         record = ml.lookup_execution(execution_rid)
-        row = _summarize_execution(record)
-        row = json.loads(json.dumps(row, default=str))
+        # See _reindex_dataset for the v2.2 ``model_dump(mode="json")`` rationale.
+        row = _summarize_execution(record).model_dump(mode="json")
         user_id = resolve_user_identity(hostname)
         source = _row_source_name(hostname, catalog_id, user_id, _EXECUTION_TOKEN, execution_rid)
         return await _write_row_chunk(store, source, _EXECUTION_TABLE, row, _ExecutionSerializer())
