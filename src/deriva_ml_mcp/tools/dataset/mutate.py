@@ -263,7 +263,7 @@ def register(ctx: PluginContext) -> None:
             execution_rid: Optional execution to attribute the change to.
 
         Returns:
-            JSON string ``{"status": "success", "added_count",
+            JSON string ``{"status": "added", "added_count",
             "dataset_rid", "new_version"}``.
 
         Raises:
@@ -275,7 +275,7 @@ def register(ctx: PluginContext) -> None:
                 cycle, duplicate members).
 
         Example:
-            ``{"status": "success", "added_count": 3, "dataset_rid":
+            ``{"status": "added", "added_count": 3, "dataset_rid":
             "1-AAAA", "new_version": "1.2.0"}``.
         """
         has_list = bool(member_rids)
@@ -363,7 +363,7 @@ def register(ctx: PluginContext) -> None:
             execution_rid: Optional execution to attribute the change to.
 
         Returns:
-            JSON string ``{"status": "success", "removed_count",
+            JSON string ``{"status": "removed", "removed_count",
             "dataset_rid", "new_version"}``.
 
         Raises:
@@ -372,7 +372,7 @@ def register(ctx: PluginContext) -> None:
                 (e.g. RID not part of dataset).
 
         Example:
-            ``{"status": "success", "removed_count": 2, "dataset_rid":
+            ``{"status": "removed", "removed_count": 2, "dataset_rid":
             "1-AAAA", "new_version": "1.3.0"}``.
         """
         removed_count = len(member_rids)
@@ -610,7 +610,7 @@ def register(ctx: PluginContext) -> None:
             table_name: Name of the domain table to register.
 
         Returns:
-            JSON string ``{"status": "success", "table_name",
+            JSON string ``{"status": "created", "table_name",
             "association_table"}``.
 
         Raises:
@@ -619,7 +619,7 @@ def register(ctx: PluginContext) -> None:
                 unknown table, table is system/ML and not eligible).
 
         Example:
-            ``{"status": "success", "table_name": "Image",
+            ``{"status": "created", "table_name": "Image",
             "association_table": "Dataset_Image"}``.
         """
         try:
@@ -671,7 +671,7 @@ def register(ctx: PluginContext) -> None:
             execution_rid: Optional execution to attribute the bump to.
 
         Returns:
-            JSON string ``{"status": "success", "dataset_rid",
+            JSON string ``{"status": "incremented", "dataset_rid",
             "previous_version", "new_version", "component"}``.
 
         Raises:
@@ -679,7 +679,7 @@ def register(ctx: PluginContext) -> None:
                 ``deriva_ml.dataset.dataset.Dataset.increment_dataset_version``.
 
         Example:
-            ``{"status": "success", "dataset_rid": "1-AAAA",
+            ``{"status": "incremented", "dataset_rid": "1-AAAA",
             "previous_version": "1.2.0", "new_version": "1.3.0",
             "component": "minor"}``.
         """
