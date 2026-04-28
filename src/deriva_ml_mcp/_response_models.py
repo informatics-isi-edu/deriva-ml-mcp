@@ -924,7 +924,7 @@ class CreateExecutionDatasetResponse(BaseModel):
     status: Literal["created"]
     dataset_rid: str
     execution_rid: str
-    dataset_types: list[str]
+    dataset_types: list[str] | None = None
     description: str
 
 

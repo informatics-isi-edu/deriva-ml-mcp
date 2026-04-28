@@ -1252,7 +1252,7 @@ def register(ctx: PluginContext) -> None:
                 status="created",
                 dataset_rid=dataset_rid,
                 execution_rid=execution_rid,
-                dataset_types=types_list or [],
+                dataset_types=types_list,
                 description=description,
             ).model_dump_json(by_alias=True)
         except Exception as exc:
