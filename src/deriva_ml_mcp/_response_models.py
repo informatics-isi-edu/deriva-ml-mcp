@@ -723,3 +723,26 @@ class ErrorEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     error: str
+
+
+# ---------------------------------------------------------------------------
+# Mutating-tool response models (v3.0)
+#
+# Every ``mutates=True`` tool's success-path response is a Pydantic model
+# in this section. Each model has a ``Literal[...]`` ``status`` field that
+# acts as the discriminator -- consumers can ``match payload["status"]:``
+# without checking which tool produced the response.
+#
+# v3.0 wire-break notes (see ``CLAUDE.md`` for full migration guide):
+#
+# 1. Six tools' ``status`` values were renamed away from the generic
+#    ``"success"`` to operation-specific verbs (``created``, ``added``,
+#    ``removed``, ``incremented``, ``cached``, ``split``).
+# 2. ``start_execution`` and ``abort_execution`` no-op branches now emit
+#    ``status="already_running"`` / ``status="already_aborted"`` instead
+#    of carrying an optional ``note`` string.
+# 3. Conditional-key fields on ``update_dataset`` are now always present
+#    (``null`` when not meaningful) instead of being omitted.
+# 4. ``cache_dataset`` nests upstream bag-info keys under a ``bag_info``
+#    field instead of spreading them top-level.
+# ---------------------------------------------------------------------------
