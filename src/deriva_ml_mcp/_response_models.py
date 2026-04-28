@@ -104,6 +104,7 @@ The list of deriva-ml models we'd consider embedding in PR 2:
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -723,3 +724,402 @@ class ErrorEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     error: str
+
+
+# ---------------------------------------------------------------------------
+# Mutating-tool response models (v3.0)
+#
+# Every ``mutates=True`` tool's success-path response is a Pydantic model
+# in this section. Each model has a ``Literal[...]`` ``status`` field that
+# acts as the discriminator -- consumers can ``match payload["status"]:``
+# without checking which tool produced the response.
+#
+# v3.0 wire-break notes (see ``CLAUDE.md`` for full migration guide):
+#
+# 1. Six tools' ``status`` values were renamed away from the generic
+#    ``"success"`` to operation-specific verbs (``created``, ``added``,
+#    ``removed``, ``incremented``, ``cached``, ``split``).
+# 2. ``start_execution`` and ``abort_execution`` no-op branches now emit
+#    ``status="already_running"`` / ``status="already_aborted"`` instead
+#    of carrying an optional ``note`` string.
+# 3. Conditional-key fields on ``update_dataset`` are now always present
+#    (``null`` when not meaningful) instead of being omitted.
+# 4. ``cache_dataset`` nests upstream bag-info keys under a ``bag_info``
+#    field instead of spreading them top-level.
+# ---------------------------------------------------------------------------
+
+
+class UpdateAssetResponse(BaseModel):
+    """Response from ``deriva_ml_update_asset``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["updated"]
+    asset_rid: str
+    updated_fields: list[str]
+
+
+class CreateWorkflowResponse(BaseModel):
+    """Response from ``deriva_ml_create_workflow``.
+
+    ``status="created"`` for new workflows, ``status="exists"`` for the
+    idempotent dedup branch (URL or checksum already registered).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["created", "exists"]
+    workflow_rid: str
+    name: str
+    workflow_type: list[str]
+    url: str
+    checksum: str | None = None
+    version: str | None = None
+
+
+class UpdateWorkflowResponse(BaseModel):
+    """Response from ``deriva_ml_update_workflow``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["updated"]
+    workflow_rid: str
+    updated_fields: list[str]
+
+
+class CreateFeatureResponse(FeatureSummary):
+    """Response from ``deriva_ml_create_feature``.
+
+    Wraps ``FeatureSummary`` (which the wrapper already builds) and
+    adds the ``status`` discriminator. Pydantic inherits
+    ``model_config`` from the parent so ``extra="forbid"`` is in
+    effect; the discriminator is added on top.
+    """
+
+    status: Literal["created"]
+
+
+class DeleteFeatureResponse(BaseModel):
+    """Response from ``deriva_ml_delete_feature``.
+
+    ``status="deleted"`` when the feature was removed,
+    ``status="not_found"`` on the idempotent no-op when the feature
+    didn't exist.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["deleted", "not_found"]
+    feature_name: str
+    table: str
+
+
+class AddFeatureValuesResponse(BaseModel):
+    """Response from ``deriva_ml_add_feature_values``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["added"]
+    feature_name: str
+    execution_rid: str
+    count: int
+
+
+class CommitExecutionReport(BaseModel):
+    """Per-call upload report nested inside ``CommitExecutionResponse``.
+
+    Mirrors the dict produced by ``_summarize_upload_dict`` in
+    ``tools/execution.py`` (which is internal -- consumers see only
+    the Pydantic shape on the wire).
+
+    ``per_table`` maps each asset table name to the count of files
+    uploaded for that table on this commit. ``execution_rids`` is a
+    one-element list (the execution being committed); the list shape
+    is preserved for forward-compat with multi-execution uploads.
+    ``errors`` is capped at the top 10 lines by the helper -- the
+    full list stays in the server logs. ``errors_truncated`` signals
+    that the cap was hit.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    execution_rids: list[str]
+    total_uploaded: int
+    total_failed: int
+    per_table: dict[str, int]
+    errors: list[str]
+    errors_truncated: bool
+
+
+class CreateExecutionResponse(BaseModel):
+    """Response from ``deriva_ml_create_execution``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["created"]
+    execution_rid: str
+    workflow_rid: str
+    dataset_count: int
+    asset_count: int
+    dry_run: bool
+
+
+class StartExecutionResponse(BaseModel):
+    """Response from ``deriva_ml_start_execution``.
+
+    ``status="running"`` on a real start, ``status="already_running"``
+    on the idempotent no-op when the execution was already in Running
+    state. v3.0: replaced the optional ``note`` field with a
+    discriminator status value.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["running", "already_running"]
+    execution_rid: str
+
+
+class CommitExecutionResponse(BaseModel):
+    """Response from ``deriva_ml_commit_execution``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["uploaded"]
+    execution_rid: str
+    report: CommitExecutionReport
+
+
+class UpdateExecutionResponse(BaseModel):
+    """Response from ``deriva_ml_update_execution``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["updated"]
+    execution_rid: str
+    updated_fields: list[str]
+
+
+class AbortExecutionResponse(BaseModel):
+    """Response from ``deriva_ml_abort_execution``.
+
+    ``status="aborted"`` on a real abort, ``status="already_aborted"``
+    on the idempotent no-op. v3.0: replaced the optional ``note``
+    field with a discriminator status value. ``reason`` is always
+    present (``null`` when no reason was given OR when the call was a
+    no-op).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["aborted", "already_aborted"]
+    execution_rid: str
+    reason: str | None = None
+
+
+class CreateExecutionDatasetResponse(BaseModel):
+    """Response from ``deriva_ml_create_execution_dataset``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["created"]
+    dataset_rid: str
+    execution_rid: str
+    dataset_types: list[str] | None = None
+    description: str
+
+
+class AddNestedExecutionResponse(BaseModel):
+    """Response from ``deriva_ml_add_nested_execution``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["added"]
+    parent_rid: str
+    child_rid: str
+    sequence: int
+
+
+class _DatasetVersionBumpMixin(BaseModel):
+    """Common fields for tools that bump a dataset's version.
+
+    Three tools share this shape: ``add_dataset_members``,
+    ``delete_dataset_members``, and ``increment_dataset_version``.
+    They all return the dataset RID and the post-bump version
+    string. Subclasses add the ``status`` discriminator and any
+    tool-specific delta fields (e.g. ``added_count``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_rid: str
+    new_version: str
+
+
+class AddDatasetMembersResponse(_DatasetVersionBumpMixin):
+    """Response from ``deriva_ml_add_dataset_members``.
+
+    v3.0: ``status`` was renamed from ``"success"`` to ``"added"`` to
+    match the v3.0 status vocabulary (operation-specific verbs).
+    """
+
+    status: Literal["added"]
+    added_count: int
+
+
+class DeleteDatasetMembersResponse(_DatasetVersionBumpMixin):
+    """Response from ``deriva_ml_delete_dataset_members``.
+
+    v3.0: ``status`` was renamed from ``"success"`` to ``"removed"``.
+    """
+
+    status: Literal["removed"]
+    removed_count: int
+
+
+class IncrementDatasetVersionResponse(_DatasetVersionBumpMixin):
+    """Response from ``deriva_ml_increment_dataset_version``.
+
+    v3.0: ``status`` was renamed from ``"success"`` to ``"incremented"``.
+    """
+
+    status: Literal["incremented"]
+    previous_version: str
+    component: str
+
+
+class CreateDatasetResponse(DatasetSummary):
+    """Response from ``deriva_ml_create_dataset``.
+
+    Extends ``DatasetSummary`` with the v3.0 status discriminator and
+    the linking ``execution_rid``. ``model_config`` inherits from
+    ``DatasetSummary`` so ``extra="forbid"`` is in effect; the new
+    fields are added on top.
+    """
+
+    status: Literal["created"]
+    execution_rid: str
+
+
+class DeleteDatasetResponse(BaseModel):
+    """Response from ``deriva_ml_delete_dataset``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["deleted"]
+    dataset_rid: str
+    recursive: bool
+
+
+class UpdateDatasetResponse(BaseModel):
+    """Response from ``deriva_ml_update_dataset``.
+
+    v3.0: the ``dataset_types``, ``added``, and ``removed`` fields
+    are now ALWAYS present in the response (``null`` when the
+    description-only branch ran). v2.x omitted these keys when the
+    description-only branch ran.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["updated"]
+    dataset_rid: str
+    updated_fields: list[str]
+    new_version: str
+    dataset_types: list[str] | None = None
+    added: list[str] | None = None
+    removed: list[str] | None = None
+
+
+class AddDatasetElementTypeResponse(BaseModel):
+    """Response from ``deriva_ml_add_dataset_element_type``.
+
+    v3.0: ``status`` was renamed from ``"success"`` to ``"created"``
+    -- registering an element type IS a creation event (a new
+    association table row).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["created"]
+    table_name: str
+    association_table: str
+
+
+class CacheDatasetBagInfo(BaseModel):
+    """Upstream bag-info dict from ``DerivaML.cache_dataset``.
+
+    v3.0: this content is now NESTED under ``CacheDatasetResponse.bag_info``
+    instead of spread top-level. Future DerivaML changes to bag-info
+    can land here without colliding with the v3.0 plugin contract.
+
+    ``extra="allow"`` because we don't own this shape -- DerivaML can
+    add fields. Keys we know about today are typed; unknowns ride
+    along. ``tables`` maps each table name to a per-table descriptor
+    (``{row_count, is_asset, asset_bytes, ...}``) -- the inner dict's
+    schema is upstream's, so it's typed loosely as ``dict[str, Any]``.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    tables: dict[str, dict[str, Any]] | None = None
+    total_rows: int | None = None
+    total_asset_bytes: int | None = None
+    total_asset_size: str | None = None
+    cache_status: str | None = None
+    cache_path: str | None = None
+
+
+class CacheDatasetResponse(BaseModel):
+    """Response from ``deriva_ml_cache_dataset``.
+
+    v3.0: bag-info keys are nested under ``bag_info`` (was spread
+    top-level in v2.x). Migration: ``payload["cache_path"]`` -->
+    ``payload["bag_info"]["cache_path"]``. Status renamed from
+    ``"success"`` to ``"cached"``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["cached"]
+    dataset_rid: str
+    version: str
+    materialize: bool
+    bag_info: CacheDatasetBagInfo
+
+
+class SplitDatasetPartitionInfo(BaseModel):
+    """One partition in a split (training, testing, or validation).
+
+    Mirrors upstream ``deriva_ml.dataset.split.PartitionInfo``. We
+    redeclare locally rather than import to keep the v3.0 wire
+    contract independent of upstream model drift.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    rid: str
+    version: str
+    count: int
+
+
+class SplitDatasetResponse(BaseModel):
+    """Response from ``deriva_ml_split_dataset``.
+
+    v3.0: ``status`` renamed from ``"success"`` to ``"split"``. All
+    other fields mirror upstream ``deriva_ml.dataset.split.SplitResult``.
+    ``validation`` is ``null`` for two-way splits (training + testing
+    only).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["split"]
+    source: str
+    split: SplitDatasetPartitionInfo
+    training: SplitDatasetPartitionInfo
+    testing: SplitDatasetPartitionInfo
+    validation: SplitDatasetPartitionInfo | None = None
+    strategy: str
+    element_table: str
+    seed: int
+    dry_run: bool

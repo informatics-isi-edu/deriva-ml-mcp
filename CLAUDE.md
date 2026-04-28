@@ -252,12 +252,43 @@ via `.model_dump_json(by_alias=True)`:
   `null`). The conditional-key contract is documented on the model
   docstring.
 
-Future v3.x sweep:
+v3.0 swept the mutating-tool response shapes. Every `mutates=True`
+tool now returns a named Pydantic response model with a
+`Literal[...]` `status` discriminator and `extra="forbid"`. The
+discriminator vocabulary was normalized -- the generic `"success"`
+status was retired in favor of operation-specific verbs (`created`,
+`added`, `removed`, `incremented`, `cached`, `split`). Idempotent
+no-ops on `start_execution` / `abort_execution` are now signaled
+via dedicated status values (`already_running` / `already_aborted`)
+instead of an optional `note` field. `update_dataset`'s
+conditional-key fields (`dataset_types`, `added`, `removed`) are
+now always present (`null` when the description-only branch ran).
+`cache_dataset` nests upstream bag-info keys under a `bag_info`
+field instead of spreading them top-level.
 
-- v3.0 (PR 3 of #6): mutating-tool response shapes (currently
-  heterogeneous: `{"status": "created", ...}`, `{"status": "deleted",
-  ...}`, partial-result shapes for failures). Their own coherent
-  design pass.
+v3.0 wire-break migration map for clients:
+
+- `add_dataset_members`: `status="success"` -> `status="added"`.
+- `delete_dataset_members`: `status="success"` -> `status="removed"`.
+- `add_dataset_element_type`: `status="success"` -> `status="created"`.
+- `increment_dataset_version`: `status="success"` -> `status="incremented"`.
+- `cache_dataset`: `status="success"` -> `status="cached"`; bag-info
+  keys moved from top-level to `payload["bag_info"][<key>]`.
+- `split_dataset`: `status="success"` -> `status="split"`.
+- `start_execution` no-op: `{"status": "running", "note": "already running"}`
+  -> `{"status": "already_running"}`.
+- `abort_execution` no-op: `{"status": "aborted", "note": "already aborted"}`
+  -> `{"status": "already_aborted", "reason": null}`.
+- `update_dataset` description-only edit: `dataset_types` / `added` /
+  `removed` keys are present as `null` instead of being omitted.
+- `abort_execution`: `reason` is always present (`null` when no
+  reason was given) instead of being omitted on the no-op branch.
+- `create_execution_dataset`: `dataset_types` is always present
+  (`null` when omitted by the caller) instead of being omitted.
+
+This closes PR 3 of #6. The response-shape Pydantic migration is
+complete -- every `_*_impl` helper, every list/detail/summary
+shape, and every mutating-tool response is now Pydantic-typed.
 
 ## Coverage Report
 

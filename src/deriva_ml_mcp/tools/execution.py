@@ -45,6 +45,12 @@ from deriva_ml_mcp._helpers import (
     _read_rid,
 )
 from deriva_ml_mcp._response_models import (
+    AbortExecutionResponse,
+    AddNestedExecutionResponse,
+    CommitExecutionReport,
+    CommitExecutionResponse,
+    CreateExecutionDatasetResponse,
+    CreateExecutionResponse,
     ExecutionAssetRef,
     ExecutionChildrenResponse,
     ExecutionDetail,
@@ -56,6 +62,8 @@ from deriva_ml_mcp._response_models import (
     ExecutionParentsResponse,
     ExecutionSummary,
     PreflightCountResponse,
+    StartExecutionResponse,
+    UpdateExecutionResponse,
 )
 from deriva_ml_mcp.ml_context import get_ml
 
@@ -761,16 +769,14 @@ def register(ctx: PluginContext) -> None:
                         "re-index failed for execution %s after create_execution",
                         execution_rid,
                     )
-            return json.dumps(
-                {
-                    "status": "created",
-                    "execution_rid": execution_rid,
-                    "workflow_rid": workflow_rid,
-                    "dataset_count": len(ds_list),
-                    "asset_count": len(as_list),
-                    "dry_run": dry_run,
-                }
-            )
+            return CreateExecutionResponse(
+                status="created",
+                execution_rid=execution_rid,
+                workflow_rid=workflow_rid,
+                dataset_count=len(ds_list),
+                asset_count=len(as_list),
+                dry_run=dry_run,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -801,8 +807,9 @@ def register(ctx: PluginContext) -> None:
 
         Returns:
             JSON string ``{"status": "running", "execution_rid"}`` on
-            transition. ``{"status": "running", "execution_rid", "note":
-            "already running"}`` on idempotent no-op.
+            transition. ``{"status": "already_running", "execution_rid"}``
+            on idempotent no-op (v3.0 -- replaced the optional ``note``
+            field with a discriminator status value).
             ``{"error": "cannot start execution in state ..."}`` on
             terminal state.
 
@@ -821,14 +828,13 @@ def register(ctx: PluginContext) -> None:
                 current = execution.status
 
                 if current == ExecutionStatus.Running:
-                    # Idempotent no-op. No audit.
-                    return json.dumps(
-                        {
-                            "status": "running",
-                            "execution_rid": execution_rid,
-                            "note": "already running",
-                        }
-                    )
+                    # Idempotent no-op. No audit. v3.0: status discriminator
+                    # carries the no-op signal (was an optional ``note``
+                    # field in v2.x).
+                    return StartExecutionResponse(
+                        status="already_running",
+                        execution_rid=execution_rid,
+                    ).model_dump_json(by_alias=True)
                 if current in _START_REJECT_STATES:
                     state_name = current.value if isinstance(current, ExecutionStatus) else current
                     return json.dumps(
@@ -858,12 +864,10 @@ def register(ctx: PluginContext) -> None:
                     "re-index failed for execution %s after start_execution",
                     execution_rid,
                 )
-            return json.dumps(
-                {
-                    "status": "running",
-                    "execution_rid": execution_rid,
-                }
-            )
+            return StartExecutionResponse(
+                status="running",
+                execution_rid=execution_rid,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -976,14 +980,11 @@ def register(ctx: PluginContext) -> None:
                     "re-index failed for execution %s after commit_execution",
                     execution_rid,
                 )
-            return json.dumps(
-                {
-                    "status": "uploaded",
-                    "execution_rid": execution_rid,
-                    "report": summary,
-                },
-                default=str,
-            )
+            return CommitExecutionResponse(
+                status="uploaded",
+                execution_rid=execution_rid,
+                report=CommitExecutionReport(**summary),
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -1071,13 +1072,11 @@ def register(ctx: PluginContext) -> None:
                     "re-index failed for execution %s after update_execution",
                     execution_rid,
                 )
-            return json.dumps(
-                {
-                    "status": "updated",
-                    "execution_rid": execution_rid,
-                    "updated_fields": updated_fields,
-                }
-            )
+            return UpdateExecutionResponse(
+                status="updated",
+                execution_rid=execution_rid,
+                updated_fields=updated_fields,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -1107,8 +1106,11 @@ def register(ctx: PluginContext) -> None:
 
         Returns:
             JSON string ``{"status": "aborted", "execution_rid",
-            "reason"}``. ``{"status": "aborted", "execution_rid",
-            "note": "already aborted"}`` on idempotent no-op.
+            "reason"}``. ``{"status": "already_aborted", "execution_rid",
+            "reason": null}`` on idempotent no-op (v3.0 -- replaced the
+            optional ``note`` field with a discriminator status value).
+            ``reason`` is always present; ``null`` when no reason was
+            given.
 
         Raises:
             RuntimeError: Wrapped, propagated from
@@ -1126,13 +1128,15 @@ def register(ctx: PluginContext) -> None:
                 current = execution.status
 
                 if current == ExecutionStatus.Aborted:
-                    return json.dumps(
-                        {
-                            "status": "aborted",
-                            "execution_rid": execution_rid,
-                            "note": "already aborted",
-                        }
-                    )
+                    # v3.0: status discriminator carries the no-op signal
+                    # (was an optional ``note`` field in v2.x). ``reason``
+                    # is None here -- we didn't actually record an abort
+                    # reason this call.
+                    return AbortExecutionResponse(
+                        status="already_aborted",
+                        execution_rid=execution_rid,
+                        reason=None,
+                    ).model_dump_json(by_alias=True)
 
                 execution.abort()
 
@@ -1153,13 +1157,11 @@ def register(ctx: PluginContext) -> None:
                     "re-index failed for execution %s after abort_execution",
                     execution_rid,
                 )
-            return json.dumps(
-                {
-                    "status": "aborted",
-                    "execution_rid": execution_rid,
-                    "reason": reason,
-                }
-            )
+            return AbortExecutionResponse(
+                status="aborted",
+                execution_rid=execution_rid,
+                reason=reason,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -1246,15 +1248,13 @@ def register(ctx: PluginContext) -> None:
                     "re-index failed for execution %s after create_execution_dataset",
                     execution_rid,
                 )
-            return json.dumps(
-                {
-                    "status": "created",
-                    "dataset_rid": dataset_rid,
-                    "execution_rid": execution_rid,
-                    "dataset_types": types_list,
-                    "description": description,
-                }
-            )
+            return CreateExecutionDatasetResponse(
+                status="created",
+                dataset_rid=dataset_rid,
+                execution_rid=execution_rid,
+                dataset_types=types_list,
+                description=description,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -1321,14 +1321,12 @@ def register(ctx: PluginContext) -> None:
                     "re-index failed for parent execution %s after add_nested_execution",
                     parent_execution_rid,
                 )
-            return json.dumps(
-                {
-                    "status": "added",
-                    "parent_rid": parent_execution_rid,
-                    "child_rid": child_execution_rid,
-                    "sequence": sequence,
-                }
-            )
+            return AddNestedExecutionResponse(
+                status="added",
+                parent_rid=parent_execution_rid,
+                child_rid=child_execution_rid,
+                sequence=sequence,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,

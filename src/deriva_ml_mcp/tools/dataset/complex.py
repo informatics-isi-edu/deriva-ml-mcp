@@ -45,7 +45,12 @@ from deriva_ml_mcp._helpers import (
     _paginate,
     _row_rid_for,
 )
-from deriva_ml_mcp._response_models import PreflightCountResponse
+from deriva_ml_mcp._response_models import (
+    CacheDatasetBagInfo,
+    CacheDatasetResponse,
+    PreflightCountResponse,
+    SplitDatasetResponse,
+)
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
@@ -92,19 +97,20 @@ def register(ctx: PluginContext) -> None:
                 tables you don't need).
 
         Returns:
-            JSON string ``{"status": "success", "dataset_rid", "version",
-            "materialize", "tables", "total_rows", "total_asset_bytes",
-            "total_asset_size", "cache_status", "cache_path"}``. Pass-through
-            of DerivaML's bag_info-shaped return.
+            JSON string ``{"status": "cached", "dataset_rid",
+            "version", "materialize", "bag_info": {...upstream
+            DerivaML keys...}}``. v3.0 changes: status renamed from
+            ``"success"`` to ``"cached"``; bag-info keys nested under
+            ``bag_info`` instead of spread top-level.
 
         Raises:
             RuntimeError: Wrapped, propagated from
                 ``deriva_ml.DerivaML.cache_dataset``.
 
         Example:
-            ``{"status": "success", "dataset_rid": "1-AAAA", "version":
-            "1.0.0", "materialize": true, "cache_status":
-            "cached_materialized", "cache_path": "/path/to/bag", ...}``.
+            ``{"status": "cached", "dataset_rid": "1-AAAA", "version":
+            "1.0.0", "materialize": true, "bag_info": {"cache_status":
+            "cached_materialized", "cache_path": "/path/to/bag", ...}}``.
         """
         try:
             with deriva_call():
@@ -131,16 +137,13 @@ def register(ctx: PluginContext) -> None:
                 materialize=materialize,
                 exclude_tables=exclude_tables or [],
             )
-            return json.dumps(
-                {
-                    "status": "success",
-                    "dataset_rid": dataset_rid,
-                    "version": used_version,
-                    "materialize": materialize,
-                    **info,
-                },
-                default=str,
-            )
+            return CacheDatasetResponse(
+                status="cached",
+                dataset_rid=dataset_rid,
+                version=used_version,
+                materialize=materialize,
+                bag_info=CacheDatasetBagInfo(**info),
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -433,7 +436,7 @@ def register(ctx: PluginContext) -> None:
                 partition sizes before committing.
 
         Returns:
-            JSON string ``{"status": "success", "source", "split", "training",
+            JSON string ``{"status": "split", "source", "split", "training",
             "testing", "validation", "strategy", "element_table", "seed",
             "dry_run"}``. Each partition is ``{"rid", "version", "count"}``.
             ``validation`` is null for two-way splits.
@@ -444,7 +447,7 @@ def register(ctx: PluginContext) -> None:
                 strategy, stratify column missing).
 
         Example:
-            ``{"status": "success", "source": "1-AAAA", "split": {"rid":
+            ``{"status": "split", "source": "1-AAAA", "split": {"rid":
             "1-SPLT", "version": "1.0.0", "count": 100}, "training":
             {"rid": "1-TRN", "version": "1.0.0", "count": 80}, "testing":
             {"rid": "1-TST", "version": "1.0.0", "count": 20},
@@ -521,7 +524,9 @@ def register(ctx: PluginContext) -> None:
                             rid,
                             source_dataset_rid,
                         )
-            return json.dumps({"status": "success", **payload}, default=str)
+            # v3.0: status renamed from "success" to "split". Construct
+            # via unpacking from the helper's payload (same fields).
+            return SplitDatasetResponse(status="split", **payload).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,

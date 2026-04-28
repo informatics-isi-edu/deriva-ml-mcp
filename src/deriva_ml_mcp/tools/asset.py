@@ -74,6 +74,7 @@ from deriva_ml_mcp._response_models import (
     AssetTableRef,
     AssetTablesResponse,
     PreflightCountResponse,
+    UpdateAssetResponse,
 )
 from deriva_ml_mcp.ml_context import get_ml
 
@@ -500,13 +501,11 @@ def register(ctx: PluginContext) -> None:
                 added=added_done,
                 removed=removed_done,
             )
-            return json.dumps(
-                {
-                    "status": "updated",
-                    "asset_rid": asset_rid,
-                    "updated_fields": updated_fields,
-                }
-            )
+            return UpdateAssetResponse(
+                status="updated",
+                asset_rid=asset_rid,
+                updated_fields=updated_fields,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,

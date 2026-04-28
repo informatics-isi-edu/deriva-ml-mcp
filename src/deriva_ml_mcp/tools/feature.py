@@ -38,6 +38,9 @@ from deriva_ml_mcp._helpers import (
     _paginate,
 )
 from deriva_ml_mcp._response_models import (
+    AddFeatureValuesResponse,
+    CreateFeatureResponse,
+    DeleteFeatureResponse,
     FeatureListResponse,
     FeatureSummary,
     PreflightCountResponse,
@@ -497,7 +500,10 @@ def register(ctx: PluginContext) -> None:
                 n_asset_cols=len(assets_list),
                 n_value_cols=len(summary.value_columns),
             )
-            return json.dumps({"status": "created", **summary.model_dump()})
+            return CreateFeatureResponse(
+                status="created",
+                **summary.model_dump(),
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -551,13 +557,11 @@ def register(ctx: PluginContext) -> None:
             else:
                 # No state changed -- skip audit per convention.
                 status = "not_found"
-            return json.dumps(
-                {
-                    "status": status,
-                    "feature_name": feature_name,
-                    "table": table,
-                }
-            )
+            return DeleteFeatureResponse(
+                status=status,  # "deleted" or "not_found"
+                feature_name=feature_name,
+                table=table,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -670,14 +674,12 @@ def register(ctx: PluginContext) -> None:
                 execution_rid=execution_rid,
                 added_count=added,
             )
-            return json.dumps(
-                {
-                    "status": "added",
-                    "feature_name": feature_name,
-                    "execution_rid": execution_rid,
-                    "count": added,
-                }
-            )
+            return AddFeatureValuesResponse(
+                status="added",
+                feature_name=feature_name,
+                execution_rid=execution_rid,
+                count=added,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             response_fields: dict[str, Any] = {"attempted_count": len(entries)}
             if failed_index is not None:
