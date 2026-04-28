@@ -937,3 +937,51 @@ class AddNestedExecutionResponse(BaseModel):
     parent_rid: str
     child_rid: str
     sequence: int
+
+
+class _DatasetVersionBumpMixin(BaseModel):
+    """Common fields for tools that bump a dataset's version.
+
+    Three tools share this shape: ``add_dataset_members``,
+    ``delete_dataset_members``, and ``increment_dataset_version``.
+    They all return the dataset RID and the post-bump version
+    string. Subclasses add the ``status`` discriminator and any
+    tool-specific delta fields (e.g. ``added_count``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_rid: str
+    new_version: str
+
+
+class AddDatasetMembersResponse(_DatasetVersionBumpMixin):
+    """Response from ``deriva_ml_add_dataset_members``.
+
+    v3.0: ``status`` was renamed from ``"success"`` to ``"added"`` to
+    match the v3.0 status vocabulary (operation-specific verbs).
+    """
+
+    status: Literal["added"]
+    added_count: int
+
+
+class DeleteDatasetMembersResponse(_DatasetVersionBumpMixin):
+    """Response from ``deriva_ml_delete_dataset_members``.
+
+    v3.0: ``status`` was renamed from ``"success"`` to ``"removed"``.
+    """
+
+    status: Literal["removed"]
+    removed_count: int
+
+
+class IncrementDatasetVersionResponse(_DatasetVersionBumpMixin):
+    """Response from ``deriva_ml_increment_dataset_version``.
+
+    v3.0: ``status`` was renamed from ``"success"`` to ``"incremented"``.
+    """
+
+    status: Literal["incremented"]
+    previous_version: str
+    component: str
