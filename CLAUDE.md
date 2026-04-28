@@ -46,7 +46,8 @@ History: Phase 0 shipped `plugin.py` and the empty `tools/`/`resources/`
 package markers. `ml_context.py` arrived in Phase 1; the domain tool
 modules in Phases 2-5; `resources/ml.py` and `resources/rag.py` in
 Phase 6; v1.0 polish added `prompts.py` + the `deriva_ml_*` tool name
-prefix; v1.1 added vocabulary RAG indexing + `tools/vocabulary.py` +
+prefix; v1.1 added vocabulary RAG indexing + `tools/vocabulary.py` (renamed to
+`tools/maintenance.py` in v1.4 when `deriva_ml_resync_indexes` joined it) +
 the discovery-pattern prompt section; v1.x split `tools/dataset.py`
 into a focused-submodule package.
 
@@ -85,7 +86,7 @@ to user B, B's per-user sources remain stale until B reconnects.
 Same gap applies to mutations from non-MCP clients (Chaise UI,
 ERMrest direct). v1.4 ships a manual bridge: the
 `deriva_ml_resync_indexes(hostname, catalog_id, target=None)` tool
-in `tools/vocabulary.py` re-runs `_reindex_*` for the calling
+in `tools/maintenance.py` re-runs `_reindex_*` for the calling
 user's per-user sources -- either all (target=None) or one
 (target="dataset:1-AAAA"). The `deriva_ml_getting_started` prompt
 documents the verify-with-`get_*` recovery pattern for shared-visible
