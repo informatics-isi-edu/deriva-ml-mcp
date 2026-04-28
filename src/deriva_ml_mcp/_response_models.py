@@ -785,3 +785,41 @@ class UpdateWorkflowResponse(BaseModel):
     status: Literal["updated"]
     workflow_rid: str
     updated_fields: list[str]
+
+
+class CreateFeatureResponse(FeatureSummary):
+    """Response from ``deriva_ml_create_feature``.
+
+    Wraps ``FeatureSummary`` (which the wrapper already builds) and
+    adds the ``status`` discriminator. Pydantic inherits
+    ``model_config`` from the parent so ``extra="forbid"`` is in
+    effect; the discriminator is added on top.
+    """
+
+    status: Literal["created"]
+
+
+class DeleteFeatureResponse(BaseModel):
+    """Response from ``deriva_ml_delete_feature``.
+
+    ``status="deleted"`` when the feature was removed,
+    ``status="not_found"`` on the idempotent no-op when the feature
+    didn't exist.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["deleted", "not_found"]
+    feature_name: str
+    table: str
+
+
+class AddFeatureValuesResponse(BaseModel):
+    """Response from ``deriva_ml_add_feature_values``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["added"]
+    feature_name: str
+    execution_rid: str
+    count: int
