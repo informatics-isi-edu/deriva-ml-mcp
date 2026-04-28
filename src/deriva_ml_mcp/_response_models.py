@@ -104,7 +104,7 @@ The list of deriva-ml models we'd consider embedding in PR 2:
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -1043,3 +1043,83 @@ class AddDatasetElementTypeResponse(BaseModel):
     status: Literal["created"]
     table_name: str
     association_table: str
+
+
+class CacheDatasetBagInfo(BaseModel):
+    """Upstream bag-info dict from ``DerivaML.cache_dataset``.
+
+    v3.0: this content is now NESTED under ``CacheDatasetResponse.bag_info``
+    instead of spread top-level. Future DerivaML changes to bag-info
+    can land here without colliding with the v3.0 plugin contract.
+
+    ``extra="allow"`` because we don't own this shape -- DerivaML can
+    add fields. Keys we know about today are typed; unknowns ride
+    along. ``tables`` maps each table name to a per-table descriptor
+    (``{row_count, is_asset, asset_bytes, ...}``) -- the inner dict's
+    schema is upstream's, so it's typed loosely as ``dict[str, Any]``.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    tables: dict[str, dict[str, Any]] | None = None
+    total_rows: int | None = None
+    total_asset_bytes: int | None = None
+    total_asset_size: str | None = None
+    cache_status: str | None = None
+    cache_path: str | None = None
+
+
+class CacheDatasetResponse(BaseModel):
+    """Response from ``deriva_ml_cache_dataset``.
+
+    v3.0: bag-info keys are nested under ``bag_info`` (was spread
+    top-level in v2.x). Migration: ``payload["cache_path"]`` -->
+    ``payload["bag_info"]["cache_path"]``. Status renamed from
+    ``"success"`` to ``"cached"``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["cached"]
+    dataset_rid: str
+    version: str
+    materialize: bool
+    bag_info: CacheDatasetBagInfo
+
+
+class SplitDatasetPartitionInfo(BaseModel):
+    """One partition in a split (training, testing, or validation).
+
+    Mirrors upstream ``deriva_ml.dataset.split.PartitionInfo``. We
+    redeclare locally rather than import to keep the v3.0 wire
+    contract independent of upstream model drift.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    rid: str
+    version: str
+    count: int
+
+
+class SplitDatasetResponse(BaseModel):
+    """Response from ``deriva_ml_split_dataset``.
+
+    v3.0: ``status`` renamed from ``"success"`` to ``"split"``. All
+    other fields mirror upstream ``deriva_ml.dataset.split.SplitResult``.
+    ``validation`` is ``null`` for two-way splits (training + testing
+    only).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["split"]
+    source: str
+    split: SplitDatasetPartitionInfo
+    training: SplitDatasetPartitionInfo
+    testing: SplitDatasetPartitionInfo
+    validation: SplitDatasetPartitionInfo | None = None
+    strategy: str
+    element_table: str
+    seed: int
+    dry_run: bool

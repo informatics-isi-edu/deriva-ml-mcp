@@ -1233,12 +1233,12 @@ async def test_cache_dataset_explicit_version(dataset_ctx, capturing_mcp, mock_m
                 version="1.2.3",
             )
         )
-    assert out["status"] == "success"
+    assert out["status"] == "cached"
     assert out["dataset_rid"] == "1-AAAA"
     assert out["version"] == "1.2.3"
     assert out["materialize"] is True
-    assert out["cache_status"] == "cached_materialized"
-    assert out["cache_path"] == "/tmp/cache/1-AAAA"
+    assert out["bag_info"]["cache_status"] == "cached_materialized"
+    assert out["bag_info"]["cache_path"] == "/tmp/cache/1-AAAA"
 
     # spec carried the explicit version through.
     (spec_arg,) = mock_ml.cache_dataset.call_args.args
@@ -1604,7 +1604,7 @@ async def test_split_dataset_basic_success(dataset_ctx, capturing_mcp, mock_ml):
                 source_dataset_rid="1-AAAA",
             )
         )
-    assert out["status"] == "success"
+    assert out["status"] == "split"
     assert out["source"] == "1-AAAA"
     assert out["training"]["rid"] == "1-TRN"
     assert out["testing"]["rid"] == "1-TST"
