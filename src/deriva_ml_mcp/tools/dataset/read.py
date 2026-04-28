@@ -87,6 +87,7 @@ def _list_datasets_impl(
     after_rid: str | None,
     limit: int,
     include_deleted: bool = False,
+    sort: bool = False,
 ) -> DatasetListResponse:
     """Fetch + paginate datasets. Pure helper -- shared by tool and resource.
 
@@ -95,14 +96,31 @@ def _list_datasets_impl(
         after_rid: Cursor for cursor pagination.
         limit: Max datasets per page (already capped by caller).
         include_deleted: Forward to ``find_datasets(deleted=...)``.
+        sort: If True, results are ordered newest-first by record
+            creation time (RCT desc) -- forwarded to
+            ``deriva_ml.DerivaML.find_datasets(sort=True)``. If False
+            (default), results are RID-ascending for stable cursor
+            pagination. Note that under ``sort=True`` the ``after_rid``
+            cursor still works ("skip up to this RID in the RCT-sorted
+            result"), but pagination through very large sorted result
+            sets is bounded by the internal fetch cap.
 
     Returns:
         ``DatasetListResponse`` -- see ``deriva_ml_mcp._response_models``.
     """
-    datasets = sorted(
-        ml.find_datasets(deleted=include_deleted),
-        key=lambda d: d.dataset_rid,
+    raw = list(
+        ml.find_datasets(
+            deleted=include_deleted,
+            sort=True if sort else None,
+        )
     )
+    # Keep stable RID-ascending order for the default path; under
+    # sort=True we honor the catalog-side RCT-desc ordering and skip
+    # the post-fetch sort (sorting by RID would clobber the RCT order).
+    if sort:
+        datasets = raw
+    else:
+        datasets = sorted(raw, key=lambda d: d.dataset_rid)
     page, truncated, next_after = _paginate(
         datasets,
         after_rid=after_rid,
@@ -220,6 +238,7 @@ def register(ctx: PluginContext) -> None:
         limit: int = 100,
         after_rid: str | None = None,
         preflight_count: bool = False,
+        sort: bool = False,
     ) -> str:
         """Browse all datasets in the catalog with optional pagination.
 
@@ -230,6 +249,10 @@ def register(ctx: PluginContext) -> None:
             limit: Max datasets per page (default 100, max 1000).
             after_rid: RID of last row from previous page to advance cursor.
             preflight_count: If True, return only total count.
+            sort: If True, return results newest-first by record
+                creation time. Recommended for "show me the most
+                recent datasets" queries. Default False preserves the
+                stable RID-ascending order used for cursor pagination.
 
         Returns:
             Preflight:
@@ -266,6 +289,7 @@ def register(ctx: PluginContext) -> None:
                     after_rid=after_rid,
                     limit=capped,
                     include_deleted=include_deleted,
+                    sort=sort,
                 )
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:

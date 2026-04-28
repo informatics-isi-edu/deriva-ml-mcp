@@ -118,6 +118,37 @@ async def test_list_workflows_error_path(workflow_ctx, capturing_mcp, mock_ml):
     assert mock_audit.call_count == 0
 
 
+async def test_list_workflows_sort_forwards_to_deriva_ml(workflow_ctx, capturing_mcp, mock_ml):
+    """sort=True forwards sort=True to deriva_ml.find_workflows and skips post-fetch RID sort."""
+    wf_a = _make_workflow_mock(rid="1-WF-NEWEST")
+    wf_b = _make_workflow_mock(rid="1-WF-OLDER")
+    mock_ml.find_workflows.return_value = [wf_a, wf_b]
+
+    result = await capturing_mcp.tools["deriva_ml_list_workflows"](
+        hostname="h", catalog_id="1", sort=True
+    )
+    payload = json.loads(result)
+
+    mock_ml.find_workflows.assert_called_once()
+    assert mock_ml.find_workflows.call_args.kwargs.get("sort") is True
+    rids = [w["rid"] for w in payload["workflows"]]
+    assert rids == ["1-WF-NEWEST", "1-WF-OLDER"]
+
+
+async def test_list_workflows_sort_default_preserves_rid_sort(workflow_ctx, capturing_mcp, mock_ml):
+    """sort=False (default) calls find_workflows with sort=None and re-sorts by RID asc."""
+    wf_z = _make_workflow_mock(rid="1-Z")
+    wf_a = _make_workflow_mock(rid="1-A")
+    mock_ml.find_workflows.return_value = [wf_z, wf_a]
+
+    result = await capturing_mcp.tools["deriva_ml_list_workflows"](hostname="h", catalog_id="1")
+    payload = json.loads(result)
+
+    assert mock_ml.find_workflows.call_args.kwargs.get("sort") is None
+    rids = [w["rid"] for w in payload["workflows"]]
+    assert rids == ["1-A", "1-Z"]
+
+
 # ---------------------------------------------------------------------------
 # get_workflow
 # ---------------------------------------------------------------------------

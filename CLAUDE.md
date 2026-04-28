@@ -290,6 +290,48 @@ This closes PR 3 of #6. The response-shape Pydantic migration is
 complete -- every `_*_impl` helper, every list/detail/summary
 shape, and every mutating-tool response is now Pydantic-typed.
 
+v3.1 exposes three new optional parameters from the deriva-ml v1.31.0
+release through the MCP tool surface:
+
+- `deriva_ml_list_executions`, `deriva_ml_list_datasets`,
+  `deriva_ml_list_workflows` (and `deriva_ml_find_workflow_executions`
+  which shares the executions impl) accept an optional `sort: bool =
+  False`. Default `False` preserves the current RID-ascending order
+  used for stable cursor pagination. `True` returns results
+  newest-first by record creation time (RCT desc) -- recommended for
+  "show me what's recent" queries. The `_list_*_impl` helpers were
+  extended in lockstep so the resource layer (which calls them
+  without `sort=`) keeps its current snapshot stability.
+
+- `deriva_ml_list_feature_values` accepts:
+  - `execution_rids: list[str] | None = None` -- server-side filter
+    to a known set of execution RIDs. Empty list short-circuits.
+    Recommended for cross-execution comparison queries (e.g. "give
+    me the F1 score for each of these 5 runs in one round-trip").
+  - `max_results: int = 50_000` -- caller-controlled cap on rows
+    materialized before pagination. The MCP wrapper translates
+    deriva-ml's `DerivaMLMaterializeLimitExceeded` into a clear
+    error envelope. Behavior tightening: queries that previously
+    OOMed silently now return `{"error": "...exceeds max_results..."}`.
+    Note the deliberate naming asymmetry -- the MCP wire uses
+    `max_results` (LLM-friendly name) and forwards as
+    `materialize_limit=max_results` to deriva-ml (library-internal
+    name).
+
+- `deriva-ml` is now pinned to `>=1.31.0` (was unpinned;
+  audit-flagged deployment risk).
+
+Resource shapes are unchanged. Resources keep RID-ascending defaults
+for snapshot stability; users who want recent-first content use the
+tool with `sort=True`.
+
+This release does NOT add a `compare_metrics` tool. The
+cross-execution comparison workflow is taught at the skill layer
+(`compare-model-runs` skill in `deriva-ml-skills`, follow-up) which
+respects both metric-storage patterns: features-as-scalars (use
+`execution_rids=` on `list_feature_values`) and metrics-as-JSONL-
+asset files (download via `work-with-assets`, parse locally).
+
 ## Coverage Report
 
 `docs/coverage.md` records what happened to every old `deriva-mcp` tool. Update it

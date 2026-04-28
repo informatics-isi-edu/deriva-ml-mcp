@@ -65,7 +65,7 @@ async def test_list_datasets_success(dataset_ctx, capturing_mcp, mock_ml):
     assert out["truncated"] is False
     assert out["next_after_rid"] is None
     assert {d["rid"] for d in out["datasets"]} == {"1-AAAA", "1-BBBB"}
-    mock_ml.find_datasets.assert_called_once_with(deleted=False)
+    mock_ml.find_datasets.assert_called_once_with(deleted=False, sort=None)
 
 
 async def test_list_datasets_preflight_returns_count_only(dataset_ctx, capturing_mcp, mock_ml):
@@ -117,6 +117,37 @@ async def test_list_datasets_error_path(dataset_ctx, capturing_mcp, mock_ml):
         await capturing_mcp.tools["deriva_ml_list_datasets"](hostname="h", catalog_id="1")
     )
     assert out == {"error": "boom"}
+
+
+async def test_list_datasets_sort_forwards_to_deriva_ml(dataset_ctx, capturing_mcp, mock_ml):
+    """sort=True forwards sort=True to deriva_ml.find_datasets and skips post-fetch RID sort."""
+    ds_a = _make_dataset_mock(rid="1-DS-NEWEST")
+    ds_b = _make_dataset_mock(rid="1-DS-OLDER")
+    mock_ml.find_datasets.return_value = [ds_a, ds_b]
+
+    result = await capturing_mcp.tools["deriva_ml_list_datasets"](
+        hostname="h", catalog_id="1", sort=True
+    )
+    payload = json.loads(result)
+
+    mock_ml.find_datasets.assert_called_once()
+    assert mock_ml.find_datasets.call_args.kwargs.get("sort") is True
+    rids = [d["rid"] for d in payload["datasets"]]
+    assert rids == ["1-DS-NEWEST", "1-DS-OLDER"]
+
+
+async def test_list_datasets_sort_default_preserves_rid_sort(dataset_ctx, capturing_mcp, mock_ml):
+    """sort=False (default) calls find_datasets with sort=None and re-sorts by RID asc."""
+    ds_z = _make_dataset_mock(rid="1-Z")
+    ds_a = _make_dataset_mock(rid="1-A")
+    mock_ml.find_datasets.return_value = [ds_z, ds_a]
+
+    result = await capturing_mcp.tools["deriva_ml_list_datasets"](hostname="h", catalog_id="1")
+    payload = json.loads(result)
+
+    assert mock_ml.find_datasets.call_args.kwargs.get("sort") is None
+    rids = [d["rid"] for d in payload["datasets"]]
+    assert rids == ["1-A", "1-Z"]
 
 
 # ---------------------------------------------------------------------------

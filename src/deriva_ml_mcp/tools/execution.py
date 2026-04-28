@@ -161,6 +161,7 @@ def _list_executions_impl(
     status: str | None,
     after_rid: str | None,
     limit: int,
+    sort: bool = False,
 ) -> ExecutionListResponse:
     """Fetch + paginate executions. Pure helper -- shared by tool and resource.
 
@@ -170,15 +171,36 @@ def _list_executions_impl(
         status: Optional ``ExecutionStatus`` value (string).
         after_rid: Cursor for cursor pagination.
         limit: Max executions per page (already capped by caller).
+        sort: If True, results are ordered newest-first by record
+            creation time (RCT desc) -- forwarded to
+            ``deriva_ml.DerivaML.find_executions(sort=True)``. If False
+            (default), results are RID-ascending for stable cursor
+            pagination. Note that under ``sort=True`` the ``after_rid``
+            cursor still works ("skip up to this RID in the RCT-sorted
+            result"), but pagination through very large sorted result
+            sets is bounded by the internal fetch cap.
 
     Returns:
         ``ExecutionListResponse`` -- see ``deriva_ml_mcp._response_models``.
     """
     status_enum = ExecutionStatus(status) if status else None
-    executions = sorted(
-        ml.find_executions(workflow=workflow_rid, status=status_enum),
-        key=lambda e: getattr(e, "execution_rid", "") or "",
+    raw = list(
+        ml.find_executions(
+            workflow=workflow_rid,
+            status=status_enum,
+            sort=True if sort else None,
+        )
     )
+    # Keep stable RID-ascending order for the default path; under
+    # sort=True we honor the catalog-side RCT-desc ordering and skip
+    # the post-fetch sort (sorting by RID would clobber the RCT order).
+    if sort:
+        executions = raw
+    else:
+        executions = sorted(
+            raw,
+            key=lambda e: getattr(e, "execution_rid", "") or "",
+        )
     page, truncated, next_after = _paginate(
         executions,
         after_rid=after_rid,
@@ -381,6 +403,7 @@ def register(ctx: PluginContext) -> None:
         limit: int = 100,
         after_rid: str | None = None,
         preflight_count: bool = False,
+        sort: bool = False,
     ) -> str:
         """Browse executions in the catalog, optionally filtered by workflow or status.
 
@@ -393,6 +416,10 @@ def register(ctx: PluginContext) -> None:
             limit: Max executions per page (default 100, max 1000).
             after_rid: RID of last row from previous page to advance cursor.
             preflight_count: If True, return only total count.
+            sort: If True, return results newest-first by record
+                creation time. Recommended for "show me the most
+                recent runs" queries. Default False preserves the
+                stable RID-ascending order used for cursor pagination.
 
         Returns:
             Page: ``{"executions": [...], "count",
@@ -430,6 +457,7 @@ def register(ctx: PluginContext) -> None:
                     status=status,
                     after_rid=after_rid,
                     limit=capped,
+                    sort=sort,
                 )
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:
@@ -490,6 +518,7 @@ def register(ctx: PluginContext) -> None:
         limit: int = 100,
         after_rid: str | None = None,
         preflight_count: bool = False,
+        sort: bool = False,
     ) -> str:
         """Find all executions of a specific workflow.
 
@@ -504,6 +533,10 @@ def register(ctx: PluginContext) -> None:
             limit: Max executions per page (default 100, max 1000).
             after_rid: RID of last row from previous page to advance cursor.
             preflight_count: If True, return only total count.
+            sort: If True, return results newest-first by record
+                creation time. Recommended for "show me the most
+                recent runs" queries. Default False preserves the
+                stable RID-ascending order used for cursor pagination.
 
         Returns:
             Same shape as ``deriva_ml_list_executions``.
@@ -519,38 +552,30 @@ def register(ctx: PluginContext) -> None:
         try:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
-                status_enum = ExecutionStatus(status) if status else None
-                executions = sorted(
-                    ml.find_executions(workflow=workflow_rid, status=status_enum),
-                    key=lambda e: getattr(e, "execution_rid", "") or "",
+                if preflight_count:
+                    status_enum = ExecutionStatus(status) if status else None
+                    total = len(list(ml.find_executions(workflow=workflow_rid, status=status_enum)))
+                    return PreflightCountResponse(
+                        total_count=total,
+                        action_required=(
+                            f"Found {total} executions for workflow {workflow_rid}. "
+                            "Choose a limit and call again with preflight_count=False."
+                        ),
+                    ).model_dump_json(by_alias=True)
+
+                capped = min(max(limit, 0), _MAX_LIMIT)
+                payload = _list_executions_impl(
+                    ml,
+                    workflow_rid=workflow_rid,
+                    status=status,
+                    after_rid=after_rid,
+                    limit=capped,
+                    sort=sort,
                 )
-
-            if preflight_count:
-                total = len(executions)
-                return PreflightCountResponse(
-                    total_count=total,
-                    action_required=(
-                        f"Found {total} executions for workflow {workflow_rid}. "
-                        "Choose a limit and call again with preflight_count=False."
-                    ),
-                ).model_dump_json(by_alias=True)
-
-            capped = min(max(limit, 0), _MAX_LIMIT)
-            page, truncated, next_after = _paginate(
-                executions,
-                after_rid=after_rid,
-                limit=capped,
-                key=partial(_read_rid, rid_key="execution_rid"),
-            )
             # v2.3 reuses ExecutionListResponse here -- the
             # find_workflow_executions response is shape-identical to
             # _list_executions_impl's response (filtered by workflow).
-            return ExecutionListResponse(
-                executions=[_summarize_execution(e) for e in page],
-                count=len(page),
-                truncated=truncated,
-                next_after_rid=next_after,
-            ).model_dump_json(by_alias=True)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,

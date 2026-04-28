@@ -218,6 +218,49 @@ async def test_find_workflow_executions_error_path(execution_ctx, capturing_mcp,
     assert mock_audit.call_count == 0
 
 
+async def test_list_executions_sort_forwards_to_deriva_ml(execution_ctx, capturing_mcp, mock_ml):
+    """sort=True forwards sort=True to deriva_ml.find_executions and skips post-fetch RID sort."""
+    # Mock find_executions to return records in RCT-desc-ish order
+    # (the mock simulates what deriva-ml returns when sort=True).
+    record_a = _make_execution_record_mock(rid="1-EXEC-NEWEST")
+    record_b = _make_execution_record_mock(rid="1-EXEC-OLDER")
+    mock_ml.find_executions.return_value = [record_a, record_b]
+
+    result = await capturing_mcp.tools["deriva_ml_list_executions"](
+        hostname="h", catalog_id="1", sort=True
+    )
+    payload = json.loads(result)
+
+    # Confirm the deriva-ml call received sort=True
+    mock_ml.find_executions.assert_called_once()
+    assert mock_ml.find_executions.call_args.kwargs.get("sort") is True
+
+    # Confirm the wire response preserved the RCT-desc order (NOT
+    # re-sorted by RID).
+    rids = [e["rid"] for e in payload["executions"]]
+    assert rids == ["1-EXEC-NEWEST", "1-EXEC-OLDER"]
+
+
+async def test_list_executions_sort_default_preserves_rid_sort(
+    execution_ctx, capturing_mcp, mock_ml
+):
+    """sort=False (default) calls find_executions with sort=None and re-sorts by RID asc."""
+    # Records intentionally NOT in RID order from the mock; the
+    # wrapper should re-sort them ascending.
+    record_z = _make_execution_record_mock(rid="1-Z")
+    record_a = _make_execution_record_mock(rid="1-A")
+    mock_ml.find_executions.return_value = [record_z, record_a]
+
+    result = await capturing_mcp.tools["deriva_ml_list_executions"](hostname="h", catalog_id="1")
+    payload = json.loads(result)
+
+    # find_executions called with sort=None (the False -> None mapping)
+    assert mock_ml.find_executions.call_args.kwargs.get("sort") is None
+    # Wire response is RID-ascending
+    rids = [e["rid"] for e in payload["executions"]]
+    assert rids == ["1-A", "1-Z"]
+
+
 # ---------------------------------------------------------------------------
 # list_execution_children
 # ---------------------------------------------------------------------------
