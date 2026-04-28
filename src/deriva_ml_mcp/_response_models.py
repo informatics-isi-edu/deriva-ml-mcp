@@ -823,3 +823,29 @@ class AddFeatureValuesResponse(BaseModel):
     feature_name: str
     execution_rid: str
     count: int
+
+
+class CommitExecutionReport(BaseModel):
+    """Per-call upload report nested inside ``CommitExecutionResponse``.
+
+    Mirrors the dict produced by ``_summarize_upload_dict`` in
+    ``tools/execution.py`` (which is internal -- consumers see only
+    the Pydantic shape on the wire).
+
+    ``per_table`` maps each asset table name to the count of files
+    uploaded for that table on this commit. ``execution_rids`` is a
+    one-element list (the execution being committed); the list shape
+    is preserved for forward-compat with multi-execution uploads.
+    ``errors`` is capped at the top 10 lines by the helper -- the
+    full list stays in the server logs. ``errors_truncated`` signals
+    that the cap was hit.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    execution_rids: list[str]
+    total_uploaded: int
+    total_failed: int
+    per_table: dict[str, int]
+    errors: list[str]
+    errors_truncated: bool
