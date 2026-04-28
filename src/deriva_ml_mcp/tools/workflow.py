@@ -39,7 +39,9 @@ from deriva_ml_mcp._helpers import (
     _read_rid,
 )
 from deriva_ml_mcp._response_models import (
+    CreateWorkflowResponse,
     PreflightCountResponse,
+    UpdateWorkflowResponse,
     WorkflowDetail,
     WorkflowListResponse,
     WorkflowSummary,
@@ -410,17 +412,15 @@ def register(ctx: PluginContext) -> None:
                     "re-index failed for workflow %s after create_workflow",
                     rid,
                 )
-            return json.dumps(
-                {
-                    "status": status,
-                    "workflow_rid": rid,
-                    "name": name,
-                    "workflow_type": normalized_types,
-                    "url": url,
-                    "checksum": checksum,
-                    "version": version,
-                }
-            )
+            return CreateWorkflowResponse(
+                status=status,
+                workflow_rid=rid,
+                name=name,
+                workflow_type=normalized_types,
+                url=url,
+                checksum=checksum,
+                version=version,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -516,13 +516,11 @@ def register(ctx: PluginContext) -> None:
                     "re-index failed for workflow %s after update_workflow",
                     workflow_rid,
                 )
-            return json.dumps(
-                {
-                    "status": "updated",
-                    "workflow_rid": workflow_rid,
-                    "updated_fields": updated_fields,
-                }
-            )
+            return UpdateWorkflowResponse(
+                status="updated",
+                workflow_rid=workflow_rid,
+                updated_fields=updated_fields,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,

@@ -757,3 +757,31 @@ class UpdateAssetResponse(BaseModel):
     status: Literal["updated"]
     asset_rid: str
     updated_fields: list[str]
+
+
+class CreateWorkflowResponse(BaseModel):
+    """Response from ``deriva_ml_create_workflow``.
+
+    ``status="created"`` for new workflows, ``status="exists"`` for the
+    idempotent dedup branch (URL or checksum already registered).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["created", "exists"]
+    workflow_rid: str
+    name: str
+    workflow_type: list[str]
+    url: str
+    checksum: str | None = None
+    version: str | None = None
+
+
+class UpdateWorkflowResponse(BaseModel):
+    """Response from ``deriva_ml_update_workflow``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["updated"]
+    workflow_rid: str
+    updated_fields: list[str]
