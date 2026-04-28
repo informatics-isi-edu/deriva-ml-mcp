@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from deriva_mcp_core import deriva_call
 from deriva_ml.dataset.aux_classes import DatasetVersion, VersionPart
@@ -49,6 +49,15 @@ logger = logging.getLogger(__name__)
 # canonical factory) for the dual-patch context manager.
 import deriva_ml_mcp.tools.dataset as _pkg  # noqa: E402  (intentional cycle)
 from deriva_ml_mcp._helpers import _error_envelope, _set_row_description
+from deriva_ml_mcp._response_models import (
+    AddDatasetElementTypeResponse,
+    AddDatasetMembersResponse,
+    CreateDatasetResponse,
+    DeleteDatasetMembersResponse,
+    DeleteDatasetResponse,
+    IncrementDatasetVersionResponse,
+    UpdateDatasetResponse,
+)
 from deriva_ml_mcp.tools.dataset.read import _summarize_dataset
 
 if TYPE_CHECKING:
@@ -140,9 +149,11 @@ def register(ctx: PluginContext) -> None:
                     "re-index failed for dataset %s after create_dataset",
                     new_ds.dataset_rid,
                 )
-            return json.dumps(
-                {"status": "created", **summary.model_dump(), "execution_rid": execution_rid}
-            )
+            return CreateDatasetResponse(
+                status="created",
+                **summary.model_dump(),
+                execution_rid=execution_rid,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -207,13 +218,11 @@ def register(ctx: PluginContext) -> None:
                     "re-index drop failed for dataset %s after delete_dataset",
                     dataset_rid,
                 )
-            return json.dumps(
-                {
-                    "status": "deleted",
-                    "dataset_rid": dataset_rid,
-                    "recursive": recurse,
-                }
-            )
+            return DeleteDatasetResponse(
+                status="deleted",
+                dataset_rid=dataset_rid,
+                recursive=recurse,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -315,14 +324,12 @@ def register(ctx: PluginContext) -> None:
                     "re-index failed for dataset %s after add_dataset_members",
                     dataset_rid,
                 )
-            return json.dumps(
-                {
-                    "status": "success",
-                    "added_count": added_count,
-                    "dataset_rid": dataset_rid,
-                    "new_version": new_version,
-                }
-            )
+            return AddDatasetMembersResponse(
+                status="added",
+                added_count=added_count,
+                dataset_rid=dataset_rid,
+                new_version=new_version,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -397,14 +404,12 @@ def register(ctx: PluginContext) -> None:
                     "re-index failed for dataset %s after delete_dataset_members",
                     dataset_rid,
                 )
-            return json.dumps(
-                {
-                    "status": "success",
-                    "removed_count": removed_count,
-                    "dataset_rid": dataset_rid,
-                    "new_version": new_version,
-                }
-            )
+            return DeleteDatasetMembersResponse(
+                status="removed",
+                removed_count=removed_count,
+                dataset_rid=dataset_rid,
+                new_version=new_version,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -547,17 +552,27 @@ def register(ctx: PluginContext) -> None:
                     "re-index failed for dataset %s after update_dataset",
                     dataset_rid,
                 )
-            payload: dict[str, Any] = {
-                "status": "updated",
-                "dataset_rid": dataset_rid,
-                "updated_fields": updated_fields,
-                "new_version": new_version,
-            }
+            # v3.0: dataset_types / added / removed are ALWAYS in the response
+            # (null when the description-only branch ran). Was conditionally
+            # omitted in v2.x.
             if "dataset_types" in updated_fields:
-                payload["dataset_types"] = updated_types
-                payload["added"] = adds_requested
-                payload["removed"] = removes_requested
-            return json.dumps(payload)
+                response = UpdateDatasetResponse(
+                    status="updated",
+                    dataset_rid=dataset_rid,
+                    updated_fields=updated_fields,
+                    new_version=new_version,
+                    dataset_types=updated_types,
+                    added=adds_requested,
+                    removed=removes_requested,
+                )
+            else:
+                response = UpdateDatasetResponse(
+                    status="updated",
+                    dataset_rid=dataset_rid,
+                    updated_fields=updated_fields,
+                    new_version=new_version,
+                )
+            return response.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -619,13 +634,11 @@ def register(ctx: PluginContext) -> None:
                 table_name=table_name,
                 association_table=association_name,
             )
-            return json.dumps(
-                {
-                    "status": "success",
-                    "table_name": table_name,
-                    "association_table": association_name,
-                }
-            )
+            return AddDatasetElementTypeResponse(
+                status="created",
+                table_name=table_name,
+                association_table=association_name,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -703,15 +716,13 @@ def register(ctx: PluginContext) -> None:
                     "re-index failed for dataset %s after increment_dataset_version",
                     dataset_rid,
                 )
-            return json.dumps(
-                {
-                    "status": "success",
-                    "dataset_rid": dataset_rid,
-                    "previous_version": previous_version,
-                    "new_version": new_version_str,
-                    "component": component,
-                }
-            )
+            return IncrementDatasetVersionResponse(
+                status="incremented",
+                dataset_rid=dataset_rid,
+                previous_version=previous_version,
+                new_version=new_version_str,
+                component=component,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,

@@ -716,7 +716,7 @@ async def test_add_dataset_members_with_list(dataset_ctx, capturing_mcp, mock_ml
                 execution_rid="EXEC-1",
             )
         )
-    assert out["status"] == "success"
+    assert out["status"] == "added"
     assert out["added_count"] == 3
     assert out["dataset_rid"] == "1-AAAA"
     assert out["new_version"] == "1.1.0"
@@ -812,7 +812,7 @@ async def test_delete_dataset_members_success(dataset_ctx, capturing_mcp, mock_m
                 execution_rid="EXEC-2",
             )
         )
-    assert out["status"] == "success"
+    assert out["status"] == "removed"
     assert out["removed_count"] == 2
     assert out["new_version"] == "1.3.0"
     ds.delete_dataset_members.assert_called_once_with(
@@ -1028,9 +1028,10 @@ async def test_update_dataset_description_only(dataset_ctx, capturing_mcp, mock_
         )
     assert out["status"] == "updated"
     assert out["updated_fields"] == ["description"]
-    # types fields are NOT present when only description was edited.
-    assert "dataset_types" not in out
-    assert "added" not in out
+    # types fields are always present in v3.0 (null when description-only branch ran).
+    assert out["dataset_types"] is None
+    assert out["added"] is None
+    assert out["removed"] is None
     # pathBuilder write happened with the right shape.
     update_mock.assert_called_once_with([{"RID": "1-AAAA", "Description": "new desc"}])
     # In-memory mirror updated too.
@@ -1091,7 +1092,7 @@ async def test_add_dataset_element_type_success(dataset_ctx, capturing_mcp, mock
             )
         )
     assert out == {
-        "status": "success",
+        "status": "created",
         "table_name": "Image",
         "association_table": "Dataset_Image",
     }
@@ -1139,7 +1140,7 @@ async def test_increment_dataset_version_success(dataset_ctx, capturing_mcp, moc
                 execution_rid="EXEC-3",
             )
         )
-    assert out["status"] == "success"
+    assert out["status"] == "incremented"
     assert out["dataset_rid"] == "1-AAAA"
     assert out["previous_version"] == "1.2.0"
     assert out["new_version"] == "1.3.0"

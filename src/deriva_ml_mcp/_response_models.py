@@ -985,3 +985,61 @@ class IncrementDatasetVersionResponse(_DatasetVersionBumpMixin):
     status: Literal["incremented"]
     previous_version: str
     component: str
+
+
+class CreateDatasetResponse(DatasetSummary):
+    """Response from ``deriva_ml_create_dataset``.
+
+    Extends ``DatasetSummary`` with the v3.0 status discriminator and
+    the linking ``execution_rid``. ``model_config`` inherits from
+    ``DatasetSummary`` so ``extra="forbid"`` is in effect; the new
+    fields are added on top.
+    """
+
+    status: Literal["created"]
+    execution_rid: str
+
+
+class DeleteDatasetResponse(BaseModel):
+    """Response from ``deriva_ml_delete_dataset``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["deleted"]
+    dataset_rid: str
+    recursive: bool
+
+
+class UpdateDatasetResponse(BaseModel):
+    """Response from ``deriva_ml_update_dataset``.
+
+    v3.0: the ``dataset_types``, ``added``, and ``removed`` fields
+    are now ALWAYS present in the response (``null`` when the
+    description-only branch ran). v2.x omitted these keys when the
+    description-only branch ran.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["updated"]
+    dataset_rid: str
+    updated_fields: list[str]
+    new_version: str
+    dataset_types: list[str] | None = None
+    added: list[str] | None = None
+    removed: list[str] | None = None
+
+
+class AddDatasetElementTypeResponse(BaseModel):
+    """Response from ``deriva_ml_add_dataset_element_type``.
+
+    v3.0: ``status`` was renamed from ``"success"`` to ``"created"``
+    -- registering an element type IS a creation event (a new
+    association table row).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["created"]
+    table_name: str
+    association_table: str
