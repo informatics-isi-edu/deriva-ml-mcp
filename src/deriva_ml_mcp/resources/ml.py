@@ -35,13 +35,16 @@ Resources registered:
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any
 
 from deriva_mcp_core import deriva_call
 from deriva_ml.core.enums import MLVocab
 
 from deriva_ml_mcp._helpers import _MAX_LIMIT, _error_envelope
+from deriva_ml_mcp._response_models import (
+    MLRegistriesResponse,
+    VocabularyTermRef,
+)
 from deriva_ml_mcp.ml_context import get_ml
 from deriva_ml_mcp.tools.asset import (
     _get_asset_detail_impl,
@@ -63,8 +66,8 @@ if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
 
 
-def _vocab_terms(ml: Any, vocab_name: str) -> list[dict[str, Any]]:
-    """Read all terms from one vocabulary table as compact dicts.
+def _vocab_terms(ml: Any, vocab_name: str) -> list[VocabularyTermRef]:
+    """Read all terms from one vocabulary table as compact records.
 
     Returns ``name`` + ``rid`` only, by design. The full description and
     synonym lists are available via core's ``get_term`` tool or via
@@ -78,22 +81,42 @@ def _vocab_terms(ml: Any, vocab_name: str) -> list[dict[str, Any]]:
         vocab_name: Vocabulary table name (e.g. ``"Dataset_Type"``).
 
     Returns:
-        List of dicts ``[{"name", "rid"}, ...]``. Empty list if the
-        vocab table is missing or has no terms; suppresses upstream
-        errors so a missing vocab does not nuke the whole registries
-        snapshot.
+        List of :class:`VocabularyTermRef`. Empty list if the vocab
+        table is missing or has no terms; suppresses upstream errors so
+        a missing vocab does not nuke the whole registries snapshot.
     """
     try:
         terms = ml.list_vocabulary_terms(vocab_name)
     except Exception:  # noqa: BLE001 -- registry is best-effort
         return []
     return [
-        {
-            "name": getattr(t, "name", None),
-            "rid": getattr(t, "rid", None),
-        }
+        VocabularyTermRef(
+            name=getattr(t, "name", None),
+            rid=getattr(t, "rid", None),
+        )
         for t in terms
     ]
+
+
+def _get_ml_registries_impl(ml: Any) -> MLRegistriesResponse:
+    """Build the bundled snapshot of the four catalog ML vocabularies.
+
+    Each vocab is read independently so a missing or unreadable vocab
+    surfaces as ``[]`` rather than aborting the snapshot (see
+    :func:`_vocab_terms`).
+
+    Args:
+        ml: A connected ``deriva_ml.DerivaML`` instance.
+
+    Returns:
+        :class:`MLRegistriesResponse` with the four parallel term lists.
+    """
+    return MLRegistriesResponse(
+        dataset_types=_vocab_terms(ml, MLVocab.dataset_type.value),
+        workflow_types=_vocab_terms(ml, MLVocab.workflow_type.value),
+        asset_types=_vocab_terms(ml, MLVocab.asset_type.value),
+        execution_statuses=_vocab_terms(ml, MLVocab.execution_status.value),
+    )
 
 
 def register(ctx: PluginContext) -> None:
@@ -366,13 +389,8 @@ def register(ctx: PluginContext) -> None:
         try:
             with deriva_call():
                 ml = get_ml(hostname, catalog_id)
-                payload = {
-                    "dataset_types": _vocab_terms(ml, MLVocab.dataset_type.value),
-                    "workflow_types": _vocab_terms(ml, MLVocab.workflow_type.value),
-                    "asset_types": _vocab_terms(ml, MLVocab.asset_type.value),
-                    "execution_statuses": _vocab_terms(ml, MLVocab.execution_status.value),
-                }
-            return json.dumps(payload)
+                payload = _get_ml_registries_impl(ml)
+            return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
                 exc,

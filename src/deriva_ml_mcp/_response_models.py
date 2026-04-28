@@ -681,6 +681,42 @@ class AssetTablesResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class VocabularyTermRef(BaseModel):
+    """One vocabulary term as ``{"name": str | None, "rid": str | None}``.
+
+    Compact shape used by the ``ml/registries`` resource. Description and
+    synonyms are deliberately omitted to keep the bundled snapshot small;
+    the full record is available via core's ``get_term`` tool or
+    ``rag_search``.
+
+    Both fields are nullable because ``_vocab_terms`` reads them via
+    ``getattr(t, ..., None)`` -- a malformed term row should surface the
+    gap rather than crash the snapshot.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None
+    rid: str | None
+
+
+class MLRegistriesResponse(BaseModel):
+    """Bundled snapshot of the four catalog ML vocabularies.
+
+    Produced by ``_get_ml_registries_impl``. Used by the
+    ``deriva://catalog/{h}/{c}/ml/registries`` resource. Each list is
+    independently best-effort -- a vocab whose read raises surfaces as
+    an empty list rather than aborting the snapshot.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_types: list[VocabularyTermRef]
+    workflow_types: list[VocabularyTermRef]
+    asset_types: list[VocabularyTermRef]
+    execution_statuses: list[VocabularyTermRef]
+
+
 class ReindexVocabulariesResponse(BaseModel):
     """Per-vocab term counts after a reindex pass.
 
