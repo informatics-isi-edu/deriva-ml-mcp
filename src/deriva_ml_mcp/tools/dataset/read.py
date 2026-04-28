@@ -47,6 +47,7 @@ from deriva_ml_mcp._response_models import (
     DatasetListResponse,
     DatasetMemberRef,
     DatasetMembersSummaryResponse,
+    DatasetRelationsResponse,
     DatasetSummary,
     DatasetVersionEntry,
     PreflightCountResponse,
@@ -524,7 +525,7 @@ def register(ctx: PluginContext) -> None:
                     "To page both sides, call once per direction with "
                     "that side's own after_rid."
                 )
-            result: dict[str, Any] = {}
+            kwargs: dict[str, Any] = {}
             with deriva_call():
                 ml = _pkg.get_ml(hostname, catalog_id)
                 ds = ml.lookup_dataset(dataset_rid)
@@ -540,13 +541,8 @@ def register(ctx: PluginContext) -> None:
                         limit=capped,
                         key=partial(_read_rid, rid_key="dataset_rid"),
                     )
-                    # Note: ad-hoc payload pre-v2.3 -- the
-                    # ``list_dataset_relations`` response shape will get its
-                    # own ``DatasetRelationsResponse`` Pydantic model in v2.3.
-                    # For v2.2 we just .model_dump() each summary so the
-                    # surrounding json.dumps() can serialize them.
-                    result["parents"] = [_summarize_dataset(p).model_dump() for p in page]
-                    result["parents_truncated"] = truncated
+                    kwargs["parents"] = [_summarize_dataset(p) for p in page]
+                    kwargs["parents_truncated"] = truncated
 
                 if direction in ("children", "both"):
                     children = sorted(
@@ -559,13 +555,19 @@ def register(ctx: PluginContext) -> None:
                         limit=capped,
                         key=partial(_read_rid, rid_key="dataset_rid"),
                     )
-                    result["children"] = [_summarize_dataset(c).model_dump() for c in page]
-                    result["children_truncated"] = truncated
+                    kwargs["children"] = [_summarize_dataset(c) for c in page]
+                    kwargs["children_truncated"] = truncated
 
             if warning is not None:
-                result["warning"] = warning
+                kwargs["warning"] = warning
 
-            return json.dumps(result)
+            # ``exclude_none=True`` preserves the v1.x wire shape where the
+            # opposite-direction fields are *omitted* (not serialized as
+            # ``null``). When ``direction="parents"`` the response has no
+            # ``children`` / ``children_truncated`` keys at all.
+            return DatasetRelationsResponse(**kwargs).model_dump_json(
+                by_alias=True, exclude_none=True
+            )
         except Exception as exc:
             # Read-only tool: log+return without an audit row (I-2 fix).
             return _error_envelope(

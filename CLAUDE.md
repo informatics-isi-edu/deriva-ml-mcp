@@ -232,14 +232,28 @@ to use `.model_dump(mode="json")` (replaces the v1.x
 `json.loads(json.dumps(row, default=str))` round-trip; cleaner
 single-call coercion of datetimes etc.).
 
-Future v2.x sweeps (each its own PR):
+v2.3 retired the four ad-hoc payload sites listed in the v2.2 note.
+Each wrapper now constructs a named Pydantic model and serializes
+via `.model_dump_json(by_alias=True)`:
 
-- v2.3: ad-hoc payload Pydantic models. The list_dataset_relations,
-  find_workflow_executions, list_execution_children, and
-  list_execution_parents wrappers each build inline
-  `{<plural>: [...], count, ...}` shapes with one-off context fields
-  that should become named models. v2.2's `.model_dump()` bridge
-  gets replaced by directly constructing the model.
+- `deriva_ml_find_workflow_executions` reuses `ExecutionListResponse`
+  (its response is shape-identical to `_list_executions_impl`'s,
+  just filtered by workflow).
+- `deriva_ml_list_execution_children` returns `ExecutionChildrenResponse`
+  (`{parent_rid, recurse, count, children: list[ExecutionSummary]}`).
+- `deriva_ml_list_execution_parents` returns `ExecutionParentsResponse`
+  (`{child_rid, recurse, count, parents: list[ExecutionSummary]}`).
+- `deriva_ml_list_dataset_relations` returns `DatasetRelationsResponse`
+  with all-optional fields (`parents`, `parents_truncated`,
+  `children`, `children_truncated`, `warning`). The wrapper passes
+  `exclude_none=True` to `model_dump_json` so the v1.x wire shape
+  is preserved -- when `direction="parents"` the response has no
+  `children`/`children_truncated` keys at all (not present as
+  `null`). The conditional-key contract is documented on the model
+  docstring.
+
+Future v3.x sweep:
+
 - v3.0 (PR 3 of #6): mutating-tool response shapes (currently
   heterogeneous: `{"status": "created", ...}`, `{"status": "deleted",
   ...}`, partial-result shapes for failures). Their own coherent

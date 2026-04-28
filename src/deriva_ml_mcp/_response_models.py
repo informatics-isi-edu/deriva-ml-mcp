@@ -273,6 +273,38 @@ class DatasetMembersSummaryResponse(BaseModel):
     tables: list[str]
 
 
+class DatasetRelationsResponse(BaseModel):
+    """Response shape for ``deriva_ml_list_dataset_relations``.
+
+    The wrapper supports three directions: ``parents``, ``children``,
+    or ``both``. Each direction populates the corresponding
+    ``parents`` / ``children`` list and its ``parents_truncated`` /
+    ``children_truncated`` flag. When the caller requested only one
+    direction, the other side's fields are absent (None on the wire).
+
+    The ``warning`` field is set when the caller passed ``after_rid``
+    with ``direction="both"`` -- the single cursor is incoherent
+    because parents and children RIDs aren't synchronized, so we
+    drop the cursor and warn rather than silently mis-paginating.
+
+    All fields use Optional shapes (``= None``) to mirror the v1.x
+    "field omitted when not relevant" wire shape. Pydantic's
+    ``exclude_none=True`` on serialization could drop the absent
+    fields, but the v1.x wire used dict literal omission -- we
+    replicate that with ``model_dump_json(exclude_none=True,
+    by_alias=True)`` at the call site to preserve the v1.x wire
+    shape exactly.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    parents: list[DatasetSummary] | None = None
+    parents_truncated: bool | None = None
+    children: list[DatasetSummary] | None = None
+    children_truncated: bool | None = None
+    warning: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Workflow response models
 # ---------------------------------------------------------------------------
@@ -442,9 +474,50 @@ class ExecutionDetail(ExecutionSummary):
 
 
 class ExecutionListResponse(_PaginationFields):
-    """Paginated list of Executions. Produced by ``_list_executions_impl``."""
+    """Paginated list of Executions. Produced by ``_list_executions_impl``.
+
+    Also returned by ``deriva_ml_find_workflow_executions`` (since v2.3),
+    which reuses this shape -- it's a paginated list of executions
+    filtered by workflow.
+    """
 
     executions: list[ExecutionSummary]
+
+
+class ExecutionChildrenResponse(BaseModel):
+    """Response shape for ``deriva_ml_list_execution_children``.
+
+    Returns descendants of an execution (children, optionally
+    recursively all descendants). Distinct from
+    ``ExecutionListResponse`` because:
+
+    - Not paginated -- the relation graph is bounded per execution.
+    - Carries the parent's RID + the recurse flag as context so the
+      caller can introspect the query parameters from the response.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    parent_rid: str
+    recurse: bool
+    count: int
+    children: list[ExecutionSummary]
+
+
+class ExecutionParentsResponse(BaseModel):
+    """Response shape for ``deriva_ml_list_execution_parents``.
+
+    Returns ancestors of an execution. Symmetric with
+    ``ExecutionChildrenResponse`` but with ``child_rid`` and
+    ``parents`` instead of ``parent_rid`` and ``children``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    child_rid: str
+    recurse: bool
+    count: int
+    parents: list[ExecutionSummary]
 
 
 # ---------------------------------------------------------------------------
