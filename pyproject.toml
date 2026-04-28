@@ -24,7 +24,7 @@ classifiers = [
 
 dependencies = [
     "deriva-mcp-core",
-    "deriva-ml",
+    "deriva-ml>=1.31.0",
 ]
 
 [project.optional-dependencies]
