@@ -40,6 +40,7 @@ from deriva_ml_mcp._helpers import (
 from deriva_ml_mcp._response_models import (
     FeatureListResponse,
     FeatureSummary,
+    PreflightCountResponse,
 )
 from deriva_ml_mcp.ml_context import get_ml
 
@@ -169,16 +170,13 @@ def register(ctx: PluginContext) -> None:
                 ml = get_ml(hostname, catalog_id)
                 if preflight_count:
                     total = len(list(ml.find_features(table=table)))
-                    return json.dumps(
-                        {
-                            "total_count": total,
-                            "entities_fetched": False,
-                            "action_required": (
-                                f"Found {total} features. Choose a limit and "
-                                "call again with preflight_count=False."
-                            ),
-                        }
-                    )
+                    return PreflightCountResponse(
+                        total_count=total,
+                        action_required=(
+                            f"Found {total} features. Choose a limit and "
+                            "call again with preflight_count=False."
+                        ),
+                    ).model_dump_json(by_alias=True)
 
                 capped = min(max(limit, 0), _MAX_LIMIT)
                 payload = _list_features_impl(
@@ -384,17 +382,14 @@ def register(ctx: PluginContext) -> None:
 
             if preflight_count:
                 total = len(records)
-                return json.dumps(
-                    {
-                        "total_count": total,
-                        "entities_fetched": False,
-                        "action_required": (
-                            f"Found {total} feature records. Choose a "
-                            "limit and call again with "
-                            "preflight_count=False."
-                        ),
-                    }
-                )
+                return PreflightCountResponse(
+                    total_count=total,
+                    action_required=(
+                        f"Found {total} feature records. Choose a "
+                        "limit and call again with "
+                        "preflight_count=False."
+                    ),
+                ).model_dump_json(by_alias=True)
 
             # Sort by RID for stable pagination. Records are pydantic
             # FeatureRecord instances; their RID lives at the .RID

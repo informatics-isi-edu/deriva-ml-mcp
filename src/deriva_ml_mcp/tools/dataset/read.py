@@ -49,6 +49,7 @@ from deriva_ml_mcp._response_models import (
     DatasetMembersSummaryResponse,
     DatasetSummary,
     DatasetVersionEntry,
+    PreflightCountResponse,
 )
 
 if TYPE_CHECKING:
@@ -253,16 +254,13 @@ def register(ctx: PluginContext) -> None:
                 ml = _pkg.get_ml(hostname, catalog_id)
                 if preflight_count:
                     total = len(list(ml.find_datasets(deleted=include_deleted)))
-                    return json.dumps(
-                        {
-                            "total_count": total,
-                            "entities_fetched": False,
-                            "action_required": (
-                                f"Found {total} datasets. Choose a limit and call "
-                                "again with preflight_count=False."
-                            ),
-                        }
-                    )
+                    return PreflightCountResponse(
+                        total_count=total,
+                        action_required=(
+                            f"Found {total} datasets. Choose a limit and call "
+                            "again with preflight_count=False."
+                        ),
+                    ).model_dump_json(by_alias=True)
 
                 capped = min(max(limit, 0), _MAX_LIMIT)
                 payload = _list_datasets_impl(
@@ -437,17 +435,14 @@ def register(ctx: PluginContext) -> None:
             rows = sorted(members[element_table], key=lambda r: r.get("RID", ""))
 
             if preflight_count:
-                return json.dumps(
-                    {
-                        "element_table": element_table,
-                        "total_count": len(rows),
-                        "entities_fetched": False,
-                        "action_required": (
-                            f"{len(rows)} rows in '{element_table}'. Choose a "
-                            "limit and call again with preflight_count=False."
-                        ),
-                    }
-                )
+                return PreflightCountResponse(
+                    total_count=len(rows),
+                    action_required=(
+                        f"{len(rows)} rows in '{element_table}'. Choose a "
+                        "limit and call again with preflight_count=False."
+                    ),
+                    element_table=element_table,
+                ).model_dump_json(by_alias=True)
 
             capped = min(max(limit, 0), _MAX_LIMIT)
             page, truncated, next_after = _paginate(

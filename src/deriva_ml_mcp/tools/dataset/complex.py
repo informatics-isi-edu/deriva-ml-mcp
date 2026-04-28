@@ -45,6 +45,7 @@ from deriva_ml_mcp._helpers import (
     _paginate,
     _row_rid_for,
 )
+from deriva_ml_mcp._response_models import PreflightCountResponse
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
@@ -320,16 +321,12 @@ def register(ctx: PluginContext) -> None:
                         f"Estimated {total} rows for the denormalized view. "
                         "Choose a limit and call again with preflight_count=False."
                     )
-                return json.dumps(
-                    {
-                        "mode": "dataset_preflight",
-                        "dataset_rid": dataset_rid,
-                        "total_count": total,
-                        "entities_fetched": False,
-                        "action_required": action,
-                    },
-                    default=str,
-                )
+                return PreflightCountResponse(
+                    total_count=total,
+                    action_required=action,
+                    mode="dataset_preflight",
+                    dataset_rid=dataset_rid,
+                ).model_dump_json(by_alias=True)
 
             if rows is None:
                 return json.dumps(
