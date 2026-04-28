@@ -73,6 +73,7 @@ from deriva_ml_mcp._response_models import (
     AssetSummary,
     AssetTableRef,
     AssetTablesResponse,
+    PreflightCountResponse,
 )
 from deriva_ml_mcp.ml_context import get_ml
 
@@ -313,17 +314,14 @@ def register(ctx: PluginContext) -> None:
                 ml = get_ml(hostname, catalog_id)
                 if preflight_count:
                     total = len(list(ml.list_assets(asset_table)))
-                    return json.dumps(
-                        {
-                            "total_count": total,
-                            "entities_fetched": False,
-                            "action_required": (
-                                f"Found {total} assets in {asset_table}. "
-                                "Choose a limit and call again with "
-                                "preflight_count=False."
-                            ),
-                        }
-                    )
+                    return PreflightCountResponse(
+                        total_count=total,
+                        action_required=(
+                            f"Found {total} assets in {asset_table}. "
+                            "Choose a limit and call again with "
+                            "preflight_count=False."
+                        ),
+                    ).model_dump_json(by_alias=True)
                 assets = sorted(
                     ml.list_assets(asset_table),
                     key=lambda a: getattr(a, "asset_rid", "") or "",

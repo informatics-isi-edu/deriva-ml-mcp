@@ -108,6 +108,56 @@ from datetime import datetime, timedelta
 from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
+# Preflight-count response (shared by every paginated tool's
+# preflight_count=True branch)
+# ---------------------------------------------------------------------------
+
+
+class PreflightCountResponse(BaseModel):
+    """Response shape for the ``preflight_count=True`` branch of any
+    paginated MCP tool.
+
+    Documented once in the ``deriva_ml_getting_started`` prompt's
+    PAGINATION CONTRACT section so individual ``list_*`` tool
+    docstrings don't redocument it. Returned as JSON
+    ``{"total_count": N, "entities_fetched": false,
+    "action_required": "..."}``, optionally with extra context fields
+    like ``element_table`` (added by ``deriva_ml_list_dataset_members``
+    to indicate which element table the preflight is counting).
+
+    ``extra="allow"`` lets call sites attach context fields without
+    needing a separate model per tool. The three required fields
+    (``total_count``, ``entities_fetched``, ``action_required``) are
+    always present.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    total_count: int | None = Field(
+        description=(
+            "Total count of catalog rows matching the (post-filter) selection. "
+            "May be ``None`` for tools that delegate counting to upstream APIs "
+            "that don't always provide an estimate "
+            "(e.g. ``deriva_ml_denormalize_dataset``'s describe step)."
+        ),
+    )
+    entities_fetched: bool = Field(
+        default=False,
+        description=(
+            "Always False for preflight responses. The flag exists so a single "
+            "consumer-side dispatch on the response shape can distinguish "
+            "preflight from a real page."
+        ),
+    )
+    action_required: str = Field(
+        description=(
+            "Human-readable hint telling the LLM what to do next: choose a "
+            "limit and call the tool again with ``preflight_count=False``."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Common pagination envelope (mixed into every *ListResponse)
 # ---------------------------------------------------------------------------
 

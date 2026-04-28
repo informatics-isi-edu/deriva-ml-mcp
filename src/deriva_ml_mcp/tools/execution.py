@@ -53,6 +53,7 @@ from deriva_ml_mcp._response_models import (
     ExecutionListResponse,
     ExecutionOutputs,
     ExecutionSummary,
+    PreflightCountResponse,
 )
 from deriva_ml_mcp.ml_context import get_ml
 
@@ -402,16 +403,13 @@ def register(ctx: PluginContext) -> None:
                 if preflight_count:
                     status_enum = ExecutionStatus(status) if status else None
                     total = len(list(ml.find_executions(workflow=workflow_rid, status=status_enum)))
-                    return json.dumps(
-                        {
-                            "total_count": total,
-                            "entities_fetched": False,
-                            "action_required": (
-                                f"Found {total} executions. Choose a limit and call "
-                                "again with preflight_count=False."
-                            ),
-                        }
-                    )
+                    return PreflightCountResponse(
+                        total_count=total,
+                        action_required=(
+                            f"Found {total} executions. Choose a limit and call "
+                            "again with preflight_count=False."
+                        ),
+                    ).model_dump_json(by_alias=True)
                 capped = min(max(limit, 0), _MAX_LIMIT)
                 payload = _list_executions_impl(
                     ml,
@@ -516,16 +514,13 @@ def register(ctx: PluginContext) -> None:
 
             if preflight_count:
                 total = len(executions)
-                return json.dumps(
-                    {
-                        "total_count": total,
-                        "entities_fetched": False,
-                        "action_required": (
-                            f"Found {total} executions for workflow {workflow_rid}. "
-                            "Choose a limit and call again with preflight_count=False."
-                        ),
-                    }
-                )
+                return PreflightCountResponse(
+                    total_count=total,
+                    action_required=(
+                        f"Found {total} executions for workflow {workflow_rid}. "
+                        "Choose a limit and call again with preflight_count=False."
+                    ),
+                ).model_dump_json(by_alias=True)
 
             capped = min(max(limit, 0), _MAX_LIMIT)
             page, truncated, next_after = _paginate(

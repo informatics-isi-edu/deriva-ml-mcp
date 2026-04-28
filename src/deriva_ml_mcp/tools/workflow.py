@@ -39,6 +39,7 @@ from deriva_ml_mcp._helpers import (
     _read_rid,
 )
 from deriva_ml_mcp._response_models import (
+    PreflightCountResponse,
     WorkflowDetail,
     WorkflowListResponse,
     WorkflowSummary,
@@ -173,16 +174,13 @@ def register(ctx: PluginContext) -> None:
                 ml = get_ml(hostname, catalog_id)
                 if preflight_count:
                     total = len(list(ml.find_workflows()))
-                    return json.dumps(
-                        {
-                            "total_count": total,
-                            "entities_fetched": False,
-                            "action_required": (
-                                f"Found {total} workflows. Choose a limit and call "
-                                "again with preflight_count=False."
-                            ),
-                        }
-                    )
+                    return PreflightCountResponse(
+                        total_count=total,
+                        action_required=(
+                            f"Found {total} workflows. Choose a limit and call "
+                            "again with preflight_count=False."
+                        ),
+                    ).model_dump_json(by_alias=True)
 
                 capped = min(max(limit, 0), _MAX_LIMIT)
                 payload = _list_workflows_impl(ml, after_rid=after_rid, limit=capped)
