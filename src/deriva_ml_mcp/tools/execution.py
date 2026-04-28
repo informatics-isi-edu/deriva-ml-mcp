@@ -46,12 +46,14 @@ from deriva_ml_mcp._helpers import (
 )
 from deriva_ml_mcp._response_models import (
     ExecutionAssetRef,
+    ExecutionChildrenResponse,
     ExecutionDetail,
     ExecutionExperiment,
     ExecutionInputDatasetRef,
     ExecutionInputs,
     ExecutionListResponse,
     ExecutionOutputs,
+    ExecutionParentsResponse,
     ExecutionSummary,
     PreflightCountResponse,
 )
@@ -532,20 +534,15 @@ def register(ctx: PluginContext) -> None:
                 limit=capped,
                 key=partial(_read_rid, rid_key="execution_rid"),
             )
-            # Note: ad-hoc payload pre-v2.3 -- the
-            # ``find_workflow_executions`` response shape will get its
-            # own Pydantic model in v2.3. For v2.2 we just .model_dump()
-            # each summary so the surrounding json.dumps() can serialize
-            # them.
-            return json.dumps(
-                {
-                    "executions": [_summarize_execution(e).model_dump() for e in page],
-                    "count": len(page),
-                    "truncated": truncated,
-                    "next_after_rid": next_after,
-                },
-                default=str,
-            )
+            # v2.3 reuses ExecutionListResponse here -- the
+            # find_workflow_executions response is shape-identical to
+            # _list_executions_impl's response (filtered by workflow).
+            return ExecutionListResponse(
+                executions=[_summarize_execution(e) for e in page],
+                count=len(page),
+                truncated=truncated,
+                next_after_rid=next_after,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -595,18 +592,12 @@ def register(ctx: PluginContext) -> None:
                 ml = get_ml(hostname, catalog_id)
                 record = ml.lookup_execution(execution_rid)
                 children = list(record.list_execution_children(recurse=recurse))
-            # Note: ad-hoc payload pre-v2.3 -- see comment above
-            # ``find_workflow_executions``. Each child gets .model_dump()
-            # so the surrounding json.dumps() can serialize them.
-            return json.dumps(
-                {
-                    "parent_rid": execution_rid,
-                    "recurse": recurse,
-                    "count": len(children),
-                    "children": [_summarize_execution(c).model_dump() for c in children],
-                },
-                default=str,
-            )
+            return ExecutionChildrenResponse(
+                parent_rid=execution_rid,
+                recurse=recurse,
+                count=len(children),
+                children=[_summarize_execution(c) for c in children],
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -650,17 +641,12 @@ def register(ctx: PluginContext) -> None:
                 ml = get_ml(hostname, catalog_id)
                 record = ml.lookup_execution(execution_rid)
                 parents = list(record.list_execution_parents(recurse=recurse))
-            # Note: ad-hoc payload pre-v2.3 -- see comment above
-            # ``find_workflow_executions``.
-            return json.dumps(
-                {
-                    "child_rid": execution_rid,
-                    "recurse": recurse,
-                    "count": len(parents),
-                    "parents": [_summarize_execution(p).model_dump() for p in parents],
-                },
-                default=str,
-            )
+            return ExecutionParentsResponse(
+                child_rid=execution_rid,
+                recurse=recurse,
+                count=len(parents),
+                parents=[_summarize_execution(p) for p in parents],
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
