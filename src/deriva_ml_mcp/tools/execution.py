@@ -96,8 +96,8 @@ _COMMIT_ALLOWED_STATES = {
 }
 
 
-def _summarize_execution(record: Any) -> dict[str, Any]:
-    """Render an ``ExecutionRecord`` (or ``Execution``) into the JSON list shape.
+def _summarize_execution(record: Any) -> ExecutionSummary:
+    """Render an ``ExecutionRecord`` (or ``Execution``) into the validated summary.
 
     Tolerates both ``ExecutionRecord`` (returned by ``lookup_execution``
     / ``find_executions``) and ``Execution`` (returned by
@@ -108,10 +108,13 @@ def _summarize_execution(record: Any) -> dict[str, Any]:
         record: An ``ExecutionRecord`` (preferred) or ``Execution`` mock.
 
     Returns:
-        Dict matching the ``ExecutionSummary`` Pydantic model shape.
-        ``_list_executions_impl`` constructs the model from these
-        dicts. Kept dict-returning to avoid touching ad-hoc payload
-        sites in PR 1; PR 2 may switch to Pydantic-throughout.
+        ``ExecutionSummary`` Pydantic instance -- see
+        ``deriva_ml_mcp._response_models``.
+
+    Note:
+        v2.2 sweep: this helper now returns Pydantic. Consumers that
+        previously dict-accessed must use attribute access or call
+        ``.model_dump()`` to get a plain dict back.
 
     Example:
         >>> from unittest.mock import MagicMock
@@ -124,21 +127,21 @@ def _summarize_execution(record: Any) -> dict[str, Any]:
         >>> rec.start_time = None
         >>> rec.stop_time = None
         >>> rec.duration = None
-        >>> _summarize_execution(rec)["rid"]
+        >>> _summarize_execution(rec).rid
         '1-EXEC'
-        >>> _summarize_execution(rec)["status"]
+        >>> _summarize_execution(rec).status
         'Created'
     """
     status = getattr(record, "status", None)
-    return {
-        "rid": getattr(record, "execution_rid", None),
-        "workflow_rid": getattr(record, "workflow_rid", None),
-        "status": status.value if isinstance(status, ExecutionStatus) else status,
-        "description": getattr(record, "description", None),
-        "start_time": getattr(record, "start_time", None),
-        "stop_time": getattr(record, "stop_time", None),
-        "duration": getattr(record, "duration", None),
-    }
+    return ExecutionSummary(
+        rid=getattr(record, "execution_rid", None),
+        workflow_rid=getattr(record, "workflow_rid", None),
+        status=status.value if isinstance(status, ExecutionStatus) else status,
+        description=getattr(record, "description", None),
+        start_time=getattr(record, "start_time", None),
+        stop_time=getattr(record, "stop_time", None),
+        duration=getattr(record, "duration", None),
+    )
 
 
 def _list_executions_impl(
@@ -173,7 +176,7 @@ def _list_executions_impl(
         key=partial(_read_rid, rid_key="execution_rid"),
     )
     return ExecutionListResponse(
-        executions=[ExecutionSummary(**_summarize_execution(e)) for e in page],
+        executions=[_summarize_execution(e) for e in page],
         count=len(page),
         truncated=truncated,
         next_after_rid=next_after,
@@ -291,7 +294,7 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> ExecutionDetail:
         experiment = None
 
     return ExecutionDetail(
-        **summary,
+        **summary.model_dump(),
         inputs=ExecutionInputs(datasets=input_datasets, assets=input_assets),
         outputs=ExecutionOutputs(assets=output_assets),
         experiment=experiment,
@@ -458,7 +461,7 @@ def register(ctx: PluginContext) -> None:
                 ml = get_ml(hostname, catalog_id)
                 record = ml.lookup_execution(execution_rid)
                 summary = _summarize_execution(record)
-            return json.dumps(summary, default=str)
+            return summary.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
@@ -529,9 +532,14 @@ def register(ctx: PluginContext) -> None:
                 limit=capped,
                 key=partial(_read_rid, rid_key="execution_rid"),
             )
+            # Note: ad-hoc payload pre-v2.3 -- the
+            # ``find_workflow_executions`` response shape will get its
+            # own Pydantic model in v2.3. For v2.2 we just .model_dump()
+            # each summary so the surrounding json.dumps() can serialize
+            # them.
             return json.dumps(
                 {
-                    "executions": [_summarize_execution(e) for e in page],
+                    "executions": [_summarize_execution(e).model_dump() for e in page],
                     "count": len(page),
                     "truncated": truncated,
                     "next_after_rid": next_after,
@@ -587,12 +595,15 @@ def register(ctx: PluginContext) -> None:
                 ml = get_ml(hostname, catalog_id)
                 record = ml.lookup_execution(execution_rid)
                 children = list(record.list_execution_children(recurse=recurse))
+            # Note: ad-hoc payload pre-v2.3 -- see comment above
+            # ``find_workflow_executions``. Each child gets .model_dump()
+            # so the surrounding json.dumps() can serialize them.
             return json.dumps(
                 {
                     "parent_rid": execution_rid,
                     "recurse": recurse,
                     "count": len(children),
-                    "children": [_summarize_execution(c) for c in children],
+                    "children": [_summarize_execution(c).model_dump() for c in children],
                 },
                 default=str,
             )
@@ -639,12 +650,14 @@ def register(ctx: PluginContext) -> None:
                 ml = get_ml(hostname, catalog_id)
                 record = ml.lookup_execution(execution_rid)
                 parents = list(record.list_execution_parents(recurse=recurse))
+            # Note: ad-hoc payload pre-v2.3 -- see comment above
+            # ``find_workflow_executions``.
             return json.dumps(
                 {
                     "child_rid": execution_rid,
                     "recurse": recurse,
                     "count": len(parents),
-                    "parents": [_summarize_execution(p) for p in parents],
+                    "parents": [_summarize_execution(p).model_dump() for p in parents],
                 },
                 default=str,
             )

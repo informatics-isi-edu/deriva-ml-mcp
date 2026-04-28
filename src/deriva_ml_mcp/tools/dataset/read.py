@@ -56,31 +56,28 @@ if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
 
 
-def _summarize_dataset(ds: Any) -> dict[str, Any]:
-    """Render a Dataset object into the JSON-friendly summary used by list endpoints.
+def _summarize_dataset(ds: Any) -> DatasetSummary:
+    """Render a Dataset object into the validated summary used by list endpoints.
 
     Args:
         ds: A ``deriva_ml.dataset.dataset.Dataset`` instance.
 
     Returns:
-        Dict matching the ``DatasetSummary`` Pydantic model shape. The
-        Pydantic model lives in ``deriva_ml_mcp._response_models`` and
-        is the validated form -- ``_list_datasets_impl`` constructs
-        the model from the dicts this helper produces. We keep this
-        helper dict-returning because it's called from ad-hoc payload
-        sites (e.g. parents/children blocks in
-        ``deriva_ml_list_dataset_relations``) that don't want a
-        validated Pydantic instance, and converting at every call
-        site would expand v1.6's scope. Those sites get tightened in
-        PR 2 (v2.0).
+        ``DatasetSummary`` Pydantic instance -- see
+        ``deriva_ml_mcp._response_models``.
+
+    Note:
+        v2.2 sweep: this helper now returns Pydantic. Consumers that
+        previously dict-accessed must use attribute access or call
+        ``.model_dump()`` to get a plain dict back.
     """
     current = ds.current_version
-    return {
-        "rid": ds.dataset_rid,
-        "description": ds.description,
-        "dataset_types": list(ds.dataset_types) if ds.dataset_types else [],
-        "current_version": str(current) if current is not None else None,
-    }
+    return DatasetSummary(
+        rid=ds.dataset_rid,
+        description=ds.description,
+        dataset_types=list(ds.dataset_types) if ds.dataset_types else [],
+        current_version=str(current) if current is not None else None,
+    )
 
 
 def _list_datasets_impl(
@@ -112,7 +109,7 @@ def _list_datasets_impl(
         key=partial(_read_rid, rid_key="dataset_rid"),
     )
     return DatasetListResponse(
-        datasets=[DatasetSummary(**_summarize_dataset(d)) for d in page],
+        datasets=[_summarize_dataset(d) for d in page],
         count=len(page),
         truncated=truncated,
         next_after_rid=next_after,
@@ -148,7 +145,7 @@ def _get_dataset_detail_impl(ml: Any, dataset_rid: str) -> DatasetDetail:
         for h in ds.dataset_history()
     ]
     return DatasetDetail(
-        **summary,
+        **summary.model_dump(),
         chaise_url=ds.get_chaise_url(),
         version_history=version_history,
     )
@@ -335,7 +332,7 @@ def register(ctx: PluginContext) -> None:
                     ds = ml.lookup_dataset(dataset_rid)
                     summary = _summarize_dataset(ds)
                     payload = DatasetDetail(
-                        **summary,
+                        **summary.model_dump(),
                         chaise_url=ds.get_chaise_url(),
                         version_history=[],
                     )
@@ -543,7 +540,12 @@ def register(ctx: PluginContext) -> None:
                         limit=capped,
                         key=partial(_read_rid, rid_key="dataset_rid"),
                     )
-                    result["parents"] = [_summarize_dataset(p) for p in page]
+                    # Note: ad-hoc payload pre-v2.3 -- the
+                    # ``list_dataset_relations`` response shape will get its
+                    # own ``DatasetRelationsResponse`` Pydantic model in v2.3.
+                    # For v2.2 we just .model_dump() each summary so the
+                    # surrounding json.dumps() can serialize them.
+                    result["parents"] = [_summarize_dataset(p).model_dump() for p in page]
                     result["parents_truncated"] = truncated
 
                 if direction in ("children", "both"):
@@ -557,7 +559,7 @@ def register(ctx: PluginContext) -> None:
                         limit=capped,
                         key=partial(_read_rid, rid_key="dataset_rid"),
                     )
-                    result["children"] = [_summarize_dataset(c) for c in page]
+                    result["children"] = [_summarize_dataset(c).model_dump() for c in page]
                     result["children_truncated"] = truncated
 
             if warning is not None:

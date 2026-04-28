@@ -123,7 +123,7 @@ def register(ctx: PluginContext) -> None:
                 execution_rid=execution_rid,
                 dataset_rid=new_ds.dataset_rid,
                 dataset_types=dataset_types or [],
-                version=summary["current_version"],
+                version=summary.current_version,
             )
             # v1.3 surgical re-index: refresh just the new dataset's
             # per-RID source so rag_search picks it up on the next call
@@ -140,7 +140,9 @@ def register(ctx: PluginContext) -> None:
                     "re-index failed for dataset %s after create_dataset",
                     new_ds.dataset_rid,
                 )
-            return json.dumps({"status": "created", **summary, "execution_rid": execution_rid})
+            return json.dumps(
+                {"status": "created", **summary.model_dump(), "execution_rid": execution_rid}
+            )
         except Exception as exc:
             return _error_envelope(
                 exc,
