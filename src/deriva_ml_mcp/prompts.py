@@ -238,6 +238,108 @@ For YOUR OWN domain vocabularies (``Sample_Type``, ``Tissue_Type``,
 ``Image_Quality``, etc.), use the same generic ``add_term`` with your
 domain schema name instead of ``"deriva-ml"``.
 
+THE ENTITY RESOLUTION WORKFLOW
+------------------------------
+This applies to ANY catalog entity referenced by name -- tables,
+columns, schemas, vocabulary terms, datasets, workflows, executions,
+features, assets, or anything else the catalog tracks. ML-domain or
+generic, the workflow is the same.
+
+When the user mentions an entity by name, OR when the user asks to
+create a new one, follow these steps:
+
+  1. EXACT MATCH FIRST. If the user-supplied string matches a known
+     canonical name exactly (case-sensitive), use it. Don't search,
+     don't ask. Catalog names are case-sensitive: ``"Training"`` is
+     the ``Dataset_Type`` term; ``"training"`` is not.
+
+  2. SEMANTIC SEARCH IF AMBIGUOUS, FUZZY, OR DESCRIPTIVE. If the
+     user's phrasing doesn't match a canonical name exactly -- it's
+     descriptive (``"the training data type"``), abbreviated
+     (``"DR"``), misspelled (``"Diagnossis"``), or just unfamiliar --
+     call ``rag_search`` with their phrase. Use the appropriate
+     ``doc_type``:
+
+       - ``catalog-schema`` for tables, columns, features,
+         vocabulary terms
+       - ``catalog-data`` for datasets, workflows, executions
+       - ``ml-docs`` / ``user-guide`` for documentation references
+
+  3. PRESENT A PICKER WHEN MULTIPLE OPTIONS APPEAR. If RAG returns
+     more than one plausible candidate, list 3-5 of them with their
+     canonical name + one-line description + RID (or
+     ``table.column`` for column hits) and ask the user to pick.
+     Don't choose blindly when reasonable people might disagree. If
+     RAG returns ONE clear top hit (significantly above runners-up),
+     use it but tell the user what you resolved it to in one
+     sentence (``"I'm using the Training Dataset_Type."``). If RAG
+     returns NO useful hits, ask a clarifying question. DO NOT
+     fabricate a name; DO NOT call ``create_*`` with a guessed
+     identifier.
+
+  4a. LOOKUP PATH ENDS HERE. With the canonical entity in hand, you
+      can call the relevant ``lookup_*`` / ``get_*`` / ``find_*``
+      tool, or pass the canonical name / RID to whatever operation
+      the user requested.
+
+  4b. CREATE PATH HAS ONE MORE STEP. If you arrived here because
+      the user asked to CREATE a new entity, before actually
+      calling ``create_*``, surface the candidates from step 3 to
+      the user explicitly:
+
+         "I found these similar existing entities: <list>. Would
+          modifying or reusing one of these work, or do you want
+          to create a new one?"
+
+      If the user picks an existing one, switch to the lookup path
+      (4a). If the user confirms a new one is needed, proceed to
+      step 5.
+
+  5. DESCRIPTION HANDLING ON CREATE. Every ``create_*`` /
+     ``add_*`` tool that accepts a ``description`` (or ``comment``)
+     argument SHOULD receive a non-empty one. Descriptions become
+     part of the catalog's RAG index and are visible to every
+     future user; an empty description means future LLMs and
+     humans cannot tell what the entity was for.
+
+     If the user did not supply a description, GENERATE A
+     SUGGESTION from the conversation context (what was the user
+     trying to accomplish? what role does this entity play in
+     their workflow?), THEN SHOW IT TO THE USER for
+     confirmation or edit:
+
+         "I'm going to create the <entity> with this description:
+          '<generated suggestion>'. OK to proceed, or would you
+          like to edit it?"
+
+     Pass the confirmed text (or the user's edit) to the tool.
+     Don't pass an empty string. Don't pass placeholder text like
+     ``"TODO"`` or ``"(no description)"``. Don't fabricate a
+     description without showing the user.
+
+     If you're operating autonomously with no human in the loop
+     (an unattended agent script), fall back to your best
+     generated suggestion and add a note in your response so a
+     future audit can see which descriptions were
+     auto-generated without confirmation.
+
+WHY THIS WORKFLOW MATTERS
+-------------------------
+The cost of getting it wrong:
+
+  - Fabricating a name leads to FK-violation errors at best, or
+    silent data corruption at worst (e.g. a typo'd ``"Trianing"``
+    Dataset_Type that creates a duplicate vocab term).
+  - Skipping the picker when there are multiple matches lets the
+    LLM commit the user to an entity they didn't intend.
+  - Empty descriptions destroy catalog discoverability -- a
+    catalog with 500 datasets all described as ``""`` is
+    indistinguishable from a catalog with 500 datasets nobody
+    can find.
+
+The cost of doing it right is one or two extra round-trips per
+operation. Always prefer the round-trips.
+
 WHERE TO GO NEXT
 ----------------
 Now that you have the conceptual frame, read these in this order:
