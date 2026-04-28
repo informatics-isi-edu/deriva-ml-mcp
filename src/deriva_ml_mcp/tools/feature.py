@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from deriva_mcp_core import deriva_call
 from deriva_mcp_core.telemetry import audit_event
+from deriva_ml import DerivaMLMaterializeLimitExceeded
 from deriva_ml.execution.execution import ExecutionStatus
 from deriva_ml.feature import FeatureRecord
 
@@ -290,6 +291,8 @@ def register(ctx: PluginContext) -> None:
         limit: int = 100,
         after_rid: str | None = None,
         preflight_count: bool = False,
+        execution_rids: list[str] | None = None,
+        max_results: int = 50_000,
     ) -> str:
         """Query feature values for a (table, feature_name).
 
@@ -322,6 +325,20 @@ def register(ctx: PluginContext) -> None:
             limit: Max records per page (default 100, max 1000).
             after_rid: Last RID from previous page.
             preflight_count: If True, return only the materialized count.
+            execution_rids: Optional filter -- when set, only feature
+                rows whose ``Execution`` value is in this list are
+                materialized. Forwarded server-side to deriva-ml's
+                ``feature_values(execution_rids=...)``. Lets compare-
+                runs workflows fetch values across N executions in a
+                single catalog round-trip rather than N sequential
+                queries. Empty list short-circuits to no rows.
+            max_results: Cap on rows materialized into memory before
+                pagination (default 50000). Returns
+                ``{"error": "..."}`` if the result set exceeds the cap;
+                the error message names the cap and suggests passing
+                ``execution_rids=`` to narrow. Increase if you have a
+                catalog where 50K is too tight; decrease if the LLM
+                runs in a memory-constrained environment.
 
         Returns:
             Page: ``{"records": [<model_dump>, ...], "count",
@@ -332,6 +349,9 @@ def register(ctx: PluginContext) -> None:
         Raises:
             RuntimeError: Wrapped as ``{"error": ...}``, propagated from
                 ``feature_values``.
+            DerivaMLMaterializeLimitExceeded: When the result set
+                exceeds ``max_results``. Translated to
+                ``{"error": "..."}`` on the wire.
 
         Example:
             ``{"records": [{"RID": "1-AAAA", "Quality_Type": "good", ...}],
@@ -383,9 +403,25 @@ def register(ctx: PluginContext) -> None:
 
                 if dataset_rid is not None:
                     ds = ml.lookup_dataset(dataset_rid)
-                    records = list(ds.feature_values(table, feature_name, selector=selector_fn))
+                    records = list(
+                        ds.feature_values(
+                            table,
+                            feature_name,
+                            selector=selector_fn,
+                            materialize_limit=max_results,
+                            execution_rids=execution_rids,
+                        )
+                    )
                 else:
-                    records = list(ml.feature_values(table, feature_name, selector=selector_fn))
+                    records = list(
+                        ml.feature_values(
+                            table,
+                            feature_name,
+                            selector=selector_fn,
+                            materialize_limit=max_results,
+                            execution_rids=execution_rids,
+                        )
+                    )
 
             if preflight_count:
                 total = len(records)
@@ -417,6 +453,18 @@ def register(ctx: PluginContext) -> None:
                     "next_after_rid": next_after,
                 },
                 default=str,
+            )
+        except DerivaMLMaterializeLimitExceeded as exc:
+            # Translate the deriva-ml exception to a clear error envelope.
+            # The exception's __str__ already names the cap and suggests
+            # passing execution_rids=...; we just route it through the
+            # standard _error_envelope so audit/logging are uniform.
+            return _error_envelope(
+                exc,
+                operation="list_feature_values",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
             )
         except Exception as exc:
             return _error_envelope(

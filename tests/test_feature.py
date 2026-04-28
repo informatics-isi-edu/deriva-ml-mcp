@@ -219,8 +219,10 @@ async def test_list_feature_values_success_no_selector(feature_ctx, capturing_mc
     assert out["count"] == 3
     assert out["truncated"] is False
     assert [r["RID"] for r in out["records"]] == ["1-0000", "1-0001", "1-0002"]
-    # selector=None passed through.
-    mock_ml.feature_values.assert_called_once_with("Image", "Quality", selector=None)
+    # selector=None and new kwargs passed through.
+    mock_ml.feature_values.assert_called_once_with(
+        "Image", "Quality", selector=None, materialize_limit=50_000, execution_rids=None
+    )
 
 
 async def test_list_feature_values_selector_newest(feature_ctx, capturing_mcp, mock_ml):
@@ -326,7 +328,9 @@ async def test_list_feature_values_dataset_scope(feature_ctx, capturing_mcp, moc
     )
     assert out["count"] == 1
     mock_ml.lookup_dataset.assert_called_once_with("DS-1")
-    ds.feature_values.assert_called_once_with("Image", "Quality", selector=None)
+    ds.feature_values.assert_called_once_with(
+        "Image", "Quality", selector=None, materialize_limit=50_000, execution_rids=None
+    )
     # Top-level catalog feature_values not used in dataset mode.
     mock_ml.feature_values.assert_not_called()
 
@@ -357,6 +361,61 @@ async def test_list_feature_values_error_path(feature_ctx, capturing_mcp, mock_m
         )
     assert out == {"error": "ermrest down"}
     assert mock_audit.call_count == 0
+
+
+async def test_list_feature_values_forwards_execution_rids(feature_ctx, capturing_mcp, mock_ml):
+    """execution_rids= is forwarded to deriva-ml's feature_values(execution_rids=...)."""
+    mock_ml.feature_values.return_value = iter([_make_record_mock("1-FV-A")])
+
+    await capturing_mcp.tools["deriva_ml_list_feature_values"](
+        hostname="h",
+        catalog_id="1",
+        table="Image",
+        feature_name="Quality",
+        execution_rids=["1-EXEC-A", "1-EXEC-B"],
+    )
+
+    mock_ml.feature_values.assert_called_once()
+    assert mock_ml.feature_values.call_args.kwargs.get("execution_rids") == [
+        "1-EXEC-A",
+        "1-EXEC-B",
+    ]
+
+
+async def test_list_feature_values_default_max_results_passed(feature_ctx, capturing_mcp, mock_ml):
+    """The default max_results=50000 is forwarded as materialize_limit=50000."""
+    mock_ml.feature_values.return_value = iter([_make_record_mock("1-FV-A")])
+
+    await capturing_mcp.tools["deriva_ml_list_feature_values"](
+        hostname="h", catalog_id="1", table="Image", feature_name="Quality"
+    )
+
+    mock_ml.feature_values.assert_called_once()
+    assert mock_ml.feature_values.call_args.kwargs.get("materialize_limit") == 50_000
+
+
+async def test_list_feature_values_max_results_translates_to_error_envelope(
+    feature_ctx, capturing_mcp, mock_ml
+):
+    """When deriva-ml raises DerivaMLMaterializeLimitExceeded, wire returns {"error": ...}."""
+    from deriva_ml import DerivaMLMaterializeLimitExceeded
+
+    mock_ml.feature_values.side_effect = DerivaMLMaterializeLimitExceeded(
+        actual_count=12_345,
+        limit=100,
+    )
+    result = await capturing_mcp.tools["deriva_ml_list_feature_values"](
+        hostname="h",
+        catalog_id="1",
+        table="Image",
+        feature_name="Quality",
+        max_results=100,
+    )
+    payload = json.loads(result)
+    assert "error" in payload
+    # Message contains the cap and the actual count (verify both show up)
+    assert "100" in payload["error"]
+    assert "12345" in payload["error"]
 
 
 # ---------------------------------------------------------------------------
