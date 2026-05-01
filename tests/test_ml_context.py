@@ -5,57 +5,53 @@ from __future__ import annotations
 from unittest.mock import patch
 
 
-def test_get_ml_uses_contextvar_credential_in_http_mode():
-    """When core's request contextvar is set (HTTP mode -- auth verifier
-    populated it), ``get_ml`` uses that credential and does NOT touch the
-    on-disk fallback."""
-    fake_credential = {"bearer-token": "test-bearer"}
+def test_get_ml_resolves_credential_via_core_get_credential():
+    """``get_ml`` resolves the credential through ``deriva_mcp_core.get_credential``
+    -- the public swap-aware accessor that works in both HTTP and stdio mode --
+    and passes the result to ``DerivaML(credential=...)``.
+
+    The single call site replaces the v3.x stdio fallback (try
+    ``get_request_credential`` then disk) with a single call to core's new
+    transport-aware API. Both HTTP and stdio code paths are now exercised
+    by core's own implementation, not duplicated in the plugin.
+    """
+    fake_credential = {"bearer-token": "from-core"}
 
     with (
         patch(
-            "deriva_ml_mcp.ml_context.get_request_credential", return_value=fake_credential
+            "deriva_ml_mcp.ml_context.get_credential", return_value=fake_credential
         ) as mock_get_cred,
-        patch("deriva_ml_mcp.ml_context._disk_get_credential") as mock_disk,
         patch("deriva_ml_mcp.ml_context.DerivaML") as mock_derivaml_cls,
     ):
         from deriva_ml_mcp.ml_context import get_ml
 
         ml = get_ml("host.example.org", "1")
 
-    mock_get_cred.assert_called_once_with()
-    mock_disk.assert_not_called()  # disk fallback must not fire when contextvar is set
+    # The hostname is forwarded so stdio mode can route to the right
+    # ~/.deriva/credential.json entry. HTTP mode ignores it (the contextvar
+    # is server-scoped already), but the plugin can't tell the modes apart
+    # and shouldn't have to -- that's exactly what core's get_credential
+    # encapsulates.
+    mock_get_cred.assert_called_once_with("host.example.org")
     mock_derivaml_cls.assert_called_once_with("host.example.org", "1", credential=fake_credential)
     assert ml is mock_derivaml_cls.return_value
 
 
-def test_get_ml_falls_back_to_disk_credential_in_stdio_mode():
-    """When core's request contextvar is unset (stdio mode -- the contextvar
-    is never populated there), ``get_ml`` catches the RuntimeError raised by
-    ``get_request_credential`` and falls back to the on-disk credential read
-    via ``deriva.core.get_credential(hostname)``. Mirrors the same fallback
-    that core's generic tools use via the swap-aware ``_get_credential_fn``.
-    """
-    fake_disk_credential = {"cookie": "webauthn=disk-cookie"}
-
-    with (
-        patch(
-            "deriva_ml_mcp.ml_context.get_request_credential",
-            side_effect=RuntimeError("No credential in current request context."),
-        ) as mock_get_cred,
-        patch(
-            "deriva_ml_mcp.ml_context._disk_get_credential", return_value=fake_disk_credential
-        ) as mock_disk,
-        patch("deriva_ml_mcp.ml_context.DerivaML") as mock_derivaml_cls,
+def test_get_ml_propagates_credential_errors():
+    """If core's ``get_credential`` raises (e.g. HTTP mode called outside a
+    request context), the error propagates to the caller for the
+    surrounding tool's ``_error_envelope`` to wrap. ``get_ml`` doesn't
+    swallow or rewrite credential errors -- callers handle the message
+    uniformly via the standard error path."""
+    with patch(
+        "deriva_ml_mcp.ml_context.get_credential",
+        side_effect=RuntimeError("No credential in current request context."),
     ):
         from deriva_ml_mcp.ml_context import get_ml
 
-        ml = get_ml("host.example.org", "1")
-
-    mock_get_cred.assert_called_once_with()
-    # Disk lookup is per-hostname so the right credential is selected when
-    # ~/.deriva/credential.json contains entries for multiple hosts.
-    mock_disk.assert_called_once_with("host.example.org")
-    mock_derivaml_cls.assert_called_once_with(
-        "host.example.org", "1", credential=fake_disk_credential
-    )
-    assert ml is mock_derivaml_cls.return_value
+        try:
+            get_ml("host.example.org", "1")
+        except RuntimeError as exc:
+            assert "No credential" in str(exc)
+        else:
+            raise AssertionError("RuntimeError was not propagated")
