@@ -110,8 +110,29 @@ _GITHUB_DOCS_NAME = "deriva-ml-docs"
 _GITHUB_DOCS_OWNER = "informatics-isi-edu"
 _GITHUB_DOCS_REPO = "deriva-ml"
 _GITHUB_DOCS_BRANCH = "main"
-_GITHUB_DOCS_PATH_PREFIX = "docs/"
+# v3.x widening: was "docs/" (excluded the top-level README.md and
+# CHANGELOG.md). Repo-root indexing covers the missing top-level
+# files. The GitHub crawler already filters to .md only, so non-doc
+# files are skipped. CLAUDE.md (maintainer-only Claude Code
+# instructions) is also indexed as mild noise -- pending the
+# upstream exclude_paths=[...] addition to deriva-mcp-core's
+# GitHubCrawler that would let us drop it cleanly.
+_GITHUB_DOCS_PATH_PREFIX = ""
 _GITHUB_DOCS_DOC_TYPE = "ml-docs"
+
+
+# v3.x: index the deriva-ml-mcp repo's own top-level README so MCP
+# server documentation is searchable via rag_search alongside the
+# deriva-ml library docs. Same noise caveat as the deriva-ml source
+# above -- repo-root indexing also picks up CLAUDE.md and the
+# docs/scratch/*.md planning notes; the upstream exclude_paths=[...]
+# addition would let us drop these cleanly.
+_GITHUB_MCP_DOCS_NAME = "deriva-ml-mcp-docs"
+_GITHUB_MCP_DOCS_OWNER = "informatics-isi-edu"
+_GITHUB_MCP_DOCS_REPO = "deriva-ml-mcp"
+_GITHUB_MCP_DOCS_BRANCH = "main"
+_GITHUB_MCP_DOCS_PATH_PREFIX = ""
+_GITHUB_MCP_DOCS_DOC_TYPE = "ml-mcp-docs"
 
 
 _DATASET_TABLE = "Dataset"
@@ -1063,6 +1084,14 @@ def register_rag_sources(ctx: PluginContext) -> None:
         branch=_GITHUB_DOCS_BRANCH,
         path_prefix=_GITHUB_DOCS_PATH_PREFIX,
         doc_type=_GITHUB_DOCS_DOC_TYPE,
+    )
+    ctx.rag_github_source(
+        name=_GITHUB_MCP_DOCS_NAME,
+        repo_owner=_GITHUB_MCP_DOCS_OWNER,
+        repo_name=_GITHUB_MCP_DOCS_REPO,
+        branch=_GITHUB_MCP_DOCS_BRANCH,
+        path_prefix=_GITHUB_MCP_DOCS_PATH_PREFIX,
+        doc_type=_GITHUB_MCP_DOCS_DOC_TYPE,
     )
     ctx.on_catalog_connect(
         _make_hook(_fetch_dataset_rows, _DATASET_TABLE, _DATASET_TOKEN, _DatasetSerializer())

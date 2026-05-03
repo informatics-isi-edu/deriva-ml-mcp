@@ -74,20 +74,39 @@ def rag_ctx(ctx):
 # ---------------------------------------------------------------------------
 
 
-def test_register_rag_sources_declares_one_github_source(rag_ctx) -> None:
-    """register_rag_sources adds exactly one GitHub documentation source."""
-    assert len(rag_ctx._rag_sources) == 1
+def test_register_rag_sources_declares_two_github_sources(rag_ctx) -> None:
+    """register_rag_sources adds two GitHub documentation sources.
+
+    v3.x added a second source ('deriva-ml-mcp-docs') so the
+    deriva-ml-mcp repo's own README is searchable via rag_search
+    alongside the deriva-ml library docs.
+    """
+    assert len(rag_ctx._rag_sources) == 2
 
 
 def test_register_rag_sources_github_source_targets_deriva_ml_docs(rag_ctx) -> None:
-    """The GitHub source points at informatics-isi-edu/deriva-ml docs/."""
-    decl = rag_ctx._rag_sources[0]
-    assert decl.name == "deriva-ml-docs"
+    """The first GitHub source points at informatics-isi-edu/deriva-ml repo root.
+
+    v3.x widened path_prefix from "docs/" to "" to also cover the
+    top-level README.md and CHANGELOG.md (the docs/ subdirectory's
+    contents are still indexed; the GitHub crawler filters to .md).
+    """
+    decl = next(s for s in rag_ctx._rag_sources if s.name == "deriva-ml-docs")
     assert decl.repo_owner == "informatics-isi-edu"
     assert decl.repo_name == "deriva-ml"
     assert decl.branch == "main"
-    assert decl.path_prefix == "docs/"
+    assert decl.path_prefix == ""
     assert decl.doc_type == "ml-docs"
+
+
+def test_register_rag_sources_mcp_source_targets_deriva_ml_mcp_readme(rag_ctx) -> None:
+    """The second GitHub source points at informatics-isi-edu/deriva-ml-mcp repo root."""
+    decl = next(s for s in rag_ctx._rag_sources if s.name == "deriva-ml-mcp-docs")
+    assert decl.repo_owner == "informatics-isi-edu"
+    assert decl.repo_name == "deriva-ml-mcp"
+    assert decl.branch == "main"
+    assert decl.path_prefix == ""
+    assert decl.doc_type == "ml-mcp-docs"
 
 
 def test_register_rag_sources_registers_four_catalog_hooks(rag_ctx) -> None:

@@ -266,17 +266,25 @@ def test_all_registered_resources_exact(ctx, capturing_mcp):
     )
 
 
-def test_register_wires_rag_github_source(ctx):
-    """``register(ctx)`` must declare exactly one GitHub doc source ('deriva-ml-docs').
+def test_register_wires_rag_github_sources(ctx):
+    """``register(ctx)`` must declare two GitHub doc sources.
 
     Pins the wiring of ``resources.rag.register_rag_sources`` into the
-    plugin entry point so a future regression that drops that call (or
-    accidentally drops the GitHub source declaration) is caught here as
-    well as in ``tests/test_rag.py``.
+    plugin entry point so a future regression that drops one of the
+    sources is caught here as well as in ``tests/test_rag.py``.
+
+    The two sources:
+      - 'deriva-ml-docs' -- the deriva-ml repo's user-guide / api-
+        reference / etc. (v3.x: prefix widened from "docs/" to ""
+        to also pick up the top-level README.md and CHANGELOG.md).
+      - 'deriva-ml-mcp-docs' -- the deriva-ml-mcp repo's own README
+        (v3.x: new source so MCP-server documentation is searchable
+        via rag_search alongside the library docs).
     """
     register(ctx)
-    assert len(ctx._rag_sources) == 1
-    assert ctx._rag_sources[0].name == "deriva-ml-docs"
+    assert len(ctx._rag_sources) == 2
+    names = {decl.name for decl in ctx._rag_sources}
+    assert names == {"deriva-ml-docs", "deriva-ml-mcp-docs"}
 
 
 def test_register_wires_four_catalog_connect_hooks(ctx):
