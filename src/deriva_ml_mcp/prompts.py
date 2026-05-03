@@ -193,13 +193,34 @@ The provenance principle is what makes ML runs reproducible across
 users, sessions, and time. Bypassing it (e.g. via raw entity CRUD on
 the underlying Deriva tables) breaks reproducibility silently.
 
-DERIVA-ML ABSTRACTIONS TAKE PRECEDENCE
---------------------------------------
-A loaded deriva-ml-mcp plugin sits on top of ``deriva-mcp-core``, which
-exposes generic catalog primitives (``insert_records``, ``update_record``,
-``get_record``, schema CRUD, etc). For the FIVE ABSTRACTIONS above, you
-must use the ``deriva_ml_*`` tools, NEVER the raw core tools. The
-``deriva_ml_*`` tools enforce:
+THE RULE: INHERITANCE WITH OVERRIDE
+-----------------------------------
+The deriva-ml-mcp plugin EXTENDS ``deriva-mcp-core``. Everything that
+applies in a Deriva catalog applies in a deriva-ml catalog by default.
+OVERRIDE: if a deriva-ml surface exists for an operation, prefer it
+over the equivalent deriva surface. This applies symmetrically on all
+three planes:
+
+  - MCP: prefer ``deriva_ml_*`` MCP tools, prompts, and resources over
+    the equivalent ``deriva-mcp-core`` tool / prompt / resource.
+  - Python API: prefer ``deriva-ml`` objects and methods (``DerivaML``,
+    ``Dataset``, ``Workflow``, ``Execution``, ``Feature``, the
+    ``with ml.create_execution(config) as exe:`` context manager,
+    ``exe.asset_file_path()``, etc.) over the equivalent ``deriva-py``
+    calls (``ErmrestCatalog``, ``PathBuilder``, raw entity resource
+    access).
+  - Skills (Claude Code clients only): prefer ``/deriva-ml:<skill>``
+    over ``/deriva:<skill>`` when both exist.
+
+The override boundary is mechanical: "is there a deriva-ml <thing>
+for this?" If yes, use it. If no, the deriva default applies and you
+should reach for the corresponding ``deriva-mcp-core`` tool,
+``deriva-py`` call, or (in Claude Code) ``/deriva:<skill>``.
+
+The five abstractions above are where the override mostly lands.
+Going around them -- using ``insert_records`` / ``update_record`` /
+``delete_record`` to mutate Datasets, Workflows, Executions, Features,
+or Asset rows -- bypasses real machinery:
 
   - Business logic (e.g. ``deriva_ml_add_dataset_members`` validates RIDs
     against the dataset's element-type spec; raw inserts will let you
@@ -219,9 +240,18 @@ must use the ``deriva_ml_*`` tools, NEVER the raw core tools. The
     with the operation name; raw inserts use the generic core audit
     which lacks DerivaML-specific context).
 
-For catalog objects that are NOT one of the five abstractions (custom
-domain tables like ``Subject`` / ``Image``, generic vocabularies, schema
-introspection, display annotations), use the core tools.
+WHAT DERIVA-ML ADDS ON TOP
+--------------------------
+Deriva's design is about DATA DESIGN -- how to model your data so it's
+findable, accessible, interoperable, and reusable. DerivaML adds
+PROCESS DESIGN -- how to run an ML pipeline against that data so the
+run itself is reproducible. The two are orthogonal: a Deriva catalog
+with no DerivaML use can be FAIR-by-construction; a DerivaML catalog
+adds reproducibility-by-construction on top. The mechanism is three
+abstractions doing complementary jobs: Datasets PIN which rows the
+run consumed; Workflows PIN which code (URL + git commit) ran them;
+Executions LINK the two so any output Feature or Asset traces back
+to (specific code) x (specific inputs).
 
 VOCABULARIES AND THE EXTENSION PATTERN
 --------------------------------------
@@ -245,9 +275,9 @@ generic ``add_term`` tool with ``schema="deriva-ml"``:
              table="Dataset_Type", name="My_New_Type",
              description="...")
 
-(Legacy dedicated wrappers like ``add_dataset_type`` were retired; the
-generic ``add_term`` from ``deriva-mcp-core`` handles all four
-DerivaML vocabularies.)
+The generic ``add_term`` from ``deriva-mcp-core`` handles all four
+DerivaML vocabularies; pass ``schema="deriva-ml"`` and the
+appropriate ``table=``.
 
 Before adding a new term to any of these four ML vocabularies, check
 whether it duplicates an existing term on the same conceptual dimension
