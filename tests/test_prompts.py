@@ -5,10 +5,21 @@ exercise registration shape (count, names) and content invariants
 (non-empty, ASCII-only). Per-tool behavior tests live with their
 respective modules.
 
-History: shipped four prompts at v1.0; v3.x removed
-``deriva_ml_workflow_dedup`` (per-tool LLM-trap warning, content
-moved to the ``deriva_ml_create_workflow`` tool docstring -- the
-warning belongs on the trap).
+History: shipped four prompts at v1.0. v3.x removed two:
+
+  - ``deriva_ml_workflow_dedup`` -- per-tool LLM-trap warning;
+    content moved to the ``deriva_ml_create_workflow`` and
+    ``deriva_ml_find_workflow_by_url`` tool docstrings.
+  - ``deriva_ml_execution_lifecycle`` -- per-tool warnings moved to
+    the four lifecycle tool docstrings (``deriva_ml_start_execution``,
+    ``deriva_ml_commit_execution``, ``deriva_ml_abort_execution``,
+    ``deriva_ml_add_feature_values``); cross-cutting state-machine
+    depth covered by RAG-indexed ``user-guide/executions.md``.
+
+The remaining two (``deriva_ml_concepts``, ``deriva_ml_getting_started``)
+serve cold-start orientation for non-Claude-Code clients. Long-term
+plan: migrate to the FastMCP ``instructions=`` field once a
+deriva-mcp-core API for plugin-contributed instructions exists.
 """
 
 from __future__ import annotations
@@ -19,7 +30,6 @@ _EXPECTED_PROMPT_NAMES = frozenset(
     {
         "deriva_ml_concepts",
         "deriva_ml_getting_started",
-        "deriva_ml_execution_lifecycle",
     }
 )
 
@@ -29,14 +39,14 @@ def test_register_runs_without_error(ctx):
     prompts.register(ctx)
 
 
-def test_three_prompts_registered(ctx, capturing_mcp):
-    """Exactly three prompts land in the capturing MCP after register."""
+def test_two_prompts_registered(ctx, capturing_mcp):
+    """Exactly two prompts land in the capturing MCP after register."""
     prompts.register(ctx)
-    assert len(capturing_mcp.prompts) == 3
+    assert len(capturing_mcp.prompts) == 2
 
 
 def test_prompt_names_exact(ctx, capturing_mcp):
-    """The three prompts must be registered under the documented names.
+    """The two prompts must be registered under the documented names.
 
     Exact-equality (rather than ``issubset``) catches both directions:
     a missing prompt and an unexpected one. The plugin-level test in

@@ -643,13 +643,25 @@ def register(ctx: PluginContext) -> None:
         - ``Created`` -> open ``with execution.execute():`` to advance
           ``Created -> Running`` (and ``Running -> Stopped`` on exit).
           Suits one-shot scripts that just want to flush some values.
+          The auto-execute closes the loop on exit; you do NOT need a
+          separate ``deriva_ml_commit_execution`` call.
         - ``Running`` -> the LLM has explicitly called ``deriva_ml_start_execution``
           and is mid-pipeline. Skip the context manager (a second
           ``Created -> Running`` transition would crash) and call
-          ``add_features`` directly. The eventual ``deriva_ml_commit_execution``
-          will close the lifecycle.
+          ``add_features`` directly. **You MUST follow with
+          ``deriva_ml_commit_execution`` to make the values visible.**
+          Values written during a Running execution are STAGED -- they
+          only become queryable once commit drains them.
         - Other states (``Stopped`` / terminal) -> arg-validation error.
           ``add_features`` on a stopped execution has no defined behaviour.
+
+        Pick one path and stick with it: either let
+        ``deriva_ml_add_feature_values`` drive the whole lifecycle (Created
+        path; auto-commits) OR drive it yourself
+        (``deriva_ml_start_execution`` -> N x ``deriva_ml_add_feature_values``
+        -> ``deriva_ml_commit_execution``). Mixing the two patterns within
+        a single execution is a common source of "I added the feature
+        value but the catalog doesn't show it" failures.
 
         Args:
             table: Target table the feature is defined on.

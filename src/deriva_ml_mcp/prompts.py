@@ -22,12 +22,19 @@ Prompts registered here:
     deriva_ml_getting_started     -- operational orientation; (hostname,
                                      catalog_id) rule, pagination, error
                                      envelope, tool domains, discovery
-    deriva_ml_execution_lifecycle -- state machine + commit semantics
 
-(The earlier ``deriva_ml_workflow_dedup`` prompt was removed; its
-content moved onto the ``deriva_ml_create_workflow`` and
-``deriva_ml_find_workflow_by_url`` tool docstrings -- the LLM-trap
-warning belongs on the trap, not in a separate document.)
+(Two earlier prompts were removed in v3.x and their content moved to
+the proper homes:
+
+  - ``deriva_ml_workflow_dedup`` -> the ``deriva_ml_create_workflow``
+    and ``deriva_ml_find_workflow_by_url`` tool docstrings. The LLM-trap
+    warning belongs on the trap.
+  - ``deriva_ml_execution_lifecycle`` -> the four lifecycle tool
+    docstrings (``deriva_ml_start_execution``,
+    ``deriva_ml_commit_execution``, ``deriva_ml_abort_execution``,
+    ``deriva_ml_add_feature_values``) for the per-tool warnings, and
+    the ``user-guide/executions.md`` doc in the deriva-ml repo
+    (already RAG-indexed) for the cross-cutting state-machine depth.)
 
 All prompts are static strings (no f-strings, no tool calls, no catalog
 access required to render). Plain ASCII only (workspace convention).
@@ -141,8 +148,11 @@ DERIVA-ML DOMAIN OBJECTS, NOT AS RAW TABLES.
              through. Use ``deriva_ml_create_execution``,
              ``deriva_ml_start_execution``, ``deriva_ml_commit_execution``,
              ``deriva_ml_abort_execution``, ``deriva_ml_update_execution``.
-             See the ``deriva_ml_execution_lifecycle`` prompt for the
-             full state machine.
+             Each lifecycle tool's docstring documents the per-tool
+             state-machine constraints; the cross-cutting state-machine
+             depth lives in the ``user-guide/executions.md`` doc on the
+             deriva-ml repo (RAG-indexed; ``rag_search`` for "execution
+             state machine" surfaces it).
 
   Feature    A typed value attached to a row of some target table (e.g.
              a per-image classification label produced by a run, or a
@@ -362,14 +372,21 @@ Now that you have the conceptual frame, read these in this order:
      stateless model, pagination, error envelope, the five tool
      domains, discovery via resources / RAG, the mutation chain.
 
-  2. ``deriva_ml_execution_lifecycle``  -- before doing any execution
-     work. The state machine is non-obvious and the wrong call order
-     can leave executions stuck.
+  2. The lifecycle tool docstrings (``deriva_ml_start_execution``,
+     ``deriva_ml_commit_execution``, ``deriva_ml_abort_execution``,
+     ``deriva_ml_add_feature_values``)  -- before doing any execution
+     work. Each tool's docstring carries the per-tool state-machine
+     constraints (acceptance sets, terminal states, the staged-vs-
+     flushed semantics that make a missing commit invisible).
 
-  (The earlier ``deriva_ml_workflow_dedup`` prompt was removed; the
-  idempotency contract for ``deriva_ml_create_workflow`` is now
-  documented on that tool's docstring directly. Read the tool's
-  docstring before calling it.)
+  (Two earlier prompts were removed in v3.x: ``deriva_ml_workflow_dedup``
+  whose content moved to the ``deriva_ml_create_workflow`` and
+  ``deriva_ml_find_workflow_by_url`` docstrings, and
+  ``deriva_ml_execution_lifecycle`` whose content moved to the four
+  lifecycle tools' docstrings plus the RAG-indexed
+  ``user-guide/executions.md`` doc on the deriva-ml repo. Per-tool
+  warnings belong on the trap; cross-cutting depth belongs in
+  searchable docs.)
 """
 
 
@@ -613,8 +630,12 @@ ALWAYS create artefacts inside an execution context. Bare insertions
 (via core's ``insert_records`` etc.) bypass provenance tracking and
 should only be used when no domain-specific tool exists.
 
-For the lifecycle state machine details, see the
-``deriva_ml_execution_lifecycle`` prompt.
+For the lifecycle state machine details, see each lifecycle tool's
+docstring (``deriva_ml_start_execution``, ``deriva_ml_commit_execution``,
+``deriva_ml_abort_execution``, ``deriva_ml_add_feature_values``) and
+``rag_search`` for "execution state machine" -- the
+``user-guide/executions.md`` doc in the deriva-ml repo carries the
+cross-cutting state-machine reference at depth.
 
 ASSETS: METADATA HERE, FILE I/O IN THE SKILL
 --------------------------------------------
@@ -696,121 +717,14 @@ execution, asset) + 11 read-only resources under the
 ``deriva://catalog/{h}/{c}/ml/...`` URI prefix + 1 GitHub doc source
 indexed for RAG (``deriva-ml-docs``) + 3 per-user RAG indexes that
 ingest Dataset / Workflow / Execution rows on first connect to a
-catalog. Plus 4 built-in core prompts and 2 ML prompts (this one,
-``deriva_ml_execution_lifecycle``).
+catalog. Plus 4 built-in core prompts and 1 ML prompt (this one --
+v3.x removed ``deriva_ml_execution_lifecycle`` and
+``deriva_ml_workflow_dedup`` and redistributed their content to the
+relevant tool docstrings; ``deriva_ml_concepts`` is the second
+remaining ML prompt).
 """
 
 
-_EXECUTION_LIFECYCLE_GUIDE = """\
-DERIVA-ML EXECUTION LIFECYCLE -- read this before using deriva_ml_create_execution, \
-deriva_ml_start_execution, deriva_ml_commit_execution, deriva_ml_abort_execution, or deriva_ml_add_feature_values.
-
-An ``Execution`` row tracks one run of a registered workflow against a
-set of dataset and asset inputs. It carries a status field that the
-plugin's lifecycle tools advance through a small state machine.
-
-THE STATE MACHINE
------------------
-
-    Created  --deriva_ml_start_execution-->  Running  --deriva_ml_commit_execution-->  Pending_Upload  -->  Uploaded
-        \\                            \\
-         \\--deriva_ml_abort_execution-->        \\--deriva_ml_abort_execution-->  (Aborted)
-          (Aborted)                                          OR  (Failed)
-
-Concrete state values (from ``deriva_ml.execution.execution.ExecutionStatus``):
-
-    Created          -- newly registered, no work has started
-    Running          -- deriva_ml_start_execution has been called
-    Stopped          -- the execute() context manager exited cleanly
-    Pending_Upload   -- commit drained from Running/Stopped, awaiting upload finish
-    Uploaded         -- terminal: outputs persisted, provenance frozen
-    Failed           -- terminal: execution raised before commit
-    Aborted          -- terminal: deriva_ml_abort_execution called explicitly
-
-Two state sets are load-bearing for the lifecycle tools:
-
-    _START_REJECT_STATES = {Stopped, Failed, Pending_Upload, Uploaded, Aborted}
-        -- deriva_ml_start_execution refuses to advance from any of these. Stopped
-           and Pending_Upload are past the algorithmic phase; Failed /
-           Uploaded / Aborted are terminal.
-
-    _COMMIT_ALLOWED_STATES = {Created, Running, Stopped, Pending_Upload, Uploaded}
-        -- deriva_ml_commit_execution accepts these. (Pending_Upload is included
-           because commit's whole purpose is to drain it. Uploaded is
-           the additive-upload entry point: calling deriva_ml_commit_execution on
-           an Uploaded execution that has new pending entries cycles
-           Uploaded -> Pending_Upload -> Uploaded; with no pending
-           entries it is a clean no-op.)
-
-THE FIVE LIFECYCLE TOOLS
-------------------------
-
-1. ``deriva_ml_create_execution(workflow_rid=..., dataset_rids=[...], asset_rids=[...])``
-   Returns a row in ``Created`` state. Inputs and the parent workflow
-   are bound in this call; you cannot change them after.
-
-2. ``deriva_ml_start_execution(execution_rid=...)``
-   Required before any feature or output write that goes through the
-   ``Running`` path. Advances Created -> Running.
-
-3. ``deriva_ml_commit_execution(execution_rid=...)``
-   Drains staged outputs via the upstream ``upload_execution_outputs``
-   step and transitions to ``Uploaded``. REQUIRED to make staged feature
-   values, datasets, and assets actually persist in queries -- a
-   forgotten commit leaves outputs invisible to downstream consumers.
-
-4. ``deriva_ml_abort_execution(execution_rid=..., reason=...)``
-   Escape hatch. Terminates a non-terminal execution with optional
-   ``reason`` text. Use when a run cannot continue and you want the
-   provenance row to record that fact.
-
-5. ``deriva_ml_add_feature_values(execution_rid=..., ...)``
-   Hybrid dispatch (Q1) -- the wrapping depends on the current state:
-
-   - ``Created``  -> the call auto-wraps in ``with execution.execute():``
-     so Created -> Running on enter and Running -> Stopped on exit.
-     Suits one-shot scripts that just want to flush some values.
-   - ``Running``  -> the LLM has explicitly called ``deriva_ml_start_execution``
-     and is mid-pipeline; the call goes through directly. The eventual
-     ``deriva_ml_commit_execution`` closes the lifecycle.
-   - Other states -> arg-validation error. ``add_features`` on a
-     Stopped or terminal execution has no defined behaviour.
-
-   In other words: you can either let ``deriva_ml_add_feature_values`` drive the
-   whole lifecycle (Created -> auto-execute -> Stopped) or drive it
-   yourself (deriva_ml_start_execution -> deriva_ml_add_feature_values N times ->
-   deriva_ml_commit_execution). Pick one and stick with it.
-
-TWO PITFALLS TO AVOID
----------------------
-
-1. Do NOT call ``update_record`` to flip ``Status`` manually. The state
-   machine is enforced by the lifecycle tools (and by upstream
-   ``deriva_ml.Execution`` itself). A direct ``Status`` update bypasses
-   the upload-outputs side effect of ``deriva_ml_commit_execution`` and can leave
-   the execution in an inconsistent state. Always use
-   ``deriva_ml_start_execution`` / ``deriva_ml_commit_execution`` / ``deriva_ml_abort_execution``.
-
-2. Do NOT forget ``deriva_ml_commit_execution`` after ``deriva_ml_add_feature_values``
-   (when you drove the lifecycle yourself with ``deriva_ml_start_execution``).
-   Feature values written during ``Running`` are staged -- they only
-   become visible to downstream queries once commit drains them and
-   transitions the execution to ``Uploaded``. If you let
-   ``deriva_ml_add_feature_values`` auto-wrap (Created path), you do NOT need a
-   separate commit -- the auto-execute closes the loop on exit.
-
-INSPECTING STATE
-----------------
-For a one-shot snapshot of any execution -- status, inputs, outputs,
-metadata -- read the resource:
-
-    deriva://catalog/{h}/{c}/ml/execution/{execution_rid}
-
-For filtered scans (e.g. "all Failed executions for workflow 1-WF"),
-use the tool with cursor pagination:
-
-    deriva_ml_list_executions(workflow_rid="<workflow_rid>", status="Failed")
-"""
 
 
 # -- Registration ------------------------------------------------------------
@@ -857,13 +771,4 @@ def register(ctx: PluginContext) -> None:
     def deriva_ml_getting_started() -> str:
         return _GETTING_STARTED_GUIDE
 
-    @ctx.prompt(
-        "deriva_ml_execution_lifecycle",
-        description=(
-            "Execution state machine (Created/Running/Stopped/Pending_Upload/Uploaded), "
-            "the five lifecycle tools, deriva_ml_add_feature_values hybrid dispatch, and commit pitfalls"
-        ),
-    )
-    def deriva_ml_execution_lifecycle() -> str:
-        return _EXECUTION_LIFECYCLE_GUIDE
 

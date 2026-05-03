@@ -156,7 +156,6 @@ _ML_PROMPT_NAMES = frozenset(
     {
         "deriva_ml_concepts",
         "deriva_ml_getting_started",
-        "deriva_ml_execution_lifecycle",
     }
 )
 

@@ -289,11 +289,34 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """Begin a long-running pipeline session against an existing execution.
 
+        Advances the execution from ``Created`` to ``Running``. Required
+        before any feature or output write that goes through the
+        ``Running`` path.
+
+        **State machine context.** Executions move through:
+
+            Created --start_execution--> Running --commit_execution--> Pending_Upload --> Uploaded
+                \\                              \\
+                 \\--abort_execution-->          \\--abort_execution--> (Aborted)
+                  (Aborted)                                          OR (Failed)
+
+        ``deriva_ml_start_execution`` is the gate INTO the Running phase.
+        It accepts only ``Created`` (will advance) or ``Running`` (no-op).
+
         Idempotent if already ``Running`` (no-op, no audit). Rejects with
-        ``{"error": ...}`` if the execution is in a terminal state
-        (``Stopped``, ``Failed``, ``Pending_Upload``, ``Uploaded``,
-        ``Aborted``) — those would crash ``execution_start`` in the
+        ``{"error": ...}`` if the execution is in any of the
+        ``_START_REJECT_STATES`` -- ``Stopped``, ``Pending_Upload``,
+        ``Uploaded``, ``Failed``, ``Aborted``. Stopped and Pending_Upload
+        are past the algorithmic phase; Failed / Uploaded / Aborted are
+        terminal. Each would crash ``execution_start`` in the upstream
         state machine.
+
+        **Do NOT call ``update_record`` to flip the status manually.** The
+        state machine is enforced by the lifecycle tools (and by upstream
+        ``deriva_ml.Execution`` itself). A direct ``Status`` update bypasses
+        the side effects ``deriva_ml_commit_execution`` runs (notably
+        upload-outputs) and can leave the execution in an inconsistent
+        state.
 
         Args:
             execution_rid: The RID of the execution to start.
@@ -379,10 +402,32 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """Finalize a run: flush staged feature values and upload assets.
 
+        **REQUIRED to make staged outputs visible.** Feature values, output
+        datasets, and assets written during a Running execution are STAGED
+        -- they only become visible to downstream queries once
+        ``deriva_ml_commit_execution`` drains them and transitions the
+        execution to ``Uploaded``. **A forgotten commit leaves outputs
+        invisible.** The single most common "I added the feature value
+        but the catalog doesn't show it" failure mode is a missing commit.
+
         Advances ``Created`` / ``Running`` -> ``Stopped`` ->
         ``Pending_Upload`` -> ``Uploaded``. ``execution_stop`` is only
         called if the execution hasn't already advanced past Running
         (idempotent at the per-step level).
+
+        **Accepts states in ``_COMMIT_ALLOWED_STATES``**: ``Created``,
+        ``Running``, ``Stopped``, ``Pending_Upload``, ``Uploaded``.
+        Pending_Upload is included because commit's whole purpose is to
+        drain it. Uploaded is the additive-upload entry point: calling
+        ``deriva_ml_commit_execution`` on an Uploaded execution that has
+        new pending entries cycles Uploaded -> Pending_Upload -> Uploaded;
+        with no pending entries it is a clean no-op. Rejects only the
+        terminal failure states (Failed, Aborted) which can't be
+        meaningfully drained.
+
+        **Do NOT call ``update_record`` to flip the status manually** --
+        that bypasses the upload-outputs side effect this tool runs and
+        leaves the execution in an inconsistent state.
 
         Args:
             execution_rid: The RID of the execution to commit.
@@ -588,6 +633,18 @@ def register(ctx: PluginContext) -> None:
         reason: str | None = None,
     ) -> str:
         """Cancel a run from any non-terminal state.
+
+        **Escape hatch.** Use when a run cannot continue and you want the
+        provenance row to record that fact -- the failure is deliberate
+        rather than a crash. Terminates a non-terminal execution with
+        optional ``reason`` text.
+
+        Distinguish from natural completion:
+        - Use ``deriva_ml_commit_execution`` when the run completed and
+          you want to flush staged outputs and finalize provenance.
+        - Use ``deriva_ml_abort_execution`` when the run cannot continue
+          and you want to record the cancellation. **Aborting destroys
+          the staged outputs.** Use commit if there's salvageable work.
 
         Idempotent if already ``Aborted`` (no-op, no audit). The optional
         ``reason`` is recorded in the audit row only — the catalog
