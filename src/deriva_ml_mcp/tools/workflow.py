@@ -279,6 +279,14 @@ def register(ctx: PluginContext) -> None:
         should be a GitHub URL pointing to a specific commit, or the Git
         object hash (checksum) of the workflow file.
 
+        **Use this tool only for read-only intent.** If your goal is to
+        ensure a workflow exists -- creating it if missing -- call
+        ``deriva_ml_create_workflow`` directly. That tool is idempotent on
+        ``(url, checksum)``: the second call returns the existing RID
+        with ``status="exists"`` rather than creating a duplicate.
+        Preflight-then-create with this tool wastes a round-trip on the
+        dedup ``create_workflow`` already performs internally.
+
         Args:
             url_or_checksum: GitHub URL with commit hash, or Git object
                 hash (checksum) of the workflow file.
@@ -336,6 +344,42 @@ def register(ctx: PluginContext) -> None:
         URL is required. Workflows are deduplicated: if a workflow with the
         same URL or checksum already exists, returns its RID with
         ``status="exists"`` instead of creating a duplicate.
+
+        **This tool is idempotent. Do not preflight with
+        ``deriva_ml_find_workflow_by_url``.**
+
+        Calling ``deriva_ml_create_workflow(url=X, checksum=Y, ...)`` twice
+        with the same ``(X, Y)`` returns the SAME RID both times. The first
+        call carries ``status="created"``; the second carries
+        ``status="exists"``. Both responses point to the same
+        ``workflow_rid`` -- the LLM can unconditionally use the returned
+        RID without branching on ``status``.
+
+        The wrong pattern (do not do this; it wastes a round-trip on the
+        dedup the server already performs)::
+
+            # ANTI-PATTERN -- do not do this
+            existing = deriva_ml_find_workflow_by_url(url=X)
+            if existing is None:
+                deriva_ml_create_workflow(url=X, checksum=Y, ...)
+            else:
+                workflow_rid = existing["workflow_rid"]
+
+        The right pattern::
+
+            # CORRECT -- one round trip, idempotent
+            result = deriva_ml_create_workflow(url=X, checksum=Y,
+                                               name="MyPipeline",
+                                               workflow_type="Model_Training")
+            workflow_rid = result["workflow_rid"]  # works whether new or existing
+
+        ``deriva_ml_find_workflow_by_url`` is the right tool only when you
+        do NOT intend to create the workflow if it is missing -- e.g. you
+        are answering "is this workflow already registered?" or you are
+        linking against an existing workflow whose presence you want to
+        verify before doing other work. If your intent is "make sure this
+        workflow exists, creating it if not", go straight to
+        ``deriva_ml_create_workflow``.
 
         Boundary rule: the caller (deriva-skills / notebook / hydra-zen
         runner) computes the Git URL, checksum, and version locally and

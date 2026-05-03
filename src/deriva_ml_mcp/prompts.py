@@ -23,7 +23,11 @@ Prompts registered here:
                                      catalog_id) rule, pagination, error
                                      envelope, tool domains, discovery
     deriva_ml_execution_lifecycle -- state machine + commit semantics
-    deriva_ml_workflow_dedup      -- deriva_ml_create_workflow is idempotent
+
+(The earlier ``deriva_ml_workflow_dedup`` prompt was removed; its
+content moved onto the ``deriva_ml_create_workflow`` and
+``deriva_ml_find_workflow_by_url`` tool docstrings -- the LLM-trap
+warning belongs on the trap, not in a separate document.)
 
 All prompts are static strings (no f-strings, no tool calls, no catalog
 access required to render). Plain ASCII only (workspace convention).
@@ -126,8 +130,9 @@ DERIVA-ML DOMAIN OBJECTS, NOT AS RAW TABLES.
              addressed: same URL + same commit = same Workflow row.
              Workflows are typed (``Workflow_Type`` vocabulary). Use
              ``deriva_ml_create_workflow``,
-             ``deriva_ml_find_workflow_by_url``. See the
-             ``deriva_ml_workflow_dedup`` prompt for idempotency.
+             ``deriva_ml_find_workflow_by_url``. See those tools'
+             docstrings for the idempotency contract (create_workflow
+             dedups internally on URL+checksum; do not preflight).
 
   Execution  One run of a Workflow against specific input Datasets,
              producing output Datasets / Features / Assets. Executions
@@ -233,6 +238,15 @@ generic ``add_term`` tool with ``schema="deriva-ml"``:
 (Legacy dedicated wrappers like ``add_dataset_type`` were retired; the
 generic ``add_term`` from ``deriva-mcp-core`` handles all four
 DerivaML vocabularies.)
+
+Before adding a new term to any of these four ML vocabularies, check
+whether it duplicates an existing term on the same conceptual dimension
+(e.g. ``Training`` vs a proposed ``trainings``, or ``Labeled`` vs a
+proposed ``Annotated``). Apply the substitution test: "would you swap
+one for the other in any context where the existing term applies?" If
+yes, the two terms collide on a single dimension and the right action
+is to add the new name as a synonym of the existing term rather than
+create a parallel term that splits future queries.
 
 For YOUR OWN domain vocabularies (``Sample_Type``, ``Tissue_Type``,
 ``Image_Quality``, etc.), use the same generic ``add_term`` with your
@@ -352,8 +366,10 @@ Now that you have the conceptual frame, read these in this order:
      work. The state machine is non-obvious and the wrong call order
      can leave executions stuck.
 
-  3. ``deriva_ml_workflow_dedup``  -- before calling
-     ``deriva_ml_create_workflow``. It is idempotent; do not preflight.
+  (The earlier ``deriva_ml_workflow_dedup`` prompt was removed; the
+  idempotency contract for ``deriva_ml_create_workflow`` is now
+  documented on that tool's docstring directly. Read the tool's
+  docstring before calling it.)
 """
 
 
@@ -583,8 +599,9 @@ MUTATION: WORKFLOW -> EXECUTION -> OUTPUTS
 ------------------------------------------
 The canonical mutation chain is:
 
-    1. ``deriva_ml_create_workflow(...)`` (or reuse an existing one -- it dedups;
-       see the ``deriva_ml_workflow_dedup`` prompt).
+    1. ``deriva_ml_create_workflow(...)`` (or reuse an existing one -- it dedups
+       internally on URL+checksum; see that tool's docstring for the
+       idempotency contract).
     2. ``deriva_ml_create_execution(workflow_rid=...)`` to register a new run.
     3. ``deriva_ml_start_execution(...)`` to advance Created -> Running.
     4. Write outputs (``deriva_ml_add_feature_values``, ``deriva_ml_create_execution_dataset``,
@@ -679,8 +696,8 @@ execution, asset) + 11 read-only resources under the
 ``deriva://catalog/{h}/{c}/ml/...`` URI prefix + 1 GitHub doc source
 indexed for RAG (``deriva-ml-docs``) + 3 per-user RAG indexes that
 ingest Dataset / Workflow / Execution rows on first connect to a
-catalog. Plus 4 built-in core prompts and 3 ML prompts (this one,
-``deriva_ml_execution_lifecycle``, ``deriva_ml_workflow_dedup``).
+catalog. Plus 4 built-in core prompts and 2 ML prompts (this one,
+``deriva_ml_execution_lifecycle``).
 """
 
 
@@ -796,98 +813,6 @@ use the tool with cursor pagination:
 """
 
 
-_WORKFLOW_DEDUP_GUIDE = """\
-DERIVA-ML WORKFLOW DEDUP -- read this before using deriva_ml_create_workflow or \
-deriva_ml_find_workflow_by_url.
-
-Workflows are deduplicated by ``(URL, checksum)`` at insert time. This
-matters because ``deriva_ml_create_workflow`` is the right tool to call BOTH when
-the workflow is new and when it already exists -- you do not need to
-preflight.
-
-CREATE_WORKFLOW IS IDEMPOTENT
------------------------------
-Calling ``deriva_ml_create_workflow(url=X, checksum=Y, ...)`` twice with the same
-``(X, Y)`` returns the SAME RID both times. The second call carries
-``status="exists"`` in the response; the first carries
-``status="created"``.
-
-Example response shapes:
-
-    First call:
-      {"status": "created", "workflow_rid": "<workflow_rid>",
-       "name": "MyPipeline", "url": "https://...", "checksum": "abc123",
-       "version": "1.0.0", ...}
-
-    Second call (same url + checksum):
-      {"status": "exists",  "workflow_rid": "<workflow_rid>",
-       "name": "MyPipeline", "url": "https://...", "checksum": "abc123",
-       "version": "1.0.0", ...}
-
-Both responses point to the same ``workflow_rid`` -- the LLM can
-unconditionally use the returned RID without branching on ``status``.
-
-DO NOT PREFLIGHT WITH FIND_WORKFLOW_BY_URL
-------------------------------------------
-The wrong pattern:
-
-    # ANTI-PATTERN -- do not do this
-    existing = deriva_ml_find_workflow_by_url(url=X)
-    if existing is None:
-        deriva_ml_create_workflow(url=X, checksum=Y, ...)
-    else:
-        workflow_rid = existing["workflow_rid"]
-
-This wastes a round-trip. The dedup is in ``deriva_ml_create_workflow`` itself;
-the preflight just duplicates work the server already does.
-
-The right pattern:
-
-    # CORRECT
-    result = deriva_ml_create_workflow(url=X, checksum=Y, name="MyPipeline",
-                             workflow_type="Model_Training")
-    workflow_rid = result["workflow_rid"]  # works whether new or existing
-
-WHEN FIND_WORKFLOW_BY_URL IS THE RIGHT TOOL
--------------------------------------------
-``deriva_ml_find_workflow_by_url(url=X)`` is the right tool when you have a URL
-but you DO NOT intend to create the workflow if it is missing -- e.g.
-you are answering "is this workflow already registered?" or you are
-linking against an existing workflow whose presence you want to verify
-before doing other work.
-
-If your intent is "make sure this workflow exists, creating it if not",
-go straight to ``deriva_ml_create_workflow``.
-
-WHAT THE URL AND CHECKSUM SHOULD POINT AT
------------------------------------------
-The workflow's job is to identify the runnable artefact -- the script
-or notebook that will actually execute. So:
-
-    url       -- Git URL pinned to a specific commit, pointing at the
-                 file that runs (e.g. ``train.py`` at SHA ``abc123def``).
-                 NOT the URL of the registration script that calls
-                 ``deriva_ml_create_workflow``.
-
-    checksum  -- Git object hash of that runnable file. Optional but
-                 strongly recommended; serves as the secondary dedup key.
-
-The boundary rule (see ``tools/workflow.py``): the caller computes URL,
-checksum, and version locally and passes them in. The MCP server never
-runs git introspection itself.
-
-INSPECTING REGISTERED WORKFLOWS
--------------------------------
-For a snapshot of all workflows in the catalog:
-
-    deriva://catalog/{h}/{c}/ml/workflows
-
-For one workflow's full detail (name, type, url, checksum, version, etc.):
-
-    deriva://catalog/{h}/{c}/ml/workflow/{workflow_rid}
-"""
-
-
 # -- Registration ------------------------------------------------------------
 
 
@@ -942,12 +867,3 @@ def register(ctx: PluginContext) -> None:
     def deriva_ml_execution_lifecycle() -> str:
         return _EXECUTION_LIFECYCLE_GUIDE
 
-    @ctx.prompt(
-        "deriva_ml_workflow_dedup",
-        description=(
-            "deriva_ml_create_workflow is idempotent on (URL, checksum); skip the deriva_ml_find_workflow_by_url preflight "
-            "and use deriva_ml_find_workflow_by_url only when you do not intend to create"
-        ),
-    )
-    def deriva_ml_workflow_dedup() -> str:
-        return _WORKFLOW_DEDUP_GUIDE

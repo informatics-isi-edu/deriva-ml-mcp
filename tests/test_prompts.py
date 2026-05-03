@@ -1,9 +1,14 @@
-"""Unit tests for the four deriva-ml MCP prompts.
+"""Unit tests for the deriva-ml MCP prompts.
 
 Prompts are pure data -- no DERIVA I/O, no catalog access. The tests
 exercise registration shape (count, names) and content invariants
 (non-empty, ASCII-only). Per-tool behavior tests live with their
 respective modules.
+
+History: shipped four prompts at v1.0; v3.x removed
+``deriva_ml_workflow_dedup`` (per-tool LLM-trap warning, content
+moved to the ``deriva_ml_create_workflow`` tool docstring -- the
+warning belongs on the trap).
 """
 
 from __future__ import annotations
@@ -15,7 +20,6 @@ _EXPECTED_PROMPT_NAMES = frozenset(
         "deriva_ml_concepts",
         "deriva_ml_getting_started",
         "deriva_ml_execution_lifecycle",
-        "deriva_ml_workflow_dedup",
     }
 )
 
@@ -25,14 +29,14 @@ def test_register_runs_without_error(ctx):
     prompts.register(ctx)
 
 
-def test_four_prompts_registered(ctx, capturing_mcp):
-    """Exactly four prompts land in the capturing MCP after register."""
+def test_three_prompts_registered(ctx, capturing_mcp):
+    """Exactly three prompts land in the capturing MCP after register."""
     prompts.register(ctx)
-    assert len(capturing_mcp.prompts) == 4
+    assert len(capturing_mcp.prompts) == 3
 
 
 def test_prompt_names_exact(ctx, capturing_mcp):
-    """The four prompts must be registered under the documented names.
+    """The three prompts must be registered under the documented names.
 
     Exact-equality (rather than ``issubset``) catches both directions:
     a missing prompt and an unexpected one. The plugin-level test in
@@ -48,10 +52,10 @@ def test_prompt_names_exact(ctx, capturing_mcp):
 def test_each_prompt_returns_nonempty_string(ctx, capturing_mcp):
     """Every prompt callable must return a substantial guide string.
 
-    The 100-char floor is a sanity bound -- the shortest guide
-    (workflow_dedup) is well over 1500 chars. A regression that
-    accidentally empties a guide constant would drop the result to
-    near-zero length and fail this check.
+    The 100-char floor is a sanity bound -- the shortest remaining
+    guide is well over 1500 chars. A regression that accidentally
+    empties a guide constant would drop the result to near-zero
+    length and fail this check.
     """
     prompts.register(ctx)
     for name, fn in capturing_mcp.prompts.items():

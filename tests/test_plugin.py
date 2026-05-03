@@ -157,7 +157,6 @@ _ML_PROMPT_NAMES = frozenset(
         "deriva_ml_concepts",
         "deriva_ml_getting_started",
         "deriva_ml_execution_lifecycle",
-        "deriva_ml_workflow_dedup",
     }
 )
 
@@ -294,8 +293,8 @@ def test_register_wires_four_catalog_connect_hooks(ctx):
     assert len(ctx._catalog_connect_hooks) == 4
 
 
-def test_register_wires_four_prompts(ctx, capturing_mcp):
-    """``register(ctx)`` must wire all four ML prompts via ``prompts.register``.
+def test_register_wires_ml_prompts(ctx, capturing_mcp):
+    """``register(ctx)`` must wire all ML prompts via ``prompts.register``.
 
     Uses ``>=`` rather than ``==`` so a future fully-loaded core that
     happens to register prompts via the same ``ctx`` wouldn't break
