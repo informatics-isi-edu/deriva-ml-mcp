@@ -374,6 +374,32 @@ other side. The matching comment lives in
 `../deriva-ml-skills/CLAUDE.md` under the same section heading so the
 constraint is visible from either repo.
 
+### v3.x update: prompts went from 4 to 2
+
+The plugin originally shipped four prompts; v3.x removed two of them
+when the [Round 2 audit cleanup](https://github.com/informatics-isi-edu/deriva-ml-skills/blob/main/docs/superpowers/plans/2026-05-02-tier-2-audit-cleanup-plan-round-2-refinement.md)
+identified them as architecturally mis-shaped per FastMCP guidance
+(prompts should be user-controlled parameterized templates, not
+static reference documents):
+
+- `deriva_ml_workflow_dedup` → content moved to the
+  `deriva_ml_create_workflow` and `deriva_ml_find_workflow_by_url`
+  tool docstrings. Per-tool LLM-trap warnings belong on the trap.
+- `deriva_ml_execution_lifecycle` → per-tool warnings moved to the
+  four lifecycle tools' docstrings (`deriva_ml_start_execution`,
+  `deriva_ml_commit_execution`, `deriva_ml_abort_execution`,
+  `deriva_ml_add_feature_values`); cross-cutting state-machine
+  depth covered by the RAG-indexed `user-guide/executions.md` doc
+  in the deriva-ml repo.
+
+The remaining two prompts (`_CONCEPTS_GUIDE`, `_GETTING_STARTED_GUIDE`)
+serve cold-start orientation for non-Claude-Code clients and have no
+clean alternative without a deriva-mcp-core API addition for plugin-
+contributed server `instructions=` content. The architectural target
+is to migrate them to that field once the API exists; the ask has
+been raised with the deriva-mcp-core maintainer. Until then the two
+remaining prompts are the right home for cold-start orientation.
+
 ## Coverage Report
 
 `docs/coverage.md` records what happened to every old `deriva-mcp` tool. Update it
