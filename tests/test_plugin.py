@@ -29,6 +29,9 @@ _DATASET_TOOLS = frozenset(
         "deriva_ml_list_dataset_element_types",
         "deriva_ml_bag_info",
         "deriva_ml_get_dataset_spec",
+        # v3.3: cheap metadata-only pre-flight validators (see deriva-ml ADR-0002).
+        "deriva_ml_validate_dataset_specs",
+        "deriva_ml_validate_execution_configuration",
         # Mutation tools
         "deriva_ml_create_dataset",
         "deriva_ml_delete_dataset",
@@ -147,6 +150,8 @@ _ML_RESOURCE_URIS = frozenset(
         "deriva://catalog/{hostname}/{catalog_id}/ml/registries",
         # v3.3 lineage resource (mirrors deriva_ml_get_lineage tool).
         "deriva://catalog/{hostname}/{catalog_id}/ml/lineage/{rid}",
+        # v3.3 dataset-spec resource (mirrors deriva_ml_get_dataset_spec tool).
+        "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/spec",
     }
 )
 

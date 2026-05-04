@@ -575,3 +575,157 @@ async def test_get_dataset_spec_error(dataset_ctx, capturing_mcp, mock_ml):
         )
     )
     assert out == {"error": "missing"}
+
+
+# ---------------------------------------------------------------------------
+# v3.3 validate_dataset_specs / validate_execution_configuration wrappers
+#
+# Both methods are thin wrappers around deriva-ml >= 1.33.0 methods that
+# return Pydantic ValidationReport models. The wrapper's only job is to
+# call into deriva-ml and serialize the response; the heavy logic lives
+# in the library. Tests confirm the wiring is intact, the call propagates
+# arguments cleanly, and the error path doesn't emit an audit row (read
+# tools are silent on failure).
+# ---------------------------------------------------------------------------
+
+
+async def test_validate_dataset_specs_success(dataset_ctx, capturing_mcp, mock_ml):
+    """The tool serializes the Pydantic DatasetSpecValidationReport.
+    Underlying call is ``ml.validate_dataset_specs(specs)``."""
+    from deriva_ml.dataset.aux_classes import DatasetSpec
+    from deriva_ml.dataset.validation import (
+        DatasetSpecResult,
+        DatasetSpecValidationReport,
+    )
+
+    payload = DatasetSpecValidationReport(
+        all_valid=False,
+        results=[
+            DatasetSpecResult(
+                spec=DatasetSpec(rid="1-ABCD", version="1.0.0"),
+                valid=True,
+                dataset_name="Training set",
+                resolved_version="1.0.0",
+            ),
+            DatasetSpecResult(
+                spec=DatasetSpec(rid="2-XYZW", version="9.9.9"),
+                valid=False,
+                reasons=["version_not_found"],
+                available_versions=["1.0.0", "1.1.0"],
+            ),
+        ],
+    )
+    mock_ml.validate_dataset_specs.return_value = payload
+
+    specs = [
+        {"rid": "1-ABCD", "version": "1.0.0"},
+        {"rid": "2-XYZW", "version": "9.9.9"},
+    ]
+    result = await capturing_mcp.tools["deriva_ml_validate_dataset_specs"](
+        hostname="h", catalog_id="1", specs=specs
+    )
+    out = json.loads(result)
+    assert out["all_valid"] is False
+    assert len(out["results"]) == 2
+    assert out["results"][0]["valid"] is True
+    assert out["results"][1]["reasons"] == ["version_not_found"]
+    assert out["results"][1]["available_versions"] == ["1.0.0", "1.1.0"]
+    mock_ml.validate_dataset_specs.assert_called_once_with(specs)
+
+
+async def test_validate_dataset_specs_error_path(dataset_ctx, capturing_mcp, mock_ml):
+    """An error from the underlying method wraps as ``{"error": ...}``
+    without emitting an audit row."""
+    mock_ml.validate_dataset_specs.side_effect = RuntimeError(
+        "specs must be a list of DatasetSpec or shorthand dicts"
+    )
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_validate_dataset_specs"](
+            hostname="h", catalog_id="1", specs=["not-a-spec"]
+        )
+    )
+    assert "error" in out
+
+
+async def test_validate_execution_configuration_success(
+    dataset_ctx, capturing_mcp, mock_ml
+):
+    """The tool coerces the dict to ExecutionConfiguration and serializes
+    the validation report. We patch ExecutionConfiguration to bypass
+    its full validation here -- the wrapper's only job is wiring; full
+    ExecutionConfiguration validation is deriva-ml's responsibility,
+    exercised by deriva-ml's own unit tests."""
+    from deriva_ml.asset.aux_classes import AssetSpec
+    from deriva_ml.dataset.aux_classes import DatasetSpec
+    from deriva_ml.dataset.validation import (
+        AssetSpecResult,
+        DatasetSpecResult,
+        ExecutionConfigurationValidationReport,
+        WorkflowSpecResult,
+    )
+
+    payload = ExecutionConfigurationValidationReport(
+        all_valid=True,
+        dataset_results=[
+            DatasetSpecResult(
+                spec=DatasetSpec(rid="1-ABCD", version="1.0.0"),
+                valid=True,
+                dataset_name="Training",
+                resolved_version="1.0.0",
+            ),
+        ],
+        asset_results=[
+            AssetSpecResult(spec=AssetSpec(rid="3-WXYZ"), valid=True),
+        ],
+        workflow_result=WorkflowSpecResult(rid="1-WFLW", valid=True),
+        cross_spec_issues=[],
+    )
+    mock_ml.validate_execution_configuration.return_value = payload
+
+    fake_config = MagicMock(name="ExecutionConfiguration_instance")
+    with patch(
+        "deriva_ml.execution.execution_configuration.ExecutionConfiguration",
+        return_value=fake_config,
+    ):
+        result = await capturing_mcp.tools[
+            "deriva_ml_validate_execution_configuration"
+        ](
+            hostname="h",
+            catalog_id="1",
+            config={
+                "workflow": {"rid": "1-WFLW"},
+                "datasets": [{"rid": "1-ABCD", "version": "1.0.0"}],
+                "assets": [{"rid": "3-WXYZ"}],
+            },
+        )
+
+    out = json.loads(result)
+    assert out["all_valid"] is True
+    assert out["workflow_result"]["valid"] is True
+    assert out["cross_spec_issues"] == []
+    mock_ml.validate_execution_configuration.assert_called_once_with(fake_config)
+
+
+async def test_validate_execution_configuration_error_path(
+    dataset_ctx, capturing_mcp, mock_ml
+):
+    """Underlying ``ml.validate_execution_configuration`` raising propagates
+    as ``{"error": ...}``."""
+    fake_config = MagicMock(name="ExecutionConfiguration_instance")
+    mock_ml.validate_execution_configuration.side_effect = RuntimeError(
+        "config has unresolvable workflow"
+    )
+    with patch(
+        "deriva_ml.execution.execution_configuration.ExecutionConfiguration",
+        return_value=fake_config,
+    ):
+        out = json.loads(
+            await capturing_mcp.tools[
+                "deriva_ml_validate_execution_configuration"
+            ](
+                hostname="h",
+                catalog_id="1",
+                config={"workflow": {"rid": "1-WFLW"}},
+            )
+        )
+    assert out == {"error": "config has unresolvable workflow"}

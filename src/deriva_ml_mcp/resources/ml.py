@@ -22,6 +22,7 @@ Resources registered:
 
     deriva://catalog/{hostname}/{catalog_id}/ml/datasets
     deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}
+    deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/spec
     deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/members
     deriva://catalog/{hostname}/{catalog_id}/ml/workflows
     deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{workflow_rid}
@@ -53,6 +54,7 @@ from deriva_ml_mcp.tools.asset import (
 )
 from deriva_ml_mcp.tools.dataset import (
     _get_dataset_detail_impl,
+    _get_dataset_spec_impl,
     _list_dataset_members_summary_impl,
     _list_datasets_impl,
 )
@@ -179,6 +181,32 @@ def register(ctx: PluginContext) -> None:
             return _error_envelope(
                 exc,
                 operation="resource_ml_dataset_detail",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/spec")
+    async def ml_dataset_spec(hostname: str, catalog_id: str, dataset_rid: str) -> str:
+        """``DatasetSpecConfig(...)`` snippet for one dataset (current version).
+
+        Same payload as ``deriva_ml_get_dataset_spec`` -- the resource
+        and tool share an internal helper so the two cannot drift.
+        Resource form omits the ``version`` parameter; the snippet
+        always uses the dataset's current version (with a ``warning``
+        recommending an explicit pin for reproducibility). Callers
+        needing to pin a specific version use the tool.
+        """
+        try:
+            with deriva_call():
+                ml = get_ml(hostname, catalog_id)
+                payload = _get_dataset_spec_impl(ml, dataset_rid, None)
+            import json as _json
+            return _json.dumps(payload)
+        except Exception as exc:  # noqa: BLE001
+            return _error_envelope(
+                exc,
+                operation="resource_ml_dataset_spec",
                 hostname=hostname,
                 catalog_id=catalog_id,
                 audit=False,

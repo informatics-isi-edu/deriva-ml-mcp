@@ -1,10 +1,10 @@
-"""Unit tests for resources/ml.py (12 ML-domain MCP resources, v3.3).
+"""Unit tests for resources/ml.py (13 ML-domain MCP resources, v3.3).
 
 Resources are read-only and emit no audit on success or failure. The
 fixture wires ``mock_ml`` into the resources/ml.py registration call so
 each test can stub the deriva-ml call surface independently.
 
-Coverage target: at least 24 tests (2 per resource * 12 resources). List
+Coverage target: at least 26 tests (2 per resource * 13 resources). List
 resources also get a ``truncated`` test; detail resources get a 404 path.
 """
 
@@ -39,6 +39,7 @@ def resource_ctx(ctx, mock_ml):
 
 _DATASETS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/datasets"
 _DATASET_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}"
+_DATASET_SPEC_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/spec"
 _DATASET_MEMBERS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/members"
 _WORKFLOWS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/workflows"
 _WORKFLOW_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{workflow_rid}"
@@ -141,11 +142,12 @@ def _make_vocab_term_mock(name: str, description: str = "") -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
-def test_register_adds_twelve_resources(resource_ctx, capturing_mcp):
-    """resources/ml.py.register() must register exactly 12 URIs (11 prior + lineage, v3.3)."""
+def test_register_adds_thirteen_resources(resource_ctx, capturing_mcp):
+    """resources/ml.py.register() must register exactly 13 URIs (12 prior + dataset/{rid}/spec, v3.3)."""
     expected = {
         "deriva://catalog/{hostname}/{catalog_id}/ml/datasets",
         "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/spec",
         "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/members",
         "deriva://catalog/{hostname}/{catalog_id}/ml/workflows",
         "deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{workflow_rid}",
@@ -294,6 +296,48 @@ async def test_ml_dataset_members_error_path(resource_ctx, capturing_mcp, mock_m
             )
         )
     assert out == {"error": "nope"}
+    assert mock_audit.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# ml/dataset/{rid}/spec
+# ---------------------------------------------------------------------------
+
+
+async def test_ml_dataset_spec_uses_current_version(resource_ctx, capturing_mcp, mock_ml):
+    """Resource form omits the ``version`` parameter and always uses
+    the dataset's current version (with a warning recommending an
+    explicit pin). The shared helper is what the tool uses too, so a
+    drift would break both."""
+    ds = MagicMock()
+    ds.current_version = "1.2.0"
+    ds.description = "Training set"
+    ds.dataset_types = ["Training"]
+    mock_ml.lookup_dataset.return_value = ds
+
+    out = json.loads(
+        await capturing_mcp.resources[_DATASET_SPEC_URI](
+            hostname="h", catalog_id="1", dataset_rid="1-DSAA"
+        )
+    )
+    assert out["dataset_rid"] == "1-DSAA"
+    assert out["version"] == "1.2.0"
+    assert out["spec"] == 'DatasetSpecConfig(rid="1-DSAA", version="1.2.0")'
+    assert out["dataset_types"] == ["Training"]
+    # Resource always uses current version, so warning is always set.
+    assert out["warning"] is not None
+    assert "version not specified" in out["warning"]
+
+
+async def test_ml_dataset_spec_error_path_is_silent(resource_ctx, capturing_mcp, mock_ml):
+    mock_ml.lookup_dataset.side_effect = RuntimeError("Dataset not found")
+    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+        out = json.loads(
+            await capturing_mcp.resources[_DATASET_SPEC_URI](
+                hostname="h", catalog_id="1", dataset_rid="missing"
+            )
+        )
+    assert out == {"error": "Dataset not found"}
     assert mock_audit.call_count == 0
 
 

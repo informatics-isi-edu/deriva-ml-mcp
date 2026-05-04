@@ -708,6 +708,13 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """Generate a ``DatasetSpecConfig(...)`` snippet for a hydra-zen config.
 
+        Same payload as the
+        ``deriva://catalog/{h}/{c}/ml/dataset/{rid}/spec`` resource --
+        the two share an internal helper so the payloads cannot drift.
+        The resource form omits the ``version`` parameter (always uses
+        current version with a warning); callers needing to pin a
+        specific version use the tool.
+
         Args:
             dataset_rid: The RID of the dataset.
             version: Specific version to pin. If omitted, falls back to the
@@ -732,33 +739,8 @@ def register(ctx: PluginContext) -> None:
         try:
             with deriva_call():
                 ml = _pkg.get_ml(hostname, catalog_id)
-                ds = ml.lookup_dataset(dataset_rid)
-
-            warning: str | None
-            if version is not None:
-                used_version = version
-                warning = None
-            else:
-                used_version = (
-                    str(ds.current_version) if ds.current_version is not None else "0.1.0"
-                )
-                warning = (
-                    f"version not specified; using current version "
-                    f"{used_version}. For reproducibility, pin to an explicit "
-                    "version in your config."
-                )
-
-            spec = f'DatasetSpecConfig(rid="{dataset_rid}", version="{used_version}")'
-            return json.dumps(
-                {
-                    "spec": spec,
-                    "dataset_rid": dataset_rid,
-                    "version": used_version,
-                    "description": ds.description,
-                    "dataset_types": list(ds.dataset_types) if ds.dataset_types else [],
-                    "warning": warning,
-                }
-            )
+                payload = _get_dataset_spec_impl(ml, dataset_rid, version)
+            return json.dumps(payload)
         except Exception as exc:
             # Read-only tool: log+return without an audit row (I-2 fix).
             return _error_envelope(
@@ -768,3 +750,191 @@ def register(ctx: PluginContext) -> None:
                 catalog_id=catalog_id,
                 audit=False,
             )
+
+    @ctx.tool(mutates=False)
+    async def deriva_ml_validate_dataset_specs(
+        hostname: str,
+        catalog_id: str,
+        specs: list[dict[str, Any] | str],
+    ) -> str:
+        """Validate a list of ``(RID, version)`` dataset specs against the catalog.
+
+        Cheap metadata-only pre-flight: confirms each spec's RID exists,
+        points at a Dataset, and the named version exists. Returns
+        per-spec results so the caller can present a fix-this-list
+        rather than "config invalid, good luck."
+
+        Use case: editing ``src/configs/datasets.py`` and want to
+        confirm specific RID+version pairs resolve before saving.
+        For full pre-flight including assets and workflow, use
+        ``deriva_ml_validate_execution_configuration``. For a heavier
+        check that exercises the actual bag-download path (catches
+        FK-traversal timeouts etc.), run an Execution with
+        ``dry_run=True`` -- but expect minutes-to-hours of cost (see
+        deriva-ml ADR-0002).
+
+        Args:
+            specs: List of dataset specs. Each item is either a
+                ``DatasetSpec`` shorthand (a bare RID string) or a
+                dict with ``rid`` and ``version`` keys (matching
+                ``DatasetSpec`` constructor kwargs). Coerced to
+                ``DatasetSpec`` before validation.
+
+        Returns:
+            JSON string of the ``DatasetSpecValidationReport``:
+            ``{"all_valid": bool, "results": [...]}``. Each result
+            carries ``{rid, version, valid, reason?, available_versions?,
+            dataset_name?, resolved_version?, warning?}``. Failure
+            ``reason`` is one of: ``rid_not_found``, ``not_a_dataset``,
+            ``version_not_found``.
+
+        Raises:
+            RuntimeError: Wrapped as ``{"error": ...}``, e.g. on a
+                Pydantic validation error if ``specs`` items can't be
+                coerced to ``DatasetSpec``.
+
+        Example:
+            ``{"all_valid": false, "results": [{"rid": "1-ABCD",
+            "version": "1.0.0", "valid": true, "dataset_name":
+            "Training set"}, {"rid": "2-XYZW", "version": "9.9.9",
+            "valid": false, "reason": "version_not_found",
+            "available_versions": ["1.0.0", "1.1.0"]}]}``.
+        """
+        try:
+            with deriva_call():
+                ml = _pkg.get_ml(hostname, catalog_id)
+                payload = ml.validate_dataset_specs(specs)
+            return payload.model_dump_json(by_alias=True)
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="validate_dataset_specs",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+    @ctx.tool(mutates=False)
+    async def deriva_ml_validate_execution_configuration(
+        hostname: str,
+        catalog_id: str,
+        config: dict[str, Any],
+    ) -> str:
+        """Validate a full ``ExecutionConfiguration`` against the catalog.
+
+        The cheap, metadata-only pre-flight gate before
+        ``deriva-ml-run``. Walks the config's ``datasets`` and
+        ``assets`` lists, validates the workflow, and reports per-spec
+        results plus cross-spec issues (duplicate RIDs across specs,
+        version conflicts on the same dataset, role conflicts on the
+        same asset).
+
+        **Why this exists separately from ``dry_run=True``.** Setting
+        ``dry_run=True`` on an Execution does validate the config -- by
+        actually downloading every dataset bag and materializing every
+        asset, which can take minutes-to-hours and several GB of
+        bandwidth. ``validate_execution_configuration`` is the cheap
+        alternative for fast iteration: O(N) metadata round-trips,
+        ~hundreds of milliseconds for typical configs, no
+        ``Execution`` row created. See deriva-ml ADR-0002 for the full
+        rationale.
+
+        Args:
+            config: An ``ExecutionConfiguration`` shorthand dict with
+                keys matching the ``ExecutionConfiguration`` constructor:
+                ``workflow`` (RID string or dict), ``datasets`` (list
+                of ``DatasetSpec`` shorthands), ``assets`` (list of
+                ``AssetSpec`` shorthands), and the other config fields.
+                Coerced to ``ExecutionConfiguration`` before validation.
+
+        Returns:
+            JSON string of the ``ExecutionConfigurationValidationReport``:
+            ``{"all_valid": bool, "dataset_results": [...],
+            "asset_results": [...], "workflow_result": {...} | null,
+            "cross_spec_issues": [...]}``. Each per-spec result has
+            its own structured failure reason; cross-spec issues use
+            reasons ``duplicate_rid``, ``version_conflict``, or
+            ``role_conflict``. ``workflow_result`` is null when the
+            config has no workflow (partial config; the user is
+            still building it).
+
+        Raises:
+            RuntimeError: Wrapped as ``{"error": ...}``, e.g. on a
+                Pydantic validation error if ``config`` cannot be
+                coerced to ``ExecutionConfiguration``.
+
+        Example:
+            ``{"all_valid": false, "dataset_results": [...],
+            "asset_results": [...], "workflow_result": {"rid":
+            "1-WFLW", "valid": true}, "cross_spec_issues":
+            [{"reason": "duplicate_rid", "rid": "1-DUPL",
+            "spec_lists": ["datasets", "datasets"]}]}``.
+        """
+        try:
+            from deriva_ml.execution.execution_configuration import ExecutionConfiguration
+
+            with deriva_call():
+                ml = _pkg.get_ml(hostname, catalog_id)
+                # MCP wire always delivers a dict; coerce to the
+                # Pydantic class. Pydantic's ValidationError on bad
+                # input bubbles up through the except below.
+                exec_config = ExecutionConfiguration(**config)
+                payload = ml.validate_execution_configuration(exec_config)
+            return payload.model_dump_json(by_alias=True)
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="validate_execution_configuration",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+
+def _get_dataset_spec_impl(
+    ml: Any, dataset_rid: str, version: str | None
+) -> dict[str, Any]:
+    """Shared helper: tool ``deriva_ml_get_dataset_spec`` and resource
+    ``deriva://catalog/{h}/{c}/ml/dataset/{rid}/spec`` both call this so
+    their payloads cannot drift.
+
+    Args:
+        ml: The ``DerivaML`` instance bound to the catalog.
+        dataset_rid: Dataset RID.
+        version: Explicit version to pin, or None to use the
+            dataset's current version (a warning is emitted in the
+            payload when the substitution happens).
+
+    Returns:
+        ``{"spec": "DatasetSpecConfig(rid=...)", "dataset_rid",
+        "version", "description", "dataset_types", "warning": str |
+        None}``.
+
+    Example:
+        >>> _get_dataset_spec_impl(ml, "1-AAAA", None)  # doctest: +SKIP
+    """
+    ds = ml.lookup_dataset(dataset_rid)
+
+    warning: str | None
+    if version is not None:
+        used_version = version
+        warning = None
+    else:
+        used_version = (
+            str(ds.current_version) if ds.current_version is not None else "0.1.0"
+        )
+        warning = (
+            f"version not specified; using current version "
+            f"{used_version}. For reproducibility, pin to an explicit "
+            "version in your config."
+        )
+
+    spec = f'DatasetSpecConfig(rid="{dataset_rid}", version="{used_version}")'
+    return {
+        "spec": spec,
+        "dataset_rid": dataset_rid,
+        "version": used_version,
+        "description": ds.description,
+        "dataset_types": list(ds.dataset_types) if ds.dataset_types else [],
+        "warning": warning,
+    }
