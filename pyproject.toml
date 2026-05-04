@@ -94,4 +94,4 @@ show_missing = true
 allow_dirty = false
 commit = true
 tag = true
-current_version = "3.2.1"
+current_version = "3.3.0"
