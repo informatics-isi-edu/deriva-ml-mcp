@@ -161,6 +161,17 @@ This was decided after the v1.0 reviews surfaced dataset/workflow/execution
 read endpoints landing as both tools (paginated) and resources (snapshot).
 Don't replay the debate — write the helper once, register it twice.
 
+**Read tools have `_impl` helpers; mutate tools don't.** This asymmetry is
+intentional. Mutate tools emit audit events inline and handle the
+`deriva_call` context per call; resources are read-only by MCP convention,
+so the mutate→resource path doesn't exist. If you find yourself extracting
+a helper from a mutate tool, either it's a candidate for splitting
+(separate that read piece into its own tool) or you've found a
+mutate-tool→mutate-tool sharing case that the convention should grow to
+cover. As of v3.3, every mutate tool keeps its body inline; 13 read tools
+have `_impl` helpers. The pattern is well-followed; new tools should
+follow existing files as templates.
+
 ### Response models (Pydantic, v1.6+)
 
 Every list / detail / summary response shape is declared as a

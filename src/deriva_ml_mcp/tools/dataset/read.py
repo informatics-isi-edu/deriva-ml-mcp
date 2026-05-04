@@ -609,9 +609,9 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """List all tables registered as valid dataset member types.
 
-        No pagination — element types are bounded (typically 1-20 per catalog).
-
-        Args:
+        No tool-specific arguments beyond the standard
+        ``hostname`` / ``catalog_id`` pair. No pagination — element
+        types are bounded (typically 1-20 per catalog).
 
         Returns:
             JSON string ``{"element_types": [{"name", "schema"}, ...],
