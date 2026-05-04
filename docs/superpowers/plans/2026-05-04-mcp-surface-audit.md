@@ -1,6 +1,6 @@
 # MCP surface audit — 2026-05-04
 
-Final-pass audit of deriva-ml-mcp v3.3.0 surface (48 tools, 13
+Final-pass audit of deriva-ml-mcp v3.3.0 surface (49 tools, 13
 resources, 2 prompts) using the `/grill-with-docs` skill in
 caveman mode. Four lenses applied:
 
@@ -223,7 +223,7 @@ Each round follows the established pattern: design via `/grill-with-docs` agains
 
 ### Counts after this audit
 
-- **Tools:** 48 (no change; QW1 cosmetic only)
+- **Tools:** 49 (no change in count; QW1 cosmetic only — initial draft of this audit said 48, corrected to 49 during the parallel skills audit)
 - **Resources:** 13 (no change)
 - **Prompts:** 2 (no change; they survived Round 2's audit and remain correctly placed for cold-start orientation)
 - **Pull-down candidates:** 5 forward-looking (rounds A/B/C, all queued)
