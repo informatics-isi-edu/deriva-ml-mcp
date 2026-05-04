@@ -24,7 +24,10 @@ classifiers = [
 
 dependencies = [
     "deriva-mcp-core",
-    "deriva-ml>=1.31.0",
+    # v3.3.0 raised from >=1.31.0 to >=1.33.0 to require lookup_lineage
+    # (v1.32.0) and validate_dataset_specs / validate_execution_configuration
+    # (v1.33.0).
+    "deriva-ml>=1.33.0",
 ]
 
 [project.optional-dependencies]
