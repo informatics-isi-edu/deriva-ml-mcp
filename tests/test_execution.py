@@ -342,6 +342,118 @@ async def test_list_execution_parents_error_path(execution_ctx, capturing_mcp, m
 
 
 # ---------------------------------------------------------------------------
+# get_lineage (data-flow provenance traversal)
+# ---------------------------------------------------------------------------
+
+
+async def test_get_lineage_success(execution_ctx, capturing_mcp, mock_ml):
+    """The tool returns the LineageResult Pydantic model serialized to
+    JSON. Underlying call is ``ml.lookup_lineage(rid, depth=...,
+    max_executions=...)``; tool surfaces those parameters explicitly."""
+    from deriva_ml.execution.lineage import (
+        ExecutionSummary,
+        LineageNode,
+        LineageResult,
+        RootDescriptor,
+    )
+
+    payload = LineageResult(
+        root=RootDescriptor(
+            rid="2-PRED",
+            type="Asset",
+            description="predictions.csv",
+            producing_execution=ExecutionSummary(
+                rid="1-EXEC",
+                description="Train ResNet-50",
+                workflow=None,
+                status="Completed",
+            ),
+        ),
+        lineage=LineageNode(
+            execution=ExecutionSummary(
+                rid="1-EXEC",
+                description="Train ResNet-50",
+                workflow=None,
+                status="Completed",
+            ),
+            consumed_datasets=[],
+            consumed_assets=[],
+            parents=[],
+        ),
+        executions_visited=1,
+        walked_complete=True,
+        cycle_detected=False,
+        depth_capped=False,
+    )
+    mock_ml.lookup_lineage.return_value = payload
+
+    result = await capturing_mcp.tools["deriva_ml_get_lineage"](
+        hostname="h", catalog_id="1", rid="2-PRED", depth=2, max_executions=100
+    )
+    out = json.loads(result)
+    assert out["root"]["rid"] == "2-PRED"
+    assert out["walked_complete"] is True
+    # Tool surfaces depth + max_executions to underlying call.
+    mock_ml.lookup_lineage.assert_called_once_with(
+        "2-PRED", depth=2, max_executions=100
+    )
+
+
+async def test_get_lineage_defaults_unbounded(execution_ctx, capturing_mcp, mock_ml):
+    """When depth and max_executions are omitted by the caller, the
+    tool's signature defaults (depth=None, max_executions=500) reach
+    the underlying method unchanged."""
+    from deriva_ml.execution.lineage import (
+        ExecutionSummary,
+        LineageNode,
+        LineageResult,
+        RootDescriptor,
+    )
+
+    mock_ml.lookup_lineage.return_value = LineageResult(
+        root=RootDescriptor(
+            rid="1-EXEC", type="Execution",
+            producing_execution=ExecutionSummary(
+                rid="1-EXEC", description="root execution", workflow=None,
+                status="Completed",
+            ),
+        ),
+        lineage=LineageNode(
+            execution=ExecutionSummary(
+                rid="1-EXEC", description="root execution", workflow=None,
+                status="Completed",
+            ),
+            consumed_datasets=[], consumed_assets=[], parents=[],
+        ),
+        executions_visited=1, walked_complete=True, cycle_detected=False,
+        depth_capped=False,
+    )
+
+    await capturing_mcp.tools["deriva_ml_get_lineage"](
+        hostname="h", catalog_id="1", rid="1-EXEC"
+    )
+    mock_ml.lookup_lineage.assert_called_once_with(
+        "1-EXEC", depth=None, max_executions=500
+    )
+
+
+async def test_get_lineage_error_path_workflow_rid(execution_ctx, capturing_mcp, mock_ml):
+    """A Workflow RID is not lineage-shaped; ``lookup_lineage`` raises
+    and the tool wraps as ``{"error": ...}`` without emitting an audit
+    row (read tool, silent on failure)."""
+    mock_ml.lookup_lineage.side_effect = RuntimeError(
+        "Workflow RIDs are not lineage-shaped"
+    )
+    with _patch_execution_audit() as mock_audit:
+        result = await capturing_mcp.tools["deriva_ml_get_lineage"](
+            hostname="h", catalog_id="1", rid="1-WF"
+        )
+    payload = json.loads(result)
+    assert payload == {"error": "Workflow RIDs are not lineage-shaped"}
+    assert mock_audit.call_count == 0
+
+
+# ---------------------------------------------------------------------------
 # create_execution
 # ---------------------------------------------------------------------------
 

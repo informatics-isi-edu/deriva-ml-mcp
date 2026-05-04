@@ -79,6 +79,8 @@ _EXECUTION_TOOLS = frozenset(
         "deriva_ml_find_workflow_executions",
         "deriva_ml_list_execution_children",
         "deriva_ml_list_execution_parents",
+        # v3.3: provenance traversal (data-flow walk; see deriva-ml ADR-0001).
+        "deriva_ml_get_lineage",
         # Mutation tools
         "deriva_ml_create_execution",
         "deriva_ml_start_execution",
@@ -143,6 +145,8 @@ _ML_RESOURCE_URIS = frozenset(
         "deriva://catalog/{hostname}/{catalog_id}/ml/asset-tables",
         "deriva://catalog/{hostname}/{catalog_id}/ml/asset/{asset_rid}",
         "deriva://catalog/{hostname}/{catalog_id}/ml/registries",
+        # v3.3 lineage resource (mirrors deriva_ml_get_lineage tool).
+        "deriva://catalog/{hostname}/{catalog_id}/ml/lineage/{rid}",
     }
 )
 

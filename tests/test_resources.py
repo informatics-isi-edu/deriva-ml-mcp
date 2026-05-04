@@ -1,10 +1,10 @@
-"""Unit tests for resources/ml.py (11 ML-domain MCP resources, v1.2).
+"""Unit tests for resources/ml.py (12 ML-domain MCP resources, v3.3).
 
 Resources are read-only and emit no audit on success or failure. The
 fixture wires ``mock_ml`` into the resources/ml.py registration call so
 each test can stub the deriva-ml call surface independently.
 
-Coverage target: at least 22 tests (2 per resource * 11 resources). List
+Coverage target: at least 24 tests (2 per resource * 12 resources). List
 resources also get a ``truncated`` test; detail resources get a 404 path.
 """
 
@@ -44,6 +44,7 @@ _WORKFLOWS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/workflows"
 _WORKFLOW_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{workflow_rid}"
 _EXECUTIONS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/executions"
 _EXECUTION_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}"
+_LINEAGE_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/lineage/{rid}"
 _FEATURES_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}"
 _ASSET_TABLES_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/asset-tables"
 _ASSET_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/asset/{asset_rid}"
@@ -140,8 +141,8 @@ def _make_vocab_term_mock(name: str, description: str = "") -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
-def test_register_adds_eleven_resources(resource_ctx, capturing_mcp):
-    """resources/ml.py.register() must register exactly 11 URIs (9 + 2 asset, v1.2)."""
+def test_register_adds_twelve_resources(resource_ctx, capturing_mcp):
+    """resources/ml.py.register() must register exactly 12 URIs (11 prior + lineage, v3.3)."""
     expected = {
         "deriva://catalog/{hostname}/{catalog_id}/ml/datasets",
         "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}",
@@ -150,6 +151,7 @@ def test_register_adds_eleven_resources(resource_ctx, capturing_mcp):
         "deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{workflow_rid}",
         "deriva://catalog/{hostname}/{catalog_id}/ml/executions",
         "deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/lineage/{rid}",
         "deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}",
         "deriva://catalog/{hostname}/{catalog_id}/ml/asset-tables",
         "deriva://catalog/{hostname}/{catalog_id}/ml/asset/{asset_rid}",
@@ -476,6 +478,85 @@ async def test_ml_execution_detail_not_found(resource_ctx, capturing_mcp, mock_m
             )
         )
     assert out == {"error": "Execution not found"}
+    assert mock_audit.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# ml/lineage/{rid}
+# ---------------------------------------------------------------------------
+
+
+async def test_ml_lineage_success(resource_ctx, capturing_mcp, mock_ml):
+    """The resource returns the LineageResult Pydantic model serialized
+    to JSON. Underlying call is ``ml.lookup_lineage(rid, depth=None,
+    max_executions=500)``; resource form has no overrides for those
+    parameters."""
+    from deriva_ml.execution.lineage import (
+        ExecutionSummary,
+        LineageNode,
+        LineageResult,
+        RootDescriptor,
+    )
+
+    payload = LineageResult(
+        root=RootDescriptor(
+            rid="2-PRED",
+            type="Asset",
+            description="predictions.csv",
+            producing_execution=ExecutionSummary(
+                rid="1-EXEC",
+                description="Train ResNet-50",
+                workflow=None,
+                status="Completed",
+            ),
+        ),
+        lineage=LineageNode(
+            execution=ExecutionSummary(
+                rid="1-EXEC",
+                description="Train ResNet-50",
+                workflow=None,
+                status="Completed",
+            ),
+            consumed_datasets=[],
+            consumed_assets=[],
+            parents=[],
+        ),
+        executions_visited=1,
+        walked_complete=True,
+        cycle_detected=False,
+        depth_capped=False,
+    )
+    mock_ml.lookup_lineage.return_value = payload
+
+    out = json.loads(
+        await capturing_mcp.resources[_LINEAGE_URI](
+            hostname="h", catalog_id="1", rid="2-PRED"
+        )
+    )
+    assert out["root"]["rid"] == "2-PRED"
+    assert out["root"]["type"] == "Asset"
+    assert out["walked_complete"] is True
+    assert out["cycle_detected"] is False
+    # Resource always uses unbounded depth + default max_executions=500.
+    mock_ml.lookup_lineage.assert_called_once_with(
+        "2-PRED", depth=None, max_executions=500
+    )
+
+
+async def test_ml_lineage_error_path_is_silent(resource_ctx, capturing_mcp, mock_ml):
+    """A workflow RID (or any unclassifiable) raises ``DerivaMLException``;
+    the resource wraps it as ``{"error": ...}`` and emits no audit row
+    (resources are read-only and silent on failure)."""
+    mock_ml.lookup_lineage.side_effect = RuntimeError(
+        "Workflow RIDs are not lineage-shaped"
+    )
+    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+        out = json.loads(
+            await capturing_mcp.resources[_LINEAGE_URI](
+                hostname="h", catalog_id="1", rid="1-WF"
+            )
+        )
+    assert out == {"error": "Workflow RIDs are not lineage-shaped"}
     assert mock_audit.call_count == 0
 
 

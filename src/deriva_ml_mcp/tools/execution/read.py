@@ -593,3 +593,102 @@ def register(ctx: PluginContext) -> None:
                 catalog_id=catalog_id,
                 audit=False,
             )
+
+    @ctx.tool(mutates=False)
+    async def deriva_ml_get_lineage(
+        hostname: str,
+        catalog_id: str,
+        rid: str,
+        depth: int | None = None,
+        max_executions: int = 500,
+    ) -> str:
+        """Walk the data-flow provenance chain behind an artifact.
+
+        Given a Dataset, Asset, Feature value, or Execution RID,
+        returns a tree of producing executions and their consumed
+        inputs back to the natural root of every branch. Replaces
+        what would otherwise be 5-15 round-trips through typed read
+        methods with one call.
+
+        The walk follows **data-flow parents only**: for each
+        execution node, the parents are the producing executions of
+        its consumed datasets and assets. This tool does NOT walk
+        ``Execution_Execution`` (orchestration links) -- that's a
+        different question (use ``deriva_ml_list_execution_parents``
+        / ``deriva_ml_list_execution_children`` for the orchestration
+        view). See deriva-ml ADR-0001 for the rationale.
+
+        Same shape as the
+        ``deriva://catalog/{h}/{c}/ml/lineage/{rid}`` resource -- the
+        two share an internal helper so the payloads cannot drift.
+
+        Args:
+            rid: RID of any Dataset, Asset, Feature value, or Execution.
+                Workflow RIDs are not lineage-shaped and produce a
+                clear error.
+            depth: Number of parent levels to walk from the immediate
+                producing execution. ``None`` (default) walks to the
+                root. ``0`` returns only the immediate producing
+                execution node. ``N>0`` walks ``N`` levels up.
+            max_executions: Defensive cap on distinct executions the
+                walk will expand. Default 500. If exceeded,
+                ``walked_complete`` is set to False and the partial
+                tree is returned.
+
+        Returns:
+            JSON string of the LineageResult: ``{"root": {...}, "lineage":
+            {... tree of producing executions ...}, "executions_visited":
+            int, "walked_complete": bool, "cycle_detected": bool,
+            "depth_capped": bool}``. ``lineage`` is ``None`` when the
+            artifact has no producing-execution link (manually-inserted
+            data with no provenance link).
+
+        Raises:
+            RuntimeError: Wrapped as ``{"error": ...}``, propagated
+                from ``deriva_ml.DerivaML.lookup_lineage`` (RID not
+                found, RID points at a Workflow, RID's table cannot
+                be classified).
+
+        Example:
+            ``{"root": {"rid": "2-PRED1", "type": "Asset", ...},
+            "lineage": {"execution": {...}, "consumed_datasets": [...],
+            "consumed_assets": [...], "parents": [...]},
+            "executions_visited": 3, "walked_complete": true,
+            "cycle_detected": false, "depth_capped": false}``.
+        """
+        try:
+            with deriva_call():
+                ml = _pkg.get_ml(hostname, catalog_id)
+                payload = _get_lineage_impl(ml, rid, depth, max_executions)
+            return payload.model_dump_json(by_alias=True)
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="get_lineage",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+
+def _get_lineage_impl(ml: Any, rid: str, depth: int | None, max_executions: int) -> Any:
+    """Shared helper: tool ``deriva_ml_get_lineage`` and resource
+    ``deriva://catalog/{h}/{c}/ml/lineage/{rid}`` both call this so
+    their payloads cannot drift.
+
+    Wraps ``ml.lookup_lineage(rid, depth=..., max_executions=...)``
+    and returns the ``LineageResult`` Pydantic model unchanged.
+
+    Args:
+        ml: The ``DerivaML`` instance bound to the catalog.
+        rid: Artifact RID.
+        depth: Parent-walk depth cap (``None`` = unbounded).
+        max_executions: Defensive cap on distinct executions visited.
+
+    Returns:
+        ``deriva_ml.execution.lineage.LineageResult``.
+
+    Example:
+        >>> _get_lineage_impl(ml, "2-PRED1", None, 500)  # doctest: +SKIP
+    """
+    return ml.lookup_lineage(rid, depth=depth, max_executions=max_executions)

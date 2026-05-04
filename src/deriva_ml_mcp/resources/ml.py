@@ -27,6 +27,7 @@ Resources registered:
     deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{workflow_rid}
     deriva://catalog/{hostname}/{catalog_id}/ml/executions
     deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}
+    deriva://catalog/{hostname}/{catalog_id}/ml/lineage/{rid}
     deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}
     deriva://catalog/{hostname}/{catalog_id}/ml/asset-tables
     deriva://catalog/{hostname}/{catalog_id}/ml/asset/{asset_rid}
@@ -57,6 +58,7 @@ from deriva_ml_mcp.tools.dataset import (
 )
 from deriva_ml_mcp.tools.execution import (
     _get_execution_detail_impl,
+    _get_lineage_impl,
     _list_executions_impl,
 )
 from deriva_ml_mcp.tools.feature import _list_features_impl
@@ -295,6 +297,36 @@ def register(ctx: PluginContext) -> None:
             return _error_envelope(
                 exc,
                 operation="resource_ml_execution_detail",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/lineage/{rid}")
+    async def ml_lineage(hostname: str, catalog_id: str, rid: str) -> str:
+        """Provenance chain for any artifact (Dataset, Asset, Feature
+        value, or Execution).
+
+        Same shape as the ``deriva_ml_get_lineage`` tool -- the resource
+        and tool share an internal helper so the two cannot drift.
+        Walks data-flow parents only; orchestration links
+        (``Execution_Execution``) are NOT followed (that's a separate
+        question, served by ``deriva_ml_list_execution_parents`` /
+        ``deriva_ml_list_execution_children``). See deriva-ml ADR-0001.
+
+        Resource form has no ``depth`` / ``max_executions`` overrides;
+        callers needing those should use the tool. The resource always
+        walks unbounded with the default ``max_executions=500`` cap.
+        """
+        try:
+            with deriva_call():
+                ml = get_ml(hostname, catalog_id)
+                payload = _get_lineage_impl(ml, rid, depth=None, max_executions=500)
+            return payload.model_dump_json(by_alias=True)
+        except Exception as exc:  # noqa: BLE001
+            return _error_envelope(
+                exc,
+                operation="resource_ml_lineage",
                 hostname=hostname,
                 catalog_id=catalog_id,
                 audit=False,

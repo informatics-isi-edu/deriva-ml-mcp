@@ -61,6 +61,7 @@ from deriva_ml_mcp.ml_context import get_ml
 # is preserved here so the resource modules don't need to change.
 from deriva_ml_mcp.tools.execution.read import (
     _get_execution_detail_impl,
+    _get_lineage_impl,
     _list_executions_impl,
     _summarize_execution,
 )
@@ -74,6 +75,7 @@ __all__ = [
     "get_ml",
     "register",
     "_get_execution_detail_impl",
+    "_get_lineage_impl",
     "_list_executions_impl",
     "_summarize_execution",
 ]
