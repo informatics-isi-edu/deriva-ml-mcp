@@ -45,6 +45,7 @@ read+update-by-RID surfaces:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -263,8 +264,11 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                payload = _list_asset_tables_impl(ml)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(_list_asset_tables_impl, ml)
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
@@ -316,9 +320,19 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``ml.list_assets`` returns
+                # a generator that materializes over the wire, so the drain
+                # (list/sorted) must happen inside the worker thread, not
+                # on the event loop. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
                 if preflight_count:
-                    total = len(list(ml.list_assets(asset_table)))
+
+                    def _count_assets() -> int:
+                        return len(list(ml.list_assets(asset_table)))
+
+                    total = await asyncio.to_thread(_count_assets)
                     return PreflightCountResponse(
                         total_count=total,
                         action_required=(
@@ -327,10 +341,14 @@ def register(ctx: PluginContext) -> None:
                             "preflight_count=False."
                         ),
                     ).model_dump_json(by_alias=True)
-                assets = sorted(
-                    ml.list_assets(asset_table),
-                    key=lambda a: getattr(a, "asset_rid", "") or "",
-                )
+
+                def _list_and_sort_assets() -> list[Any]:
+                    return sorted(
+                        ml.list_assets(asset_table),
+                        key=lambda a: getattr(a, "asset_rid", "") or "",
+                    )
+
+                assets = await asyncio.to_thread(_list_and_sort_assets)
                 capped = min(max(limit, 0), _MAX_LIMIT)
                 page, truncated, next_after = _paginate(
                     assets,
@@ -389,8 +407,11 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                payload = _get_asset_detail_impl(ml, asset_rid)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(_get_asset_detail_impl, ml, asset_rid)
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
@@ -472,8 +493,11 @@ def register(ctx: PluginContext) -> None:
         updated_fields: list[str] = []
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                asset = ml.lookup_asset(asset_rid)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
+                asset = await asyncio.to_thread(ml.lookup_asset, asset_rid)
 
                 if asset_types is not None:
                     desired = set(asset_types)
@@ -481,15 +505,15 @@ def register(ctx: PluginContext) -> None:
                     to_add = sorted(desired - current)
                     to_remove = sorted(current - desired)
                     for term in to_add:
-                        asset.add_asset_type(term)
+                        await asyncio.to_thread(asset.add_asset_type, term)
                         added_done.append(term)
                     for term in to_remove:
-                        asset.remove_asset_type(term)
+                        await asyncio.to_thread(asset.remove_asset_type, term)
                         removed_done.append(term)
                     updated_fields.append("asset_types")
 
                 if description is not None:
-                    _write_asset_description(ml, asset, description)
+                    await asyncio.to_thread(_write_asset_description, ml, asset, description)
                     updated_fields.append("description")
 
             audit_event(
