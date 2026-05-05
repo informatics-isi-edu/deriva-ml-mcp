@@ -19,6 +19,7 @@ through ``_error_envelope`` (reads only log on failure, no audit row).
 
 from __future__ import annotations
 
+import asyncio
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -344,10 +345,20 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``ml.find_executions``
+                # returns a generator that materializes over the wire, so
+                # the drain (list) must happen inside the worker thread,
+                # not on the event loop. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
                 if preflight_count:
                     status_enum = ExecutionStatus(status) if status else None
-                    total = len(list(ml.find_executions(workflow=workflow_rid, status=status_enum)))
+
+                    def _count_executions() -> int:
+                        return len(list(ml.find_executions(workflow=workflow_rid, status=status_enum)))
+
+                    total = await asyncio.to_thread(_count_executions)
                     return PreflightCountResponse(
                         total_count=total,
                         action_required=(
@@ -356,7 +367,8 @@ def register(ctx: PluginContext) -> None:
                         ),
                     ).model_dump_json(by_alias=True)
                 capped = min(max(limit, 0), _MAX_LIMIT)
-                payload = _list_executions_impl(
+                payload = await asyncio.to_thread(
+                    _list_executions_impl,
                     ml,
                     workflow_rid=workflow_rid,
                     status=status,
@@ -401,8 +413,13 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                record = ml.lookup_execution(execution_rid)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``_summarize_execution``
+                # is a pure Pydantic build over already-fetched attrs and
+                # stays on the event loop. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                record = await asyncio.to_thread(ml.lookup_execution, execution_rid)
                 summary = _summarize_execution(record)
             return summary.model_dump_json(by_alias=True)
         except Exception as exc:
@@ -456,10 +473,20 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``ml.find_executions``
+                # returns a generator that materializes over the wire, so
+                # the drain (list) must happen inside the worker thread,
+                # not on the event loop. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
                 if preflight_count:
                     status_enum = ExecutionStatus(status) if status else None
-                    total = len(list(ml.find_executions(workflow=workflow_rid, status=status_enum)))
+
+                    def _count_executions() -> int:
+                        return len(list(ml.find_executions(workflow=workflow_rid, status=status_enum)))
+
+                    total = await asyncio.to_thread(_count_executions)
                     return PreflightCountResponse(
                         total_count=total,
                         action_required=(
@@ -469,7 +496,8 @@ def register(ctx: PluginContext) -> None:
                     ).model_dump_json(by_alias=True)
 
                 capped = min(max(limit, 0), _MAX_LIMIT)
-                payload = _list_executions_impl(
+                payload = await asyncio.to_thread(
+                    _list_executions_impl,
                     ml,
                     workflow_rid=workflow_rid,
                     status=status,
@@ -527,9 +555,19 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                record = ml.lookup_execution(execution_rid)
-                children = list(record.list_execution_children(recurse=recurse))
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``list_execution_children``
+                # returns a generator that materializes over the wire, so
+                # the drain must happen inside the worker thread. See
+                # deriva-mcp-core plugin-authoring-guide.md §"Synchronous
+                # work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                record = await asyncio.to_thread(ml.lookup_execution, execution_rid)
+
+                def _drain_children() -> list[Any]:
+                    return list(record.list_execution_children(recurse=recurse))
+
+                children = await asyncio.to_thread(_drain_children)
             return ExecutionChildrenResponse(
                 parent_rid=execution_rid,
                 recurse=recurse,
@@ -576,9 +614,19 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                record = ml.lookup_execution(execution_rid)
-                parents = list(record.list_execution_parents(recurse=recurse))
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``list_execution_parents``
+                # returns a generator that materializes over the wire, so
+                # the drain must happen inside the worker thread. See
+                # deriva-mcp-core plugin-authoring-guide.md §"Synchronous
+                # work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                record = await asyncio.to_thread(ml.lookup_execution, execution_rid)
+
+                def _drain_parents() -> list[Any]:
+                    return list(record.list_execution_parents(recurse=recurse))
+
+                parents = await asyncio.to_thread(_drain_parents)
             return ExecutionParentsResponse(
                 child_rid=execution_rid,
                 recurse=recurse,
@@ -658,8 +706,15 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                payload = _get_lineage_impl(ml, rid, depth, max_executions)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``_get_lineage_impl``
+                # wraps ``ml.lookup_lineage`` which performs catalog I/O.
+                # See deriva-mcp-core plugin-authoring-guide.md
+                # §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(
+                    _get_lineage_impl, ml, rid, depth, max_executions
+                )
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
