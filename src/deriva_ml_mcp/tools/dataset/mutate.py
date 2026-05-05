@@ -26,6 +26,7 @@ captured every success-path emission in one shot.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING, Literal
@@ -116,8 +117,12 @@ def register(ctx: PluginContext) -> None:
         try:
             parsed_version = DatasetVersion.parse(version) if version else None
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                new_ds = _pkg.Dataset.create_dataset(
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                new_ds = await asyncio.to_thread(
+                    _pkg.Dataset.create_dataset,
                     ml,
                     execution_rid=execution_rid,
                     dataset_types=dataset_types,
@@ -195,9 +200,12 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                ds = ml.lookup_dataset(dataset_rid)
-                ml.delete_dataset(ds, recurse=recurse)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                ds = await asyncio.to_thread(ml.lookup_dataset, dataset_rid)
+                await asyncio.to_thread(ml.delete_dataset, ds, recurse=recurse)
             _pkg.audit_event(
                 "deriva_ml_delete_dataset",
                 hostname=hostname,
@@ -298,9 +306,13 @@ def register(ctx: PluginContext) -> None:
             added_count = sum(len(v) for v in members.values())
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                ds = ml.lookup_dataset(dataset_rid)
-                ds.add_dataset_members(
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                ds = await asyncio.to_thread(ml.lookup_dataset, dataset_rid)
+                await asyncio.to_thread(
+                    ds.add_dataset_members,
                     members=members,
                     description=description,
                     execution_rid=execution_rid,
@@ -378,9 +390,13 @@ def register(ctx: PluginContext) -> None:
         removed_count = len(member_rids)
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                ds = ml.lookup_dataset(dataset_rid)
-                ds.delete_dataset_members(
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                ds = await asyncio.to_thread(ml.lookup_dataset, dataset_rid)
+                await asyncio.to_thread(
+                    ds.delete_dataset_members,
                     members=member_rids,
                     description=description,
                     execution_rid=execution_rid,
@@ -502,8 +518,11 @@ def register(ctx: PluginContext) -> None:
         new_version: str | None = None
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                ds = ml.lookup_dataset(dataset_rid)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                ds = await asyncio.to_thread(ml.lookup_dataset, dataset_rid)
 
                 if dataset_types is not None:
                     desired = set(dataset_types)
@@ -511,10 +530,10 @@ def register(ctx: PluginContext) -> None:
                     adds_requested = sorted(desired - current)
                     removes_requested = sorted(current - desired)
                     if adds_requested:
-                        ds.add_dataset_types(adds_requested)
+                        await asyncio.to_thread(ds.add_dataset_types, adds_requested)
                         adds_done = list(adds_requested)
                     for term in removes_requested:
-                        ds.remove_dataset_type(term)
+                        await asyncio.to_thread(ds.remove_dataset_type, term)
                         removes_done.append(term)
                     updated_types = list(ds.dataset_types) if ds.dataset_types else []
                     updated_fields.append("dataset_types")
@@ -525,8 +544,12 @@ def register(ctx: PluginContext) -> None:
                     # delegate the catalog write to the shared
                     # _set_row_description helper, then mirror the value
                     # into the in-memory Dataset object only after the
-                    # write returns successfully.
-                    _set_row_description(ml, ml._dataset_table, dataset_rid, description)
+                    # write returns successfully. The helper call is the
+                    # sync catalog write -- thread it; the in-memory
+                    # mirror assignment afterwards is plain Python.
+                    await asyncio.to_thread(
+                        _set_row_description, ml, ml._dataset_table, dataset_rid, description
+                    )
                     ds.description = description
                     updated_fields.append("description")
 
@@ -624,8 +647,11 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                assoc_table = ml.add_dataset_element_type(table_name)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                assoc_table = await asyncio.to_thread(ml.add_dataset_element_type, table_name)
                 association_name = assoc_table.name
             _pkg.audit_event(
                 "deriva_ml_add_dataset_element_type",
@@ -686,12 +712,16 @@ def register(ctx: PluginContext) -> None:
         try:
             version_part = VersionPart(component)
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                ds = ml.lookup_dataset(dataset_rid)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                ds = await asyncio.to_thread(ml.lookup_dataset, dataset_rid)
                 previous_version = (
                     str(ds.current_version) if ds.current_version is not None else None
                 )
-                new_version = ds.increment_dataset_version(
+                new_version = await asyncio.to_thread(
+                    ds.increment_dataset_version,
                     component=version_part,
                     description=description,
                     execution_rid=execution_rid,

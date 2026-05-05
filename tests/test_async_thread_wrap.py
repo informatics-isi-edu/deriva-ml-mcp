@@ -34,17 +34,13 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent / "src" / "deriva_ml_mcp" /
 
 # Modules whose async tool functions are required to thread-wrap every
 # sync deriva-ml call inside ``with deriva_call():`` blocks.
-#
-# ``dataset/mutate.py`` is intentionally excluded: the wrap work for
-# that file is Task 7 of the ``fix/async-thread-wrap-tools`` series and
-# has not landed yet. Re-include it here as part of Task 7.
 TOOL_MODULES: list[Path] = [
     PLUGIN_ROOT / "asset.py",
     PLUGIN_ROOT / "feature.py",
     PLUGIN_ROOT / "workflow.py",
     PLUGIN_ROOT / "maintenance.py",
     PLUGIN_ROOT / "dataset" / "read.py",
-    # PLUGIN_ROOT / "dataset" / "mutate.py",  # excluded: pending Task 7 -- re-include when wrapped
+    PLUGIN_ROOT / "dataset" / "mutate.py",
     PLUGIN_ROOT / "dataset" / "complex.py",
     PLUGIN_ROOT / "execution" / "read.py",
     PLUGIN_ROOT / "execution" / "mutate.py",
