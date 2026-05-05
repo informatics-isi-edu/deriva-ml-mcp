@@ -82,6 +82,7 @@ module is import-safe and idempotent on its own.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -495,14 +496,17 @@ async def _reindex_dataset(hostname: str, catalog_id: str, dataset_rid: str) -> 
     if store is None:
         return 0
     try:
-        ml = get_ml(hostname, catalog_id)
-        ds = ml.lookup_dataset(dataset_rid)
+        # get_ml + lookup_dataset are synchronous deriva-py HTTP I/O;
+        # offload so the event loop is not blocked during the surgical
+        # re-index that runs immediately after a mutating tool.
+        ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
+        ds = await asyncio.to_thread(ml.lookup_dataset, dataset_rid)
         # _summarize_dataset returns a Pydantic ``DatasetSummary`` (since v2.2);
         # ``model_dump(mode="json")`` produces a JSON-serializable dict
         # (datetimes etc. coerced) -- equivalent to the old
         # ``json.loads(json.dumps(row, default=str))`` round-trip.
         row = _summarize_dataset(ds).model_dump(mode="json")
-        user_id = resolve_user_identity(hostname)
+        user_id = await asyncio.to_thread(resolve_user_identity, hostname)
         source = _row_source_name(hostname, catalog_id, user_id, _DATASET_TOKEN, dataset_rid)
         return await _write_row_chunk(store, source, _DATASET_TABLE, row, _DatasetSerializer())
     except Exception:  # noqa: BLE001 -- best-effort cache refresh
@@ -524,11 +528,12 @@ async def _reindex_workflow(hostname: str, catalog_id: str, workflow_rid: str) -
     if store is None:
         return 0
     try:
-        ml = get_ml(hostname, catalog_id)
-        wf = ml.lookup_workflow(workflow_rid)
+        # See _reindex_dataset for the asyncio.to_thread rationale.
+        ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
+        wf = await asyncio.to_thread(ml.lookup_workflow, workflow_rid)
         # See _reindex_dataset for the v2.2 ``model_dump(mode="json")`` rationale.
         row = _summarize_workflow(wf).model_dump(mode="json")
-        user_id = resolve_user_identity(hostname)
+        user_id = await asyncio.to_thread(resolve_user_identity, hostname)
         source = _row_source_name(hostname, catalog_id, user_id, _WORKFLOW_TOKEN, workflow_rid)
         return await _write_row_chunk(store, source, _WORKFLOW_TABLE, row, _WorkflowSerializer())
     except Exception:  # noqa: BLE001 -- best-effort cache refresh
@@ -550,11 +555,12 @@ async def _reindex_execution(hostname: str, catalog_id: str, execution_rid: str)
     if store is None:
         return 0
     try:
-        ml = get_ml(hostname, catalog_id)
-        record = ml.lookup_execution(execution_rid)
+        # See _reindex_dataset for the asyncio.to_thread rationale.
+        ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
+        record = await asyncio.to_thread(ml.lookup_execution, execution_rid)
         # See _reindex_dataset for the v2.2 ``model_dump(mode="json")`` rationale.
         row = _summarize_execution(record).model_dump(mode="json")
-        user_id = resolve_user_identity(hostname)
+        user_id = await asyncio.to_thread(resolve_user_identity, hostname)
         source = _row_source_name(hostname, catalog_id, user_id, _EXECUTION_TOKEN, execution_rid)
         return await _write_row_chunk(store, source, _EXECUTION_TABLE, row, _ExecutionSerializer())
     except Exception:  # noqa: BLE001 -- best-effort cache refresh
@@ -586,7 +592,8 @@ async def _delete_dataset_source(hostname: str, catalog_id: str, dataset_rid: st
     if store is None:
         return False
     try:
-        user_id = resolve_user_identity(hostname)
+        # See _reindex_dataset for the asyncio.to_thread rationale.
+        user_id = await asyncio.to_thread(resolve_user_identity, hostname)
         source = _row_source_name(hostname, catalog_id, user_id, _DATASET_TOKEN, dataset_rid)
         await store.delete_source(source)
         return True
@@ -731,7 +738,10 @@ async def _resync_one_table(
         do emit a log line; the function never raises.
     """
     try:
-        rows = fetch_fn(hostname, catalog_id)
+        # fetch_fn wraps synchronous deriva-py HTTP I/O; offload to a
+        # worker thread so the event loop is not blocked while the
+        # full table is enumerated.
+        rows = await asyncio.to_thread(fetch_fn, hostname, catalog_id)
     except Exception:  # noqa: BLE001 -- best-effort, log + continue
         logger.exception(
             "deriva-ml RAG: failed to enumerate %ss for resync in %s/%s",
@@ -820,7 +830,11 @@ def _make_hook(
         schema_json: dict,  # noqa: ARG001 -- hook signature requires it
     ) -> None:
         try:
-            rows = _coerce_for_index(fetch_fn(hostname, catalog_id))
+            # fetch_fn wraps synchronous deriva-py HTTP I/O; run it in a
+            # worker thread so the event loop stays responsive while the
+            # catalog is being indexed.
+            raw_rows = await asyncio.to_thread(fetch_fn, hostname, catalog_id)
+            rows = _coerce_for_index(raw_rows)
         except Exception:  # noqa: BLE001 -- fetch errors are domain-specific
             logger.exception(
                 "deriva-ml RAG: failed to fetch %s rows for %s/%s",
@@ -833,7 +847,9 @@ def _make_hook(
         if store is None:
             logger.debug("rag store unavailable, skipping %s first-connect index", table_name)
             return
-        user_id = resolve_user_identity(hostname)
+        # resolve_user_identity may issue a sync GET /authn/session in
+        # stdio mode; offload so the loop is not blocked on first call.
+        user_id = await asyncio.to_thread(resolve_user_identity, hostname)
         for row in rows:
             rid = row.get("rid")
             if not rid:
@@ -978,16 +994,21 @@ async def _index_vocabularies(
         logger.debug("rag store unavailable, skipping vocab index")
         return {}
 
-    ml = get_ml(hostname, catalog_id)
+    # get_ml() and find_vocabularies() both perform synchronous deriva-py
+    # HTTP calls; offload so the event loop is not blocked while the
+    # vocabulary catalog is enumerated.
+    ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
     serializer = _VocabSerializer()
     indexed: dict[str, int] = {}
 
-    for vocab_table in ml.find_vocabularies():
+    vocab_tables = await asyncio.to_thread(ml.find_vocabularies)
+    for vocab_table in vocab_tables:
         qname = _table_qname(vocab_table)
         if only_vocab is not None and qname != only_vocab:
             continue
         try:
-            terms = ml.list_vocabulary_terms(vocab_table)
+            # Per-vocab term fetch is a sync HTTP round-trip in deriva-py.
+            terms = await asyncio.to_thread(ml.list_vocabulary_terms, vocab_table)
             term_dicts = [
                 {
                     "name": t.name,
