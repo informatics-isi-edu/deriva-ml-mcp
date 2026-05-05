@@ -132,6 +132,15 @@ Inherited from `deriva-mcp-core`'s plugin authoring guide
   Tool names, audit event names, and prompt names use the same convention so
   searches and log greps line up cleanly. Sibling-plugin collisions are
   prevented by construction.
+- **Every synchronous deriva-ml or deriva-py call inside an `async def` tool
+  MUST be wrapped in `await asyncio.to_thread(...)`.** No exceptions. The
+  plugin's tool functions are coroutines invoked by an asyncio-based MCP host;
+  any sync call that takes more than a few hundred milliseconds blocks the
+  event loop and starves the host's permission/heartbeat machinery. Symptom:
+  intermittent silent tool rejections in clients (the host's permission stream
+  closes mid-flight; pending tool calls reject with "user doesn't want to
+  proceed" even though no user action occurred). See
+  Development Gotchas → "Sync calls in async tools" for history.
 
 ## Tool / Resource Dual-Mode Policy
 
@@ -453,6 +462,54 @@ parallel review of a different branch) still won't leak into commits.
   `def register(ctx: PluginContext) -> None:` with the `PluginContext`
   import guarded by `if TYPE_CHECKING:`. Don't "fix" the unquoted form back
   to quoted strings.
+
+- **Sync calls in async tools — wrap with `asyncio.to_thread`.** This is a
+  load-bearing rule (also stated under Tool Implementation Rules), but the
+  history is worth recording so the same mistake isn't repeated.
+
+  Tool functions are `async def` because the MCP host (deriva-mcp-core) is
+  asyncio-based. The deriva-ml and deriva-py libraries are synchronous —
+  `ml.find_datasets()`, `ds.list_dataset_members()`, `ml.lookup_dataset()`,
+  etc. all block. Calling these directly inside an async coroutine blocks the
+  event loop for the duration of the catalog call (often seconds; sometimes
+  minutes for `cache_dataset` or large queries).
+
+  While the loop is blocked, the host cannot service its other coroutines —
+  including the **permission stream** that delivers user approve/deny
+  decisions for tool calls. If that stream's heartbeat or response window
+  expires while the loop is stalled, the host closes the stream and rejects
+  every pending tool call with "Tool permission stream closed before response
+  received" — surfaced to the model as "The user doesn't want to proceed
+  with this tool use." The rejection is silent (no UI prompt), looks
+  identical to user cancellation, and is intermittent (depends on whether
+  the loop block crosses the threshold).
+
+  **Pre-PR-#28 history:** the original implementation (Phases 2–5, v1.0)
+  shipped every tool calling deriva-ml directly inside the async def. The
+  symptom didn't surface during initial development because dev tests used
+  small catalogs where calls returned in milliseconds. It surfaced under
+  realistic catalog load — long-running tools (`cache_dataset`, large
+  `find_datasets`) blocked the loop long enough for hosts to drop pending
+  calls.
+
+  **PR #28 (`fix(complex): wrap sync deriva-ml calls in asyncio.to_thread`)**
+  fixed this in `tools/dataset/complex.py` for the three known-slow tools
+  (`cache_dataset`, `denormalize_dataset`, `split_dataset`). It did **not**
+  cover the other tool modules (`asset.py`, `feature.py`, `maintenance.py`,
+  `workflow.py`, `dataset/mutate.py`, `dataset/read.py`,
+  `execution/mutate.py`, `execution/read.py`). All of those still need
+  the `asyncio.to_thread` wrapping; until they do, the same symptom
+  recurs intermittently for any of their tools that hit non-trivial
+  catalog work.
+
+  **The lesson — for plugin design.** Async-defined tools that call sync
+  libraries are a footgun. The rule must be applied uniformly the first
+  time, not retrofitted module-by-module. When adding a new tool, the
+  template should already include `asyncio.to_thread`; when reviewing a
+  PR that adds a tool, the absence of `asyncio.to_thread` around any
+  sync deriva-ml/deriva-py call is a blocking review comment. PR #28's
+  scoping (one module out of nine) is the failure mode this rule guards
+  against.
 
 ## Spec & Plan
 
