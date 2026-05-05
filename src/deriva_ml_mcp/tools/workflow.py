@@ -15,6 +15,7 @@ them in. We never run server-side git introspection on the MCP host.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from functools import partial
@@ -202,9 +203,19 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``ml.find_workflows``
+                # returns a generator that materializes over the wire, so
+                # the drain (list/sorted) must happen inside the worker
+                # thread, not on the event loop. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
                 if preflight_count:
-                    total = len(list(ml.find_workflows()))
+
+                    def _count_workflows() -> int:
+                        return len(list(ml.find_workflows()))
+
+                    total = await asyncio.to_thread(_count_workflows)
                     return PreflightCountResponse(
                         total_count=total,
                         action_required=(
@@ -214,7 +225,13 @@ def register(ctx: PluginContext) -> None:
                     ).model_dump_json(by_alias=True)
 
                 capped = min(max(limit, 0), _MAX_LIMIT)
-                payload = _list_workflows_impl(ml, after_rid=after_rid, limit=capped, sort=sort)
+                payload = await asyncio.to_thread(
+                    _list_workflows_impl,
+                    ml,
+                    after_rid=after_rid,
+                    limit=capped,
+                    sort=sort,
+                )
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             # Read-only tool: log+return without an audit row.
@@ -255,8 +272,11 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                summary = _get_workflow_impl(ml, workflow_rid)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
+                summary = await asyncio.to_thread(_get_workflow_impl, ml, workflow_rid)
             return summary.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
@@ -310,8 +330,11 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                wf = ml.lookup_workflow_by_url(url_or_checksum)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
+                wf = await asyncio.to_thread(ml.lookup_workflow_by_url, url_or_checksum)
                 summary = _summarize_workflow(wf)
             return summary.model_dump_json(by_alias=True)
         except Exception as exc:
@@ -416,7 +439,10 @@ def register(ctx: PluginContext) -> None:
         )
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
                 # Pre-check exists solely to set status="exists" for the
                 # audit + return value. _add_workflow already dedups
                 # internally on `checksum or url` and returns the existing
@@ -434,18 +460,23 @@ def register(ctx: PluginContext) -> None:
                 rid: str
                 status: str
                 try:
-                    existing = ml.lookup_workflow_by_url(lookup_key)
+                    existing = await asyncio.to_thread(ml.lookup_workflow_by_url, lookup_key)
                 except DerivaMLException:
                     existing = None
                 if existing is not None:
                     rid = existing.rid
                     status = "exists"
                 else:
-                    wf = ml.create_workflow(
+                    wf = await asyncio.to_thread(
+                        ml.create_workflow,
                         name=name,
                         workflow_type=workflow_type,
                         description=description,
                     )
+                    # url/checksum/version are pure Pydantic attribute
+                    # writes on a not-yet-catalog-bound Workflow (no
+                    # ``_ml_instance`` set), so they don't trigger I/O
+                    # and stay on the event loop.
                     wf.url = url
                     wf.checksum = checksum
                     wf.version = version
@@ -454,7 +485,7 @@ def register(ctx: PluginContext) -> None:
                     # workflow inserts in deriva_ml itself go through it.
                     # If deriva_ml 2.x renames it, our pre-flight smoke
                     # test will catch the mismatch via the import.
-                    rid = ml._add_workflow(wf)
+                    rid = await asyncio.to_thread(ml._add_workflow, wf)
                     status = "created"
             audit_event(
                 "deriva_ml_create_workflow",
@@ -554,13 +585,27 @@ def register(ctx: PluginContext) -> None:
         updated_fields: list[str] = []
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                wf = ml.lookup_workflow(workflow_rid)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``wf.description`` and
+                # ``wf.workflow_type`` setattrs write back to the catalog
+                # via the Workflow ``__setattr__`` hook (see
+                # deriva_ml/execution/workflow.py), so they're synchronous
+                # I/O and must run in the worker thread. See
+                # deriva-mcp-core plugin-authoring-guide.md §"Synchronous
+                # work in threads".
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
+                wf = await asyncio.to_thread(ml.lookup_workflow, workflow_rid)
+
+                def _apply_updates() -> None:
+                    if description is not None:
+                        wf.description = description
+                    if workflow_type is not None:
+                        wf.workflow_type = workflow_type
+
+                await asyncio.to_thread(_apply_updates)
                 if description is not None:
-                    wf.description = description
                     updated_fields.append("description")
                 if workflow_type is not None:
-                    wf.workflow_type = workflow_type
                     updated_fields.append("workflow_type")
             audit_event(
                 "deriva_ml_update_workflow",
