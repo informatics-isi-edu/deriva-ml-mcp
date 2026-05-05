@@ -23,6 +23,7 @@ lookup on the parent package) for the same one-patch-site reason as
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 import json
 import logging
@@ -114,9 +115,14 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive — cache_dataset can do
+                # multi-minute network + filesystem work. See
+                # deriva-mcp-core plugin-authoring-guide.md
+                # §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
                 if version is None:
-                    ds = ml.lookup_dataset(dataset_rid)
+                    ds = await asyncio.to_thread(ml.lookup_dataset, dataset_rid)
                     used_version = (
                         str(ds.current_version) if ds.current_version is not None else None
                     )
@@ -127,7 +133,7 @@ def register(ctx: PluginContext) -> None:
                     version=used_version,
                     exclude_tables=set(exclude_tables) if exclude_tables else None,
                 )
-                info = ml.cache_dataset(spec, materialize=materialize)
+                info = await asyncio.to_thread(ml.cache_dataset, spec, materialize=materialize)
             _pkg.audit_event(
                 "deriva_ml_cache_dataset",
                 hostname=hostname,
@@ -232,8 +238,16 @@ def register(ctx: PluginContext) -> None:
         try:
             if dataset_rid is None:
                 with deriva_call():
-                    ml = _pkg.get_ml(hostname, catalog_id)
-                    estimate = ml.estimate_denormalized_size(include_tables)
+                    # Run the synchronous deriva-ml call in a thread pool
+                    # so the event loop stays responsive —
+                    # estimate_denormalized_size walks the catalog graph
+                    # and can be slow on wide joins. See deriva-mcp-core
+                    # plugin-authoring-guide.md §"Synchronous work in
+                    # threads".
+                    ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                    estimate = await asyncio.to_thread(
+                        ml.estimate_denormalized_size, include_tables
+                    )
                 return json.dumps(
                     {
                         "mode": "catalog_shape",
@@ -246,9 +260,16 @@ def register(ctx: PluginContext) -> None:
             # Dataset mode.
             capped = min(max(limit, 0), _MAX_LIMIT)
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                ds = ml.lookup_dataset(dataset_rid)
-                desc = ds.describe_denormalized(
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive — describe_denormalized
+                # and the generator drain below can take minutes on a
+                # full join materialization. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in
+                # threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                ds = await asyncio.to_thread(ml.lookup_dataset, dataset_rid)
+                desc = await asyncio.to_thread(
+                    ds.describe_denormalized,
                     include_tables,
                     row_per=row_per,
                     via=via,
@@ -286,6 +307,7 @@ def register(ctx: PluginContext) -> None:
                             },
                             default=str,
                         )
+
                     # itertools.islice puts a hard upper bound on
                     # generator materialization; we read at most
                     # (capped + 1) rows just to learn whether a next
@@ -296,17 +318,24 @@ def register(ctx: PluginContext) -> None:
                     # gets a sliced page that may not match a strict
                     # global ordering. DerivaML's denormalizer yields
                     # in row_per order which is RID-stable in practice.
-                    rows = list(
-                        itertools.islice(
-                            ds.get_denormalized_as_dict(
-                                include_tables,
-                                row_per=row_per,
-                                via=via,
-                                version=version,
-                            ),
-                            capped + 1,
+                    # Drain the generator inside the thread pool —
+                    # get_denormalized_as_dict materializes the join
+                    # row-by-row over the wire, so islice() must run in
+                    # the worker thread, not the event loop.
+                    def _drain_rows() -> list[dict[str, Any]]:
+                        return list(
+                            itertools.islice(
+                                ds.get_denormalized_as_dict(
+                                    include_tables,
+                                    row_per=row_per,
+                                    via=via,
+                                    version=version,
+                                ),
+                                capped + 1,
+                            )
                         )
-                    )
+
+                    rows = await asyncio.to_thread(_drain_rows)
                 else:
                     rows = None
 
@@ -456,8 +485,16 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                result = _pkg._split_dataset(
+                # Run the synchronous deriva-ml calls in a thread pool
+                # so the event loop stays responsive — split_dataset
+                # creates a parent + 2-3 child datasets and can take a
+                # minute or more for a stratified split over a large
+                # element table. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in
+                # threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                result = await asyncio.to_thread(
+                    _pkg._split_dataset,
                     ml,
                     source_dataset_rid,
                     test_size=test_size,
