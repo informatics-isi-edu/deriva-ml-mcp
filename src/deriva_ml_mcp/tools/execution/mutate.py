@@ -23,6 +23,7 @@ canonical patch site for ``test_execution.py``. Same rationale as
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING
@@ -207,7 +208,13 @@ def register(ctx: PluginContext) -> None:
         as_list = list(asset_rids or [])
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``ml.create_execution``
+                # is the lifecycle entry point and can be slow (catalog
+                # writes + ExecutionConfiguration build). See
+                # deriva-mcp-core plugin-authoring-guide.md §"Synchronous
+                # work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
                 # Pre-resolve workflow_rid to a Workflow object. Upstream
                 # `ml.create_execution(workflow=...)` accepts `Workflow | RID
                 # | str | None` BUT when given a string, it routes through
@@ -218,10 +225,11 @@ def register(ctx: PluginContext) -> None:
                 # catalog". Look up the Workflow object via the RID API
                 # explicitly so the MCP tool's parameter name and behavior
                 # agree.
-                workflow = ml.lookup_workflow(workflow_rid)
+                workflow = await asyncio.to_thread(ml.lookup_workflow, workflow_rid)
                 # Pass strings through; upstream coerces datasets via
                 # DatasetSpec.from_shorthand and assets via AssetSpec(rid=...).
-                execution = ml.create_execution(
+                execution = await asyncio.to_thread(
+                    ml.create_execution,
                     workflow=workflow,
                     datasets=ds_list or None,
                     assets=as_list or None,
@@ -339,8 +347,13 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                execution = ml.resume_execution(execution_rid)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``execution.status`` is
+                # a pure Pydantic property read on the already-fetched
+                # record and stays on the event loop. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                execution = await asyncio.to_thread(ml.resume_execution, execution_rid)
                 current = execution.status
 
                 if current == ExecutionStatus.Running:
@@ -362,7 +375,7 @@ def register(ctx: PluginContext) -> None:
                         }
                     )
 
-                execution.execution_start()
+                await asyncio.to_thread(execution.execution_start)
 
             _pkg.audit_event(
                 "deriva_ml_start_execution",
@@ -452,8 +465,15 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                execution = ml.resume_execution(execution_rid)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive — commit drains staged
+                # feature rows, runs ``upload_execution_outputs`` (which
+                # can do multi-minute network work), and updates catalog
+                # state. ``execution.status`` is a pure Pydantic property
+                # read and stays on the event loop. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                execution = await asyncio.to_thread(ml.resume_execution, execution_rid)
                 current = execution.status
 
                 if current not in _COMMIT_ALLOWED_STATES:
@@ -472,14 +492,17 @@ def register(ctx: PluginContext) -> None:
                 # already past that point (Stopped/Pending_Upload), just
                 # proceed straight to upload.
                 if current in {ExecutionStatus.Created, ExecutionStatus.Running}:
-                    execution.execution_stop()
+                    await asyncio.to_thread(execution.execution_stop)
 
                 # Snapshot pending feature-record count before draining
                 # so the response can report how many feature values
                 # actually landed (the asset-only return value of
-                # upload_execution_outputs doesn't expose this).
-                pending_features = execution._manifest_store.list_pending_feature_records(
-                    execution_rid
+                # upload_execution_outputs doesn't expose this). The
+                # manifest store is a local SQLite engine — sync I/O
+                # that still blocks the event loop, so wrap it.
+                pending_features = await asyncio.to_thread(
+                    execution._manifest_store.list_pending_feature_records,
+                    execution_rid,
                 )
                 feature_count = len(pending_features)
 
@@ -492,7 +515,7 @@ def register(ctx: PluginContext) -> None:
                 # data unflushed. Until upstream unifies the two paths,
                 # commit_execution must use upload_execution_outputs to
                 # get a real end-to-end commit.
-                uploaded = execution.upload_execution_outputs()
+                uploaded = await asyncio.to_thread(execution.upload_execution_outputs)
                 summary = _summarize_upload_dict(
                     uploaded,
                     execution_rid=execution_rid,
@@ -589,9 +612,22 @@ def register(ctx: PluginContext) -> None:
         updated_fields: list[str] = []
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                record = ml.lookup_execution(execution_rid)
-                record.description = description
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``record.description =
+                # ...`` writes back to the catalog via the
+                # ExecutionRecord ``description.setter`` hook (see
+                # deriva_ml/execution/execution_record.py:
+                # _update_description_in_catalog), so it is synchronous
+                # I/O and must run in the worker thread. See
+                # deriva-mcp-core plugin-authoring-guide.md §"Synchronous
+                # work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                record = await asyncio.to_thread(ml.lookup_execution, execution_rid)
+
+                def _apply_description() -> None:
+                    record.description = description
+
+                await asyncio.to_thread(_apply_description)
                 updated_fields.append("description")
             _pkg.audit_event(
                 "deriva_ml_update_execution",
@@ -673,8 +709,13 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                execution = ml.resume_execution(execution_rid)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``execution.status`` is
+                # a pure Pydantic property read on the already-fetched
+                # record and stays on the event loop. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                execution = await asyncio.to_thread(ml.resume_execution, execution_rid)
                 current = execution.status
 
                 if current == ExecutionStatus.Aborted:
@@ -688,7 +729,7 @@ def register(ctx: PluginContext) -> None:
                         reason=None,
                     ).model_dump_json(by_alias=True)
 
-                execution.abort()
+                await asyncio.to_thread(execution.abort)
 
             _pkg.audit_event(
                 "deriva_ml_abort_execution",
@@ -757,9 +798,16 @@ def register(ctx: PluginContext) -> None:
         types_list = list(dataset_types) if dataset_types else None
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                execution = ml.resume_execution(execution_rid)
-                dataset = execution.create_dataset(
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``dataset.rid`` is a
+                # pure Pydantic attribute read on the already-created
+                # dataset and stays on the event loop. See
+                # deriva-mcp-core plugin-authoring-guide.md §"Synchronous
+                # work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                execution = await asyncio.to_thread(ml.resume_execution, execution_rid)
+                dataset = await asyncio.to_thread(
+                    execution.create_dataset,
                     dataset_types=types_list,
                     description=description,
                 )
@@ -849,9 +897,16 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                parent = ml.resume_execution(parent_execution_rid)
-                parent.add_nested_execution(child_execution_rid, sequence=sequence)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                parent = await asyncio.to_thread(ml.resume_execution, parent_execution_rid)
+                await asyncio.to_thread(
+                    parent.add_nested_execution,
+                    child_execution_rid,
+                    sequence=sequence,
+                )
 
             _pkg.audit_event(
                 "deriva_ml_add_nested_execution",

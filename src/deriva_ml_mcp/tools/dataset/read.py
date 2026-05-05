@@ -20,6 +20,7 @@ through ``_error_envelope`` (reads only log on failure, no audit row).
 
 from __future__ import annotations
 
+import asyncio
 import json
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal
@@ -272,9 +273,19 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``find_datasets`` and
+                # the ``_list_datasets_impl`` helper both do catalog
+                # round-trips. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in
+                # threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
                 if preflight_count:
-                    total = len(list(ml.find_datasets(deleted=include_deleted)))
+
+                    def _count() -> int:
+                        return len(list(ml.find_datasets(deleted=include_deleted)))
+
+                    total = await asyncio.to_thread(_count)
                     return PreflightCountResponse(
                         total_count=total,
                         action_required=(
@@ -284,7 +295,8 @@ def register(ctx: PluginContext) -> None:
                     ).model_dump_json(by_alias=True)
 
                 capped = min(max(limit, 0), _MAX_LIMIT)
-                payload = _list_datasets_impl(
+                payload = await asyncio.to_thread(
+                    _list_datasets_impl,
                     ml,
                     after_rid=after_rid,
                     limit=capped,
@@ -345,16 +357,24 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``lookup_dataset`` and
+                # ``_get_dataset_detail_impl`` (which drains
+                # ``ds.dataset_history()``) both do catalog round-trips.
+                # See deriva-mcp-core plugin-authoring-guide.md
+                # §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
                 if include_history:
-                    payload = _get_dataset_detail_impl(ml, dataset_rid)
+                    payload = await asyncio.to_thread(
+                        _get_dataset_detail_impl, ml, dataset_rid
+                    )
                 else:
                     # Skip the dataset_history() call entirely when not
                     # requested -- it can be expensive on long-lived
                     # datasets. Construct a DatasetDetail with an empty
                     # version_history list to preserve the unified wire
                     # shape.
-                    ds = ml.lookup_dataset(dataset_rid)
+                    ds = await asyncio.to_thread(ml.lookup_dataset, dataset_rid)
                     summary = _summarize_dataset(ds)
                     payload = DatasetDetail(
                         **summary.model_dump(),
@@ -430,9 +450,16 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                ds = ml.lookup_dataset(dataset_rid)
-                members = ds.list_dataset_members(recurse=recurse, version=version)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``list_dataset_members``
+                # walks the dataset's element tables and can fetch many
+                # rows. See deriva-mcp-core plugin-authoring-guide.md
+                # §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                ds = await asyncio.to_thread(ml.lookup_dataset, dataset_rid)
+                members = await asyncio.to_thread(
+                    ds.list_dataset_members, recurse=recurse, version=version
+                )
 
             if element_table is None:
                 summary = {tname: len(rows) for tname, rows in members.items()}
@@ -551,14 +578,20 @@ def register(ctx: PluginContext) -> None:
                 )
             kwargs: dict[str, Any] = {}
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                ds = ml.lookup_dataset(dataset_rid)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``list_dataset_parents``
+                # and ``list_dataset_children`` walk the dataset hierarchy
+                # over the wire. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in
+                # threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                ds = await asyncio.to_thread(ml.lookup_dataset, dataset_rid)
 
                 if direction in ("parents", "both"):
-                    parents = sorted(
-                        ds.list_dataset_parents(recurse=recurse, version=version),
-                        key=lambda d: d.dataset_rid,
+                    parents_raw = await asyncio.to_thread(
+                        ds.list_dataset_parents, recurse=recurse, version=version
                     )
+                    parents = sorted(parents_raw, key=lambda d: d.dataset_rid)
                     page, truncated, _ = _paginate(
                         parents,
                         after_rid=effective_after_rid,
@@ -569,10 +602,10 @@ def register(ctx: PluginContext) -> None:
                     kwargs["parents_truncated"] = truncated
 
                 if direction in ("children", "both"):
-                    children = sorted(
-                        ds.list_dataset_children(recurse=recurse, version=version),
-                        key=lambda d: d.dataset_rid,
+                    children_raw = await asyncio.to_thread(
+                        ds.list_dataset_children, recurse=recurse, version=version
                     )
+                    children = sorted(children_raw, key=lambda d: d.dataset_rid)
                     page, truncated, _ = _paginate(
                         children,
                         after_rid=effective_after_rid,
@@ -627,8 +660,17 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                tables = list(ml.list_dataset_element_types())
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``list_dataset_element_types``
+                # is a metadata round-trip. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in
+                # threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+
+                def _drain_element_types() -> list[Any]:
+                    return list(ml.list_dataset_element_types())
+
+                tables = await asyncio.to_thread(_drain_element_types)
             return json.dumps(
                 {
                     "element_types": [_table_to_dict(t) for t in tables],
@@ -686,8 +728,13 @@ def register(ctx: PluginContext) -> None:
                 exclude_tables=set(exclude_tables) if exclude_tables else None,
             )
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                info = ml.bag_info(spec)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``bag_info`` inspects
+                # the bag manifest and may touch the local cache. See
+                # deriva-mcp-core plugin-authoring-guide.md §"Synchronous
+                # work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                info = await asyncio.to_thread(ml.bag_info, spec)
             return json.dumps(info, default=str)
         except Exception as exc:
             # Read-only tool: log+return without an audit row (I-2 fix).
@@ -738,8 +785,16 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                payload = _get_dataset_spec_impl(ml, dataset_rid, version)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``_get_dataset_spec_impl``
+                # invokes ``ml.lookup_dataset`` which does a catalog
+                # round-trip. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in
+                # threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(
+                    _get_dataset_spec_impl, ml, dataset_rid, version
+                )
             return json.dumps(payload)
         except Exception as exc:
             # Read-only tool: log+return without an audit row (I-2 fix).
@@ -802,8 +857,13 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
-                payload = ml.validate_dataset_specs(specs)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``validate_dataset_specs``
+                # walks each spec and issues a metadata round-trip per
+                # RID. See deriva-mcp-core plugin-authoring-guide.md
+                # §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(ml.validate_dataset_specs, specs)
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
@@ -874,12 +934,20 @@ def register(ctx: PluginContext) -> None:
             from deriva_ml.execution.execution_configuration import ExecutionConfiguration
 
             with deriva_call():
-                ml = _pkg.get_ml(hostname, catalog_id)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``validate_execution_configuration``
+                # walks the full config (workflow, datasets, assets) and
+                # issues per-spec metadata round-trips. See
+                # deriva-mcp-core plugin-authoring-guide.md §"Synchronous
+                # work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
                 # MCP wire always delivers a dict; coerce to the
                 # Pydantic class. Pydantic's ValidationError on bad
                 # input bubbles up through the except below.
                 exec_config = ExecutionConfiguration(**config)
-                payload = ml.validate_execution_configuration(exec_config)
+                payload = await asyncio.to_thread(
+                    ml.validate_execution_configuration, exec_config
+                )
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(

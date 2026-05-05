@@ -16,6 +16,7 @@ feature_table name from the previous page.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -175,9 +176,19 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``ml.find_features``
+                # returns a generator that materializes over the wire, so
+                # the drain (list/sorted) must happen inside the worker
+                # thread, not on the event loop. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
                 if preflight_count:
-                    total = len(list(ml.find_features(table=table)))
+
+                    def _count_features() -> int:
+                        return len(list(ml.find_features(table=table)))
+
+                    total = await asyncio.to_thread(_count_features)
                     return PreflightCountResponse(
                         total_count=total,
                         action_required=(
@@ -187,7 +198,8 @@ def register(ctx: PluginContext) -> None:
                     ).model_dump_json(by_alias=True)
 
                 capped = min(max(limit, 0), _MAX_LIMIT)
-                payload = _list_features_impl(
+                payload = await asyncio.to_thread(
+                    _list_features_impl,
                     ml,
                     table=table,
                     after_rid=after_rid,
@@ -237,8 +249,11 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                feature = ml.lookup_feature(table, feature_name)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
+                feature = await asyncio.to_thread(ml.lookup_feature, table, feature_name)
                 payload = {
                     "feature_name": feature.feature_name,
                     "target_table": feature.target_table.name,
@@ -393,35 +408,53 @@ def register(ctx: PluginContext) -> None:
 
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``feature_values``
+                # returns a generator that materializes over the wire, so
+                # the drain (list) must happen inside the worker thread,
+                # not on the event loop. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
                 # by_workflow needs a container; build it now that we have ml.
                 if selector_fn == "__by_workflow__":
-                    container = ml.lookup_dataset(dataset_rid) if dataset_rid else ml
+                    container = (
+                        await asyncio.to_thread(ml.lookup_dataset, dataset_rid)
+                        if dataset_rid
+                        else ml
+                    )
                     selector_fn = FeatureRecord.select_by_workflow(
                         selector_workflow, container=container
                     )
 
                 if dataset_rid is not None:
-                    ds = ml.lookup_dataset(dataset_rid)
-                    records = list(
-                        ds.feature_values(
-                            table,
-                            feature_name,
-                            selector=selector_fn,
-                            materialize_limit=max_results,
-                            execution_rids=execution_rids,
+                    ds = await asyncio.to_thread(ml.lookup_dataset, dataset_rid)
+
+                    def _drain_ds_feature_values() -> list[Any]:
+                        return list(
+                            ds.feature_values(
+                                table,
+                                feature_name,
+                                selector=selector_fn,
+                                materialize_limit=max_results,
+                                execution_rids=execution_rids,
+                            )
                         )
-                    )
+
+                    records = await asyncio.to_thread(_drain_ds_feature_values)
                 else:
-                    records = list(
-                        ml.feature_values(
-                            table,
-                            feature_name,
-                            selector=selector_fn,
-                            materialize_limit=max_results,
-                            execution_rids=execution_rids,
+
+                    def _drain_ml_feature_values() -> list[Any]:
+                        return list(
+                            ml.feature_values(
+                                table,
+                                feature_name,
+                                selector=selector_fn,
+                                materialize_limit=max_results,
+                                execution_rids=execution_rids,
+                            )
                         )
-                    )
+
+                    records = await asyncio.to_thread(_drain_ml_feature_values)
 
             if preflight_count:
                 total = len(records)
@@ -523,8 +556,12 @@ def register(ctx: PluginContext) -> None:
         assets_list = list(assets or [])
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                ml.create_feature(
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
+                await asyncio.to_thread(
+                    ml.create_feature,
                     target_table,
                     feature_name,
                     terms=terms_list,
@@ -536,7 +573,9 @@ def register(ctx: PluginContext) -> None:
                 # create_feature returns the FeatureRecord subclass, not
                 # the Feature schema. Re-look up the Feature for the
                 # response shape.
-                feature = ml.lookup_feature(target_table, feature_name)
+                feature = await asyncio.to_thread(
+                    ml.lookup_feature, target_table, feature_name
+                )
                 summary = _summarize_feature(feature)
             audit_event(
                 "deriva_ml_create_feature",
@@ -591,8 +630,11 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                was_deleted = ml.delete_feature(table, feature_name)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
+                was_deleted = await asyncio.to_thread(ml.delete_feature, table, feature_name)
             if was_deleted:
                 audit_event(
                     "deriva_ml_delete_feature",
@@ -698,8 +740,14 @@ def register(ctx: PluginContext) -> None:
         failed_index: int | None = None
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                feature = ml.lookup_feature(table, feature_name)
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``feature_record_class``
+                # is pure-Python class construction (no I/O), so it stays
+                # on the event loop, as do the Pydantic record builds.
+                # See deriva-mcp-core plugin-authoring-guide.md §"Synchronous
+                # work in threads".
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
+                feature = await asyncio.to_thread(ml.lookup_feature, table, feature_name)
                 feature_class = feature.feature_record_class()
 
                 records = []
@@ -708,16 +756,23 @@ def register(ctx: PluginContext) -> None:
                     records.append(feature_class(**entry))
                 failed_index = None
 
-                execution = ml.resume_execution(execution_rid)
+                execution = await asyncio.to_thread(ml.resume_execution, execution_rid)
                 # Hybrid dispatch (Q1). See docstring for the rationale.
                 current = execution.status
                 if current == ExecutionStatus.Created:
-                    with execution.execute():
-                        added = execution.add_features(records)
+                    # ``execution.execute()`` is a sync context manager
+                    # whose __enter__/__exit__ touch the catalog, and
+                    # ``add_features`` is sync I/O. Run the whole bracket
+                    # in a single worker thread.
+                    def _execute_and_add() -> int:
+                        with execution.execute():
+                            return execution.add_features(records)
+
+                    added = await asyncio.to_thread(_execute_and_add)
                 elif current == ExecutionStatus.Running:
                     # Already inside the long-running pipeline. The
                     # eventual commit_execution closes the lifecycle.
-                    added = execution.add_features(records)
+                    added = await asyncio.to_thread(execution.add_features, records)
                 else:
                     state_name = current.value if isinstance(current, ExecutionStatus) else current
                     raise ValueError(
