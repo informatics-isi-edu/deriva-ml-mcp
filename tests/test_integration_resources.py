@@ -65,7 +65,9 @@ _WORKFLOW_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{wo
 _EXECUTIONS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/executions"
 _EXECUTION_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}"
 _FEATURES_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}"
-_REGISTRIES_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/registries"
+_VOCABS_IN_SCHEMA_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}"
+_VOCAB_TERMS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}/{vocab_name}"
+_ASSETS_IN_SCHEMA_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}"
 
 # A clearly-fake RID for the detail-error tests. The catalog is empty so
 # any RID would do, but one obviously not produced by Deriva makes the
@@ -280,46 +282,84 @@ async def test_resource_ml_features_empty_table(
 
 
 # ---------------------------------------------------------------------------
-# Registries snapshot -- four vocab keys, some seeded by demo schema
+# Vocabulary discovery resources (v3.4)
 # ---------------------------------------------------------------------------
 
 
-async def test_resource_ml_registries_returns_all_four_vocabs(
+async def test_resource_ml_vocabularies_in_schema(
     demo_catalog: tuple[str, str],
     integration_resources: _CapturingMCP,
 ) -> None:
-    """``ml/registries`` returns all four vocab keys; missing vocabs are ``[]``.
+    """``ml/vocabularies/{schema}`` lists vocabulary tables in the ML schema.
 
-    The demo catalog seeds the standard ML vocabularies (``Workflow_Type``
-    and ``Execution_Status`` always have terms; ``Dataset_Type`` and
-    ``Asset_Type`` may or may not). We assert structure (all four keys
-    present, each a list) and that ``workflow_types`` and
-    ``execution_statuses`` are non-empty -- the rest may be empty without
-    failing the test, per the resource's best-effort contract.
+    The demo catalog seeds the standard ML vocabularies (``Dataset_Type``,
+    ``Workflow_Type``, ``Asset_Type``, ``Execution_Status``) inside the
+    ``deriva-ml`` schema. We assert presence of these by name and that
+    ``term_count`` is populated for vocabularies known to be seeded with
+    terms.
     """
     hostname, catalog_id = demo_catalog
     out = json.loads(
-        await integration_resources.resources[_REGISTRIES_URI](
-            hostname=hostname, catalog_id=catalog_id
+        await integration_resources.resources[_VOCABS_IN_SCHEMA_URI](
+            hostname=hostname, catalog_id=catalog_id, schema="deriva-ml"
         )
     )
     assert out.get("error") is None, f"resource returned error: {out}"
-    assert set(out.keys()) == {
-        "dataset_types",
-        "workflow_types",
-        "asset_types",
-        "execution_statuses",
-    }
-    for key, value in out.items():
-        assert isinstance(value, list), f"{key!r} is not a list: {value!r}"
-    # Demo schema seeds these unconditionally -- if either is empty, the
-    # demo catalog vocab seeding has regressed.
-    assert len(out["workflow_types"]) > 0, "demo catalog should seed Workflow_Type terms"
-    assert len(out["execution_statuses"]) > 0, "demo catalog should seed Execution_Status terms"
-    # Spot-check term shape on the first workflow type.
-    # Compact name+rid shape per v1.0 polish 4 (was: name+description+
-    # synonyms+rid; trimmed to keep registries snapshot under ~1 KB).
-    sample = out["workflow_types"][0]
-    assert set(sample.keys()) == {"name", "rid"}
+    assert out["schema"] == "deriva-ml"
+    by_name = {v["name"]: v for v in out["vocabularies"]}
+    for expected in ("Dataset_Type", "Workflow_Type", "Asset_Type", "Execution_Status"):
+        assert expected in by_name, f"missing vocab: {expected}"
+    # Workflow_Type and Execution_Status are unconditionally seeded with
+    # terms by the demo catalog.
+    assert by_name["Workflow_Type"]["term_count"] is not None
+    assert by_name["Workflow_Type"]["term_count"] > 0
+    assert by_name["Execution_Status"]["term_count"] is not None
+    assert by_name["Execution_Status"]["term_count"] > 0
+
+
+async def test_resource_ml_vocabulary_terms(
+    demo_catalog: tuple[str, str],
+    integration_resources: _CapturingMCP,
+) -> None:
+    """``ml/vocabularies/{schema}/{vocab_name}`` returns full term contents."""
+    hostname, catalog_id = demo_catalog
+    out = json.loads(
+        await integration_resources.resources[_VOCAB_TERMS_URI](
+            hostname=hostname,
+            catalog_id=catalog_id,
+            schema="deriva-ml",
+            vocab_name="Workflow_Type",
+        )
+    )
+    assert out.get("error") is None, f"resource returned error: {out}"
+    assert out["schema"] == "deriva-ml"
+    assert out["vocabulary"] == "Workflow_Type"
+    assert out["count"] > 0
+    sample = out["terms"][0]
+    # All six fields must be present (any may be null except name/rid).
+    assert set(sample.keys()) == {"name", "rid", "description", "synonyms", "id", "uri"}
     assert isinstance(sample["name"], str) and sample["name"]
     assert isinstance(sample["rid"], str) and sample["rid"]
+    assert isinstance(sample["synonyms"], list)
+
+
+async def test_resource_ml_assets_in_schema(
+    demo_catalog: tuple[str, str],
+    integration_resources: _CapturingMCP,
+) -> None:
+    """``ml/assets/{schema}`` lists asset tables in the named schema."""
+    hostname, catalog_id = demo_catalog
+    out = json.loads(
+        await integration_resources.resources[_ASSETS_IN_SCHEMA_URI](
+            hostname=hostname, catalog_id=catalog_id, schema="deriva-ml"
+        )
+    )
+    assert out.get("error") is None, f"resource returned error: {out}"
+    assert out["schema"] == "deriva-ml"
+    names = {t["name"] for t in out["asset_tables"]}
+    # Standard ML asset tables -- demo catalog ships these unconditionally.
+    assert "Execution_Metadata" in names
+    assert "Execution_Asset" in names
+    # Per-entry shape is name+rid only.
+    for entry in out["asset_tables"]:
+        assert set(entry.keys()) == {"name", "rid"}

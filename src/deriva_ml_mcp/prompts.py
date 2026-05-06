@@ -167,8 +167,9 @@ DERIVA-ML DOMAIN OBJECTS, NOT AS RAW TABLES.
              Execution. The MCP surface covers asset metadata only;
              file bytes are out of scope (the MCP server has no general
              access to the user's local filesystem). Use
-             ``deriva_ml_list_asset_tables``, ``deriva_ml_lookup_asset``,
-             ``deriva_ml_update_asset``. For asset bytes, hand off to
+             ``deriva_ml_list_assets``, ``deriva_ml_lookup_asset``,
+             ``deriva_ml_update_asset``. Browse asset tables by schema
+             via the ``ml/assets/{schema}`` resource. For asset bytes, hand off to
              local Python via the user's environment (``ml.download_asset``,
              ``exe.asset_file_path()``).
 
@@ -545,9 +546,14 @@ would otherwise be several tool calls into one URI fetch:
     deriva://catalog/{h}/{c}/ml/executions       -- all executions
     deriva://catalog/{h}/{c}/ml/execution/{rid}  -- one execution + inputs/outputs/metadata
     deriva://catalog/{h}/{c}/ml/features/{table} -- features defined on one table
-    deriva://catalog/{h}/{c}/ml/asset-tables     -- all asset tables in the catalog
     deriva://catalog/{h}/{c}/ml/asset/{rid}      -- one asset + bundled executions
-    deriva://catalog/{h}/{c}/ml/registries       -- the four ML vocabularies bundled
+    deriva://catalog/{h}/{c}/ml/assets/{schema}  -- asset tables in one schema
+    deriva://catalog/{h}/{c}/ml/assets/{schema}/{asset_table}
+                                                 -- contents of one asset table
+    deriva://catalog/{h}/{c}/ml/vocabularies/{schema}
+                                                 -- vocabulary tables in one schema
+    deriva://catalog/{h}/{c}/ml/vocabularies/{schema}/{vocab_name}
+                                                 -- terms in one vocabulary table
 
 For semantic discovery ("which workflows train CNN models", "find
 executions that produced quality scores"), prefer ``rag_search`` over
@@ -596,9 +602,9 @@ identifier in this order:
 
 3. EXPLICIT LIST REQUEST GETS A LIST. If the user says "show me
    all dataset types" or "list workflows", use the appropriate
-   list endpoint (ml/registries, deriva_ml_list_workflows,
-   deriva://catalog/{h}/{c}/ml/datasets). Don't run rag_search
-   when they explicitly want enumeration.
+   list endpoint (ml/vocabularies/{schema}/Dataset_Type,
+   deriva_ml_list_workflows, deriva://catalog/{h}/{c}/ml/datasets).
+   Don't run rag_search when they explicitly want enumeration.
 
 INDEX COVERAGE BY CATEGORY
 --------------------------
@@ -669,20 +675,21 @@ cross-cutting state-machine reference at depth.
 
 ASSETS: METADATA HERE, FILE I/O IN THE SKILL
 --------------------------------------------
-v1.2 added a 4-tool asset surface that covers the catalog-state half of
-the asset lifecycle:
+The asset surface covers the catalog-state half of the asset
+lifecycle:
 
-    deriva_ml_list_asset_tables  -- which asset tables exist in this catalog
     deriva_ml_list_assets        -- rows in one asset table (paginated)
     deriva_ml_lookup_asset       -- bundled detail for one asset RID
                                     (filename, length, md5, url,
                                      description, asset_types, executions)
     deriva_ml_update_asset       -- mutate asset_type tags + description
 
-Plus two matching resources:
+Plus three matching resources:
 
-    deriva://catalog/{h}/{c}/ml/asset-tables    -- snapshot of asset tables
-    deriva://catalog/{h}/{c}/ml/asset/{rid}     -- bundled per-asset detail
+    deriva://catalog/{h}/{c}/ml/asset/{rid}      -- bundled per-asset detail
+    deriva://catalog/{h}/{c}/ml/assets/{schema}  -- asset tables in one schema
+    deriva://catalog/{h}/{c}/ml/assets/{schema}/{asset_table}
+                                                 -- snapshot of one asset table
 
 What these tools do NOT do: register a new asset from a local file, or
 download asset bytes back to a local path. The MCP server has no

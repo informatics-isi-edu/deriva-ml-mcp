@@ -6,19 +6,20 @@ Same shape as ``tests/test_integration_workflow.py`` — gated by the
 helper and the ``deriva_host`` session fixture live in
 ``tests/conftest.py``.
 
-Scope: the four asset tools (``deriva_ml_list_asset_tables``,
-``deriva_ml_list_assets``, ``deriva_ml_lookup_asset``,
-``deriva_ml_update_asset``) exercised end-to-end against a live demo
-catalog. The bare ``demo_catalog`` fixture is sufficient: it ships
-with the ``Image`` asset table (created by
-``create_domain_schema``) plus the standard ``Execution_Metadata`` /
-``Execution_Asset`` tables in the ``deriva-ml`` schema.
+Scope: the three asset tools (``deriva_ml_list_assets``,
+``deriva_ml_lookup_asset``, ``deriva_ml_update_asset``) exercised
+end-to-end against a live demo catalog. The bare ``demo_catalog``
+fixture is sufficient: it ships with the ``Image`` asset table
+(created by ``create_domain_schema``) plus the standard
+``Execution_Metadata`` / ``Execution_Asset`` tables in the
+``deriva-ml`` schema. Asset table discovery is exercised through
+the ``ml/assets/{schema}`` resource in
+``tests/test_integration_resources.py``.
 
 Coverage limits: the bare demo catalog has no asset rows (asset
 upload requires a full execution lifecycle — exercised in
 ``test_integration_execution.py``). This file therefore covers:
 
-- ``list_asset_tables`` -- enumeration shape against the real schema.
 - ``list_assets`` (empty + preflight) -- empty-table behavior.
 - ``lookup_asset`` -- error envelope for a nonexistent RID.
 - ``update_asset`` -- argument-validation envelope (pre-catalog) and
@@ -99,42 +100,6 @@ def integration_asset_tools(
 # ---------------------------------------------------------------------------
 # Read-side tools
 # ---------------------------------------------------------------------------
-
-
-async def test_list_asset_tables_against_demo_catalog(
-    demo_catalog: tuple[str, str],
-    integration_asset_tools: _CapturingMCP,
-) -> None:
-    """``list_asset_tables`` enumerates the catalog's asset tables.
-
-    The demo catalog ships at least three asset tables created by the
-    base ML schema and ``create_domain_schema``:
-
-    - ``Image`` (in the ``demo-schema`` domain) -- created by
-      ``create_domain_schema`` via ``ml_instance.create_asset(...)``.
-    - ``Execution_Metadata`` (in ``deriva-ml``) -- standard ML schema.
-    - ``Execution_Asset`` (in ``deriva-ml``) -- standard ML schema.
-
-    We assert presence of each by ``(name, schema)`` rather than a
-    fixed length, so adding new asset tables to the demo schema in
-    deriva-ml does not break this test.
-    """
-    hostname, catalog_id = demo_catalog
-    tools = integration_asset_tools.tools
-
-    out = json.loads(
-        await tools["deriva_ml_list_asset_tables"](hostname=hostname, catalog_id=catalog_id)
-    )
-    assert out.get("error") is None, f"list_asset_tables returned error: {out}"
-    assert "asset_tables" in out
-    assert "count" in out
-    assert isinstance(out["asset_tables"], list)
-    assert out["count"] == len(out["asset_tables"])
-
-    by_qname = {(t["name"], t["schema"]) for t in out["asset_tables"]}
-    assert ("Image", "demo-schema") in by_qname
-    assert ("Execution_Metadata", "deriva-ml") in by_qname
-    assert ("Execution_Asset", "deriva-ml") in by_qname
 
 
 async def test_list_assets_empty_image_table(

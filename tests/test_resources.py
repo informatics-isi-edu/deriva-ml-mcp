@@ -1,11 +1,14 @@
-"""Unit tests for resources/ml.py (13 ML-domain MCP resources, v3.3).
+"""Unit tests for resources/ml.py (14 ML-domain MCP resources, v3.4).
 
 Resources are read-only and emit no audit on success or failure. The
 fixture wires ``mock_ml`` into the resources/ml.py registration call so
 each test can stub the deriva-ml call surface independently.
 
-Coverage target: at least 26 tests (2 per resource * 13 resources). List
-resources also get a ``truncated`` test; detail resources get a 404 path.
+v3.4 retired ``ml/registries`` and ``ml/asset-tables`` and added four
+schema-scoped resources covering vocabularies and asset tables:
+``ml/vocabularies/{schema}``,
+``ml/vocabularies/{schema}/{vocab_name}``, ``ml/assets/{schema}``, and
+``ml/assets/{schema}/{asset_table}``.
 """
 
 from __future__ import annotations
@@ -47,9 +50,13 @@ _EXECUTIONS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/executions"
 _EXECUTION_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}"
 _LINEAGE_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/lineage/{rid}"
 _FEATURES_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}"
-_ASSET_TABLES_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/asset-tables"
 _ASSET_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/asset/{asset_rid}"
-_REGISTRIES_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/registries"
+_ASSETS_IN_SCHEMA_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}"
+_ASSET_TABLE_CONTENTS_URI = (
+    "deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}/{asset_table}"
+)
+_VOCABS_IN_SCHEMA_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}"
+_VOCAB_TERMS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}/{vocab_name}"
 
 
 def _make_dataset_mock(
@@ -142,8 +149,8 @@ def _make_vocab_term_mock(name: str, description: str = "") -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
-def test_register_adds_thirteen_resources(resource_ctx, capturing_mcp):
-    """resources/ml.py.register() must register exactly 13 URIs (12 prior + dataset/{rid}/spec, v3.3)."""
+def test_register_adds_fourteen_resources(resource_ctx, capturing_mcp):
+    """resources/ml.py.register() must register exactly 14 URIs (v3.4)."""
     expected = {
         "deriva://catalog/{hostname}/{catalog_id}/ml/datasets",
         "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}",
@@ -155,9 +162,11 @@ def test_register_adds_thirteen_resources(resource_ctx, capturing_mcp):
         "deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}",
         "deriva://catalog/{hostname}/{catalog_id}/ml/lineage/{rid}",
         "deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/asset-tables",
         "deriva://catalog/{hostname}/{catalog_id}/ml/asset/{asset_rid}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/registries",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}/{asset_table}",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}/{vocab_name}",
     }
     actual = set(capturing_mcp.resources.keys())
     assert actual == expected, (
@@ -573,32 +582,24 @@ async def test_ml_lineage_success(resource_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_lineage.return_value = payload
 
     out = json.loads(
-        await capturing_mcp.resources[_LINEAGE_URI](
-            hostname="h", catalog_id="1", rid="2-PRED"
-        )
+        await capturing_mcp.resources[_LINEAGE_URI](hostname="h", catalog_id="1", rid="2-PRED")
     )
     assert out["root"]["rid"] == "2-PRED"
     assert out["root"]["type"] == "Asset"
     assert out["walked_complete"] is True
     assert out["cycle_detected"] is False
     # Resource always uses unbounded depth + default max_executions=500.
-    mock_ml.lookup_lineage.assert_called_once_with(
-        "2-PRED", depth=None, max_executions=500
-    )
+    mock_ml.lookup_lineage.assert_called_once_with("2-PRED", depth=None, max_executions=500)
 
 
 async def test_ml_lineage_error_path_is_silent(resource_ctx, capturing_mcp, mock_ml):
     """A workflow RID (or any unclassifiable) raises ``DerivaMLException``;
     the resource wraps it as ``{"error": ...}`` and emits no audit row
     (resources are read-only and silent on failure)."""
-    mock_ml.lookup_lineage.side_effect = RuntimeError(
-        "Workflow RIDs are not lineage-shaped"
-    )
+    mock_ml.lookup_lineage.side_effect = RuntimeError("Workflow RIDs are not lineage-shaped")
     with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
         out = json.loads(
-            await capturing_mcp.resources[_LINEAGE_URI](
-                hostname="h", catalog_id="1", rid="1-WF"
-            )
+            await capturing_mcp.resources[_LINEAGE_URI](hostname="h", catalog_id="1", rid="1-WF")
         )
     assert out == {"error": "Workflow RIDs are not lineage-shaped"}
     assert mock_audit.call_count == 0
@@ -639,90 +640,298 @@ async def test_ml_features_for_table_error_path(resource_ctx, capturing_mcp, moc
 
 
 # ---------------------------------------------------------------------------
-# ml/registries
+# ml/vocabularies/{schema} and ml/vocabularies/{schema}/{vocab_name} (v3.4)
 # ---------------------------------------------------------------------------
 
 
-async def test_ml_registries_bundles_four_vocabularies(resource_ctx, capturing_mcp, mock_ml):
-    """Registries snapshot returns the four ML vocabularies as parallel lists."""
+def _make_table_mock(
+    name: str,
+    schema: str,
+    rid: str = "",
+    *,
+    is_vocabulary: bool = False,
+    is_asset: bool = False,
+) -> MagicMock:
+    """Build a deriva-py-like Table mock with vocab/asset disposition.
 
-    def _terms_for(table_name):
-        if table_name == "Dataset_Type":
-            return [_make_vocab_term_mock("Training"), _make_vocab_term_mock("Testing")]
-        if table_name == "Workflow_Type":
-            return [_make_vocab_term_mock("Model_Training")]
-        if table_name == "Asset_Type":
-            return [_make_vocab_term_mock("Image")]
-        if table_name == "Execution_Status":
-            return [_make_vocab_term_mock("Created"), _make_vocab_term_mock("Running")]
+    The new resources walk ``ml.model.schemas[schema].tables.values()``
+    and call ``table.is_vocabulary()`` / ``table.is_asset()`` to filter
+    candidates. This factory keeps the shape stable across tests.
+    """
+    t = MagicMock()
+    t.name = name
+    t.schema = MagicMock()
+    t.schema.name = schema
+    t.rid = rid
+    t.is_vocabulary.return_value = is_vocabulary
+    t.is_asset.return_value = is_asset
+    return t
+
+
+def _make_full_vocab_term_mock(
+    name: str,
+    description: str = "",
+    synonyms: list[str] | None = None,
+    curie: str | None = None,
+    uri: str | None = None,
+) -> MagicMock:
+    """Mock for the full ``VocabularyTerm`` shape (six fields)."""
+    term = MagicMock()
+    term.name = name
+    term.description = description
+    term.synonyms = synonyms or []
+    term.rid = f"VRID-{name}"
+    term.id = curie
+    term.uri = uri
+    return term
+
+
+def _wire_schema(mock_ml: MagicMock, schema: str, tables: list[MagicMock]) -> None:
+    """Wire ``mock_ml.model.schemas[schema].tables`` to the given tables."""
+    schema_obj = MagicMock()
+    schema_obj.tables = {t.name: t for t in tables}
+    # ``model.schemas`` is read both via ``in`` and via ``.get(...)``;
+    # using a real dict satisfies both call shapes without further setup.
+    mock_ml.model.schemas = {schema: schema_obj}
+
+
+async def test_ml_vocabularies_in_schema_lists_only_vocab_tables(
+    resource_ctx, capturing_mcp, mock_ml
+):
+    """Walking a schema returns only its vocab tables, with term counts."""
+    dataset_type = _make_table_mock("Dataset_Type", "deriva-ml", rid="T-1", is_vocabulary=True)
+    workflow_type = _make_table_mock("Workflow_Type", "deriva-ml", rid="T-2", is_vocabulary=True)
+    not_a_vocab = _make_table_mock("Workflow", "deriva-ml", rid="T-3")
+    _wire_schema(mock_ml, "deriva-ml", [dataset_type, workflow_type, not_a_vocab])
+
+    def _terms_for(table):
+        if table is dataset_type:
+            return [_make_full_vocab_term_mock("Training"), _make_full_vocab_term_mock("Testing")]
+        if table is workflow_type:
+            return [_make_full_vocab_term_mock("Model_Training")]
         return []
 
     mock_ml.list_vocabulary_terms.side_effect = _terms_for
 
-    out = json.loads(await capturing_mcp.resources[_REGISTRIES_URI](hostname="h", catalog_id="1"))
-    assert {t["name"] for t in out["dataset_types"]} == {"Training", "Testing"}
-    assert {t["name"] for t in out["workflow_types"]} == {"Model_Training"}
-    assert {t["name"] for t in out["asset_types"]} == {"Image"}
-    assert {t["name"] for t in out["execution_statuses"]} == {"Created", "Running"}
+    out = json.loads(
+        await capturing_mcp.resources[_VOCABS_IN_SCHEMA_URI](
+            hostname="h", catalog_id="1", schema="deriva-ml"
+        )
+    )
+    assert out["schema"] == "deriva-ml"
+    assert out["count"] == 2
+    by_name = {v["name"]: v for v in out["vocabularies"]}
+    assert by_name["Dataset_Type"]["term_count"] == 2
+    assert by_name["Workflow_Type"]["term_count"] == 1
+    assert "Workflow" not in by_name
 
 
-async def test_ml_registries_missing_vocab_yields_empty_list(resource_ctx, capturing_mcp, mock_ml):
-    """A vocab table that raises (e.g. doesn't exist) maps to ``[]`` -- best-effort."""
+async def test_ml_vocabularies_in_schema_empty_when_no_vocabs(resource_ctx, capturing_mcp, mock_ml):
+    """A schema that exists but has no vocab tables returns an empty list."""
+    _wire_schema(
+        mock_ml,
+        "domain",
+        [_make_table_mock("Image", "domain", rid="T-IMG", is_asset=True)],
+    )
+    out = json.loads(
+        await capturing_mcp.resources[_VOCABS_IN_SCHEMA_URI](
+            hostname="h", catalog_id="1", schema="domain"
+        )
+    )
+    assert out["count"] == 0
+    assert out["vocabularies"] == []
 
-    def _terms_for(table_name):
-        if table_name == "Dataset_Type":
-            return [_make_vocab_term_mock("Training")]
-        raise RuntimeError(f"table {table_name} not found")
 
-    mock_ml.list_vocabulary_terms.side_effect = _terms_for
-
+async def test_ml_vocabularies_in_schema_unknown_schema_errors(
+    resource_ctx, capturing_mcp, mock_ml
+):
+    """An unknown schema returns an error envelope."""
+    _wire_schema(mock_ml, "deriva-ml", [])
     with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
         out = json.loads(
-            await capturing_mcp.resources[_REGISTRIES_URI](hostname="h", catalog_id="1")
+            await capturing_mcp.resources[_VOCABS_IN_SCHEMA_URI](
+                hostname="h", catalog_id="1", schema="nope"
+            )
         )
-    # The successful vocab still lands; the failed ones are silently empty.
-    # Compact shape: name + rid only (description/synonyms deliberately
-    # omitted to keep the snapshot under ~1 KB; see _vocab_terms docstring).
-    assert out["dataset_types"] == [
-        {
-            "name": "Training",
-            "rid": "VRID-Training",
-        }
-    ]
-    # Verify description and synonyms are NOT in the payload (token economy:
-    # this resource is read on every "what types are available" question;
-    # a 12 KB payload would dominate context for routine vocab checks).
-    term = out["dataset_types"][0]
-    assert "description" not in term
-    assert "synonyms" not in term
-    assert out["workflow_types"] == []
-    assert out["asset_types"] == []
-    assert out["execution_statuses"] == []
-    # No audit on the per-vocab failures (resource is read-only).
+    assert "error" in out
+    assert "schema not found" in out["error"]
     assert mock_audit.call_count == 0
 
 
-# ---------------------------------------------------------------------------
-# ml/asset-tables (v1.2)
-# ---------------------------------------------------------------------------
+async def test_ml_vocabularies_in_schema_term_count_best_effort(
+    resource_ctx, capturing_mcp, mock_ml
+):
+    """A failing per-vocab term fetch surfaces as ``term_count = None``."""
+    good = _make_table_mock("Dataset_Type", "deriva-ml", rid="T-1", is_vocabulary=True)
+    bad = _make_table_mock("Workflow_Type", "deriva-ml", rid="T-2", is_vocabulary=True)
+    _wire_schema(mock_ml, "deriva-ml", [good, bad])
+
+    def _terms_for(table):
+        if table is good:
+            return [_make_full_vocab_term_mock("Training")]
+        raise RuntimeError("transient failure")
+
+    mock_ml.list_vocabulary_terms.side_effect = _terms_for
+    out = json.loads(
+        await capturing_mcp.resources[_VOCABS_IN_SCHEMA_URI](
+            hostname="h", catalog_id="1", schema="deriva-ml"
+        )
+    )
+    by_name = {v["name"]: v for v in out["vocabularies"]}
+    assert by_name["Dataset_Type"]["term_count"] == 1
+    assert by_name["Workflow_Type"]["term_count"] is None
 
 
-def _make_asset_table_mock(name: str, schema: str = "demo-schema") -> MagicMock:
-    t = MagicMock()
-    t.name = name
-    t.schema.name = schema
-    return t
-
-
-async def test_ml_asset_tables_smoke(resource_ctx, capturing_mcp, mock_ml):
-    """asset-tables resource returns the same shape as the tool."""
-    mock_ml.list_asset_tables.return_value = [
-        _make_asset_table_mock("Image", "demo-schema"),
-        _make_asset_table_mock("Execution_Metadata", "deriva-ml"),
+async def test_ml_vocabulary_terms_returns_full_six_field_shape(
+    resource_ctx, capturing_mcp, mock_ml
+):
+    """A vocabulary read returns all six fields including CURIE and URI."""
+    table = _make_table_mock("Tissue_Type", "domain", rid="T-T", is_vocabulary=True)
+    _wire_schema(mock_ml, "domain", [table])
+    mock_ml.list_vocabulary_terms.return_value = [
+        _make_full_vocab_term_mock(
+            "Epithelial",
+            description="Epithelial tissue",
+            synonyms=["Epithelium"],
+            curie="tissue:0001",
+            uri="http://example.org/tissue/0001",
+        )
     ]
-    out = json.loads(await capturing_mcp.resources[_ASSET_TABLES_URI](hostname="h", catalog_id="1"))
+    out = json.loads(
+        await capturing_mcp.resources[_VOCAB_TERMS_URI](
+            hostname="h", catalog_id="1", schema="domain", vocab_name="Tissue_Type"
+        )
+    )
+    assert out["schema"] == "domain"
+    assert out["vocabulary"] == "Tissue_Type"
+    assert out["count"] == 1
+    term = out["terms"][0]
+    assert term["name"] == "Epithelial"
+    assert term["description"] == "Epithelial tissue"
+    assert term["synonyms"] == ["Epithelium"]
+    assert term["id"] == "tissue:0001"
+    assert term["uri"] == "http://example.org/tissue/0001"
+    assert term["rid"] == "VRID-Epithelial"
+
+
+async def test_ml_vocabulary_terms_unknown_table_errors(resource_ctx, capturing_mcp, mock_ml):
+    """An unknown table in a known schema returns an error envelope."""
+    _wire_schema(mock_ml, "deriva-ml", [])
+    out = json.loads(
+        await capturing_mcp.resources[_VOCAB_TERMS_URI](
+            hostname="h", catalog_id="1", schema="deriva-ml", vocab_name="Missing"
+        )
+    )
+    assert "error" in out
+    assert "vocabulary not found" in out["error"]
+
+
+async def test_ml_vocabulary_terms_not_a_vocabulary_errors(resource_ctx, capturing_mcp, mock_ml):
+    """A table that exists but isn't a vocabulary returns a specific error."""
+    table = _make_table_mock("Workflow", "deriva-ml", rid="T-WF")  # is_vocabulary=False
+    _wire_schema(mock_ml, "deriva-ml", [table])
+    out = json.loads(
+        await capturing_mcp.resources[_VOCAB_TERMS_URI](
+            hostname="h", catalog_id="1", schema="deriva-ml", vocab_name="Workflow"
+        )
+    )
+    assert "error" in out
+    assert "is not a vocabulary" in out["error"]
+
+
+# ---------------------------------------------------------------------------
+# ml/assets/{schema} and ml/assets/{schema}/{asset_table} (v3.4)
+# ---------------------------------------------------------------------------
+
+
+def _make_asset_row_mock(rid: str = "1-AAAA") -> MagicMock:
+    a = MagicMock()
+    a.asset_rid = rid
+    a.filename = f"file-{rid}.png"
+    a.length = 100
+    a.md5 = "abc"
+    a.asset_table = "Image"
+    a.asset_types = ["Training_Data"]
+    return a
+
+
+async def test_ml_assets_in_schema_lists_only_asset_tables(resource_ctx, capturing_mcp, mock_ml):
+    """Walking a schema returns only its asset tables, name+rid only."""
+    image = _make_table_mock("Image", "domain", rid="T-IMG", is_asset=True)
+    model = _make_table_mock("Trained_Model", "domain", rid="T-M", is_asset=True)
+    not_an_asset = _make_table_mock("Patient", "domain", rid="T-P")
+    _wire_schema(mock_ml, "domain", [image, model, not_an_asset])
+
+    out = json.loads(
+        await capturing_mcp.resources[_ASSETS_IN_SCHEMA_URI](
+            hostname="h", catalog_id="1", schema="domain"
+        )
+    )
+    assert out["schema"] == "domain"
     assert out["count"] == 2
-    assert {t["name"] for t in out["asset_tables"]} == {"Image", "Execution_Metadata"}
+    names = {t["name"] for t in out["asset_tables"]}
+    assert names == {"Image", "Trained_Model"}
+    # No term_count / asset_count on this surface.
+    for entry in out["asset_tables"]:
+        assert set(entry.keys()) == {"name", "rid"}
+
+
+async def test_ml_assets_in_schema_unknown_schema_errors(resource_ctx, capturing_mcp, mock_ml):
+    """An unknown schema returns an error envelope."""
+    _wire_schema(mock_ml, "domain", [])
+    out = json.loads(
+        await capturing_mcp.resources[_ASSETS_IN_SCHEMA_URI](
+            hostname="h", catalog_id="1", schema="nope"
+        )
+    )
+    assert "error" in out
+    assert "schema not found" in out["error"]
+
+
+async def test_ml_asset_table_contents_returns_summaries(resource_ctx, capturing_mcp, mock_ml):
+    """Reading an asset table returns ``AssetSummary`` rows."""
+    table = _make_table_mock("Image", "domain", rid="T-IMG", is_asset=True)
+    _wire_schema(mock_ml, "domain", [table])
+    mock_ml.list_assets.return_value = [
+        _make_asset_row_mock("1-AAAA"),
+        _make_asset_row_mock("1-BBBB"),
+    ]
+    out = json.loads(
+        await capturing_mcp.resources[_ASSET_TABLE_CONTENTS_URI](
+            hostname="h", catalog_id="1", schema="domain", asset_table="Image"
+        )
+    )
+    assert out["schema"] == "domain"
+    assert out["asset_table"] == "Image"
+    assert out["count"] == 2
+    assert out["truncated"] is False
+    rids = {a["rid"] for a in out["assets"]}
+    assert rids == {"1-AAAA", "1-BBBB"}
+
+
+async def test_ml_asset_table_contents_unknown_table_errors(resource_ctx, capturing_mcp, mock_ml):
+    """An unknown table in a known schema returns an error envelope."""
+    _wire_schema(mock_ml, "domain", [])
+    out = json.loads(
+        await capturing_mcp.resources[_ASSET_TABLE_CONTENTS_URI](
+            hostname="h", catalog_id="1", schema="domain", asset_table="Missing"
+        )
+    )
+    assert "error" in out
+    assert "asset table not found" in out["error"]
+
+
+async def test_ml_asset_table_contents_not_an_asset_errors(resource_ctx, capturing_mcp, mock_ml):
+    """A table that exists but isn't an asset returns a specific error."""
+    table = _make_table_mock("Patient", "domain", rid="T-P")  # is_asset=False
+    _wire_schema(mock_ml, "domain", [table])
+    out = json.loads(
+        await capturing_mcp.resources[_ASSET_TABLE_CONTENTS_URI](
+            hostname="h", catalog_id="1", schema="domain", asset_table="Patient"
+        )
+    )
+    assert "error" in out
+    assert "is not an asset table" in out["error"]
 
 
 # ---------------------------------------------------------------------------

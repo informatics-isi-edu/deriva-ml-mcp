@@ -15,14 +15,6 @@ from tests.conftest import _success_calls, make_patch_audit
 _patch_asset_audit = make_patch_audit("asset")
 
 
-def _make_table_mock(name: str, schema: str = "demo-schema") -> MagicMock:
-    """Build a deriva-py Table-shaped MagicMock."""
-    t = MagicMock()
-    t.name = name
-    t.schema.name = schema
-    return t
-
-
 def _make_asset_mock(
     asset_rid: str = "1-AAAA",
     filename: str = "scan.png",
@@ -73,40 +65,12 @@ def asset_ctx(ctx, mock_ml):
 
 
 # ---------------------------------------------------------------------------
-# list_asset_tables
-# ---------------------------------------------------------------------------
-
-
-async def test_list_asset_tables_success(asset_ctx, capturing_mcp, mock_ml):
-    """Each asset table renders as {name, schema}; count reflects total."""
-    mock_ml.list_asset_tables.return_value = [
-        _make_table_mock("Image", "demo-schema"),
-        _make_table_mock("Execution_Metadata", "deriva-ml"),
-    ]
-
-    out = json.loads(
-        await capturing_mcp.tools["deriva_ml_list_asset_tables"](hostname="h", catalog_id="1")
-    )
-
-    assert out["count"] == 2
-    assert {t["name"] for t in out["asset_tables"]} == {"Image", "Execution_Metadata"}
-    assert {t["schema"] for t in out["asset_tables"]} == {"demo-schema", "deriva-ml"}
-
-
-async def test_list_asset_tables_failure_returns_error_envelope(asset_ctx, capturing_mcp, mock_ml):
-    """Read-only failure path: error envelope, no audit row."""
-    mock_ml.list_asset_tables.side_effect = RuntimeError("catalog unreachable")
-    with _patch_asset_audit() as mock_audit:
-        out = json.loads(
-            await capturing_mcp.tools["deriva_ml_list_asset_tables"](hostname="h", catalog_id="1")
-        )
-    assert out == {"error": "catalog unreachable"}
-    # Read-only tool: no audit on failure.
-    assert mock_audit.call_count == 0
-
-
-# ---------------------------------------------------------------------------
 # list_assets
+#
+# Note: ``deriva_ml_list_asset_tables`` was retired in v3.4 along with
+# the ``ml/asset-tables`` resource. Asset table discovery now happens
+# through the schema-scoped ``ml/assets/{schema}`` resource (tested in
+# ``test_resources.py``).
 # ---------------------------------------------------------------------------
 
 
