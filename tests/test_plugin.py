@@ -96,12 +96,14 @@ _EXECUTION_TOOLS = frozenset(
     }
 )
 
-# v1.2 asset domain -- 4 tools (3 read + 1 metadata-mutation). File I/O
-# is intentionally NOT covered here; that lives in the deriva-skills
+# Asset domain -- 3 tools (2 read + 1 metadata-mutation). File I/O is
+# intentionally NOT covered here; that lives in the deriva-skills
 # `work-with-assets` skill which generates Python the user runs locally.
+# Asset table discovery moved to the ``ml/assets/{schema}`` resource in
+# v3.4; the ``deriva_ml_list_asset_tables`` tool was retired alongside
+# the ``ml/asset-tables`` resource.
 _ASSET_TOOLS = frozenset(
     {
-        "deriva_ml_list_asset_tables",
         "deriva_ml_list_assets",
         "deriva_ml_lookup_asset",
         "deriva_ml_update_asset",
@@ -144,10 +146,17 @@ _ML_RESOURCE_URIS = frozenset(
         "deriva://catalog/{hostname}/{catalog_id}/ml/executions",
         "deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}",
         "deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}",
-        # v1.2 asset resources.
-        "deriva://catalog/{hostname}/{catalog_id}/ml/asset-tables",
+        # Asset resources. Single-asset detail by RID is unchanged;
+        # ``ml/asset-tables`` was retired in v3.4 in favor of the
+        # schema-scoped ``ml/assets/{schema}`` discovery surface.
         "deriva://catalog/{hostname}/{catalog_id}/ml/asset/{asset_rid}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/registries",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}/{asset_table}",
+        # v3.4 vocabulary discovery resources. Replaced the
+        # ``ml/registries`` curated-four bundle with a schema-scoped
+        # hierarchy that surfaces user-defined vocabularies too.
+        "deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}/{vocab_name}",
         # v3.3 lineage resource (mirrors deriva_ml_get_lineage tool).
         "deriva://catalog/{hostname}/{catalog_id}/ml/lineage/{rid}",
         # v3.3 dataset-spec resource (mirrors deriva_ml_get_dataset_spec tool).

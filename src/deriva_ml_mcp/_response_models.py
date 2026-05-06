@@ -642,79 +642,130 @@ class AssetListResponse(_PaginationFields):
     assets: list[AssetSummary]
 
 
-class AssetTableRef(BaseModel):
-    """One asset table reference: ``{"name": str, "schema": str}``.
+class AssetTableNameRef(BaseModel):
+    """One asset table reference inside a schema-scoped list.
 
-    The ``schema`` field is aliased -- the Python attribute is
-    ``schema_`` (Pydantic v2 issues a warning for ``schema`` as it
-    shadows ``BaseModel.model_json_schema``), but the wire JSON key
-    is ``"schema"``. Construct via ``AssetTableRef(name=..., schema=...)``
-    or ``AssetTableRef.model_validate({"name": ..., "schema": ...})``;
-    both work because ``populate_by_name=True``.
-    """
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    name: str
-    schema_: str = Field(alias="schema")
-
-
-class AssetTablesResponse(BaseModel):
-    """All asset tables in a catalog (no pagination -- typically <20).
-
-    Produced by ``_list_asset_tables_impl``. Used by the
-    ``deriva://catalog/{h}/{c}/ml/asset-tables`` resource.
-
-    No pagination -- ``Table`` objects don't carry a stable RID for
-    the cursor protocol and catalogs typically have a handful of
-    asset tables.
+    Used by ``ml/assets/{schema}``: the URI carries the schema, so the
+    per-entry shape elides it and surfaces only ``name`` + ``rid``.
+    Distinct from ``AssetSummary`` (which describes one asset row, not
+    a table).
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    asset_tables: list[AssetTableRef]
+    name: str
+    rid: str
+
+
+class AssetTablesInSchemaResponse(BaseModel):
+    """All asset tables in one schema.
+
+    Produced by the ``ml/assets/{schema}`` resource's inline helper.
+    No pagination -- catalogs typically carry a handful of asset
+    tables per schema, and ``Table`` objects have no stable RID for
+    the cursor protocol.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_: str = Field(alias="schema")
     count: int
+    asset_tables: list[AssetTableNameRef]
+
+
+class AssetTableContentsResponse(_PaginationFields):
+    """One page of asset rows inside one asset table.
+
+    Produced by the ``ml/assets/{schema}/{asset_table}`` resource.
+    Reuses ``AssetSummary`` so the snapshot and the paginated
+    ``deriva_ml_list_assets`` tool cannot drift in per-row shape.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_: str = Field(alias="schema")
+    asset_table: str
+    assets: list[AssetSummary]
+
+
+# ---------------------------------------------------------------------------
+# Vocabulary discovery response models (v3.4)
+# ---------------------------------------------------------------------------
+
+
+class VocabularyTableSummary(BaseModel):
+    """One vocabulary table in a schema-scoped list.
+
+    Used by ``ml/vocabularies/{schema}``. ``term_count`` is computed
+    via ``len(ml.list_vocabulary_terms(table))``; on a per-vocab fetch
+    failure (transient catalog hiccup, malformed table) it surfaces as
+    ``None`` so one bad vocab doesn't abort the whole snapshot --
+    mirrors the pre-v3.4 ``_vocab_terms`` best-effort pattern.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    rid: str
+    term_count: int | None = None
+
+
+class VocabularyTablesResponse(BaseModel):
+    """All vocabulary tables in one schema.
+
+    Produced by the ``ml/vocabularies/{schema}`` resource's inline
+    helper. No pagination -- a single schema typically holds a
+    handful of vocabularies and ``Table`` objects have no stable RID
+    for the cursor protocol.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_: str = Field(alias="schema")
+    count: int
+    vocabularies: list[VocabularyTableSummary]
+
+
+class VocabularyTermDetail(BaseModel):
+    """Full vocabulary term contents.
+
+    Surfaces all six fields from deriva-ml's ``VocabularyTerm`` Pydantic
+    class (``name``, ``rid``, ``description``, ``synonyms``, ``id`` /
+    CURIE, ``uri``). The class name is ``*Detail`` rather than
+    ``VocabularyTerm`` to avoid visual collision with the deriva-ml
+    class on grep / IDE hover.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    rid: str
+    description: str | None = None
+    synonyms: list[str]
+    id: str | None = None
+    uri: str | None = None
+
+
+class VocabularyTermsResponse(BaseModel):
+    """All terms in one vocabulary table (capped at ``_MAX_LIMIT``).
+
+    Produced by the ``ml/vocabularies/{schema}/{vocab_name}`` resource.
+    Vocabularies almost always fit under the 1000-row cap; if
+    truncation ever fires, callers fall back to core's
+    ``list_vocabulary_terms`` tool for paginated access.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_: str = Field(alias="schema")
+    vocabulary: str
+    count: int
+    terms: list[VocabularyTermDetail]
 
 
 # ---------------------------------------------------------------------------
 # Maintenance / cache response models (v1.1, v1.4)
 # ---------------------------------------------------------------------------
-
-
-class VocabularyTermRef(BaseModel):
-    """One vocabulary term as ``{"name": str | None, "rid": str | None}``.
-
-    Compact shape used by the ``ml/registries`` resource. Description and
-    synonyms are deliberately omitted to keep the bundled snapshot small;
-    the full record is available via core's ``get_term`` tool or
-    ``rag_search``.
-
-    Both fields are nullable because ``_vocab_terms`` reads them via
-    ``getattr(t, ..., None)`` -- a malformed term row should surface the
-    gap rather than crash the snapshot.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str | None
-    rid: str | None
-
-
-class MLRegistriesResponse(BaseModel):
-    """Bundled snapshot of the four catalog ML vocabularies.
-
-    Produced by ``_get_ml_registries_impl``. Used by the
-    ``deriva://catalog/{h}/{c}/ml/registries`` resource. Each list is
-    independently best-effort -- a vocab whose read raises surfaces as
-    an empty list rather than aborting the snapshot.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    dataset_types: list[VocabularyTermRef]
-    workflow_types: list[VocabularyTermRef]
-    asset_types: list[VocabularyTermRef]
-    execution_statuses: list[VocabularyTermRef]
 
 
 class ReindexVocabulariesResponse(BaseModel):

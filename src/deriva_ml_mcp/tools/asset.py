@@ -1,8 +1,12 @@
 """Asset domain tools for deriva-ml-mcp.
 
-Read tools: ``deriva_ml_list_asset_tables``, ``deriva_ml_list_assets``,
-``deriva_ml_lookup_asset``.
+Read tools: ``deriva_ml_list_assets``, ``deriva_ml_lookup_asset``.
 Mutation tools: ``deriva_ml_update_asset``.
+
+Asset table discovery is exposed through the
+``deriva://catalog/{h}/{c}/ml/assets/{schema}`` resource (in
+``resources/ml.py``), not a tool, since asset tables are bounded
+per-schema and have no need for cursor pagination.
 
 Scope. This module is **catalog-state only**: browse asset tables, list
 the rows in one, look up bundled per-asset detail, and curate the
@@ -22,9 +26,6 @@ success/failure audit events; reads only log on failure).
 Dataset/Workflow precedent. The shapes here mirror the existing
 read+update-by-RID surfaces:
 
-- ``list_asset_tables`` returns ``{name, schema}`` dicts via
-  ``_table_to_dict`` (same shape used by every other "list tables"
-  endpoint in the plugin).
 - ``list_assets`` paginates by Asset RID using the standard
   ``_paginate`` + ``_read_rid(rid_key="asset_rid")`` cursor pattern.
 - ``lookup_asset`` returns a bundled detail (the same payload the
@@ -65,15 +66,12 @@ from deriva_ml_mcp._helpers import (
     _paginate,
     _read_rid,
     _set_row_description,
-    _table_to_dict,
 )
 from deriva_ml_mcp._response_models import (
     AssetDetail,
     AssetExecutionRef,
     AssetListResponse,
     AssetSummary,
-    AssetTableRef,
-    AssetTablesResponse,
     PreflightCountResponse,
     UpdateAssetResponse,
 )
@@ -124,26 +122,6 @@ def _summarize_asset(asset: Any) -> AssetSummary:
         md5=asset.md5,
         asset_table=asset.asset_table,
         asset_types=list(asset.asset_types) if asset.asset_types else [],
-    )
-
-
-def _list_asset_tables_impl(ml: Any) -> AssetTablesResponse:
-    """Fetch the catalog's asset tables. Pure helper -- shared by tool and resource.
-
-    Args:
-        ml: A connected ``deriva_ml.DerivaML`` instance.
-
-    Returns:
-        ``AssetTablesResponse`` -- see ``deriva_ml_mcp._response_models``.
-        No pagination -- catalogs typically have a handful of asset
-        tables and ``Table`` objects don't carry a stable RID for the
-        cursor protocol.
-    """
-    tables = list(ml.list_asset_tables())
-    rendered = [_table_to_dict(t) for t in tables]
-    return AssetTablesResponse(
-        asset_tables=[AssetTableRef.model_validate(r) for r in rendered],
-        count=len(rendered),
     )
 
 
@@ -234,50 +212,6 @@ def register(ctx: PluginContext) -> None:
         >>> # ctx provided by the framework
         >>> register(ctx)  # doctest: +SKIP
     """
-
-    @ctx.tool(mutates=False)
-    async def deriva_ml_list_asset_tables(
-        hostname: str,
-        catalog_id: str,
-    ) -> str:
-        """List all asset tables in the catalog.
-
-        An asset table is a file-backed catalog table (e.g. ``Image``,
-        ``Trained_Model``, ``Execution_Metadata``). The result is the
-        full set -- catalogs typically have only a handful of asset
-        tables, so no pagination is offered.
-
-        Args:
-
-        Returns:
-            JSON string ``{"asset_tables": [{"name", "schema"}, ...],
-            "count": N}``.
-
-        Raises:
-            RuntimeError: Wrapped as ``{"error": ...}``, propagated
-                from ``deriva_ml.DerivaML.list_asset_tables``.
-
-        Example:
-            ``{"asset_tables": [{"name": "Image", "schema":
-            "demo-schema"}, {"name": "Execution_Metadata", "schema":
-            "deriva-ml"}], "count": 2}``.
-        """
-        try:
-            with deriva_call():
-                # Run the synchronous deriva-ml calls in a thread pool so
-                # the event loop stays responsive. See deriva-mcp-core
-                # plugin-authoring-guide.md §"Synchronous work in threads".
-                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
-                payload = await asyncio.to_thread(_list_asset_tables_impl, ml)
-            return payload.model_dump_json(by_alias=True)
-        except Exception as exc:
-            return _error_envelope(
-                exc,
-                operation="list_asset_tables",
-                hostname=hostname,
-                catalog_id=catalog_id,
-                audit=False,
-            )
 
     @ctx.tool(mutates=False)
     async def deriva_ml_list_assets(
