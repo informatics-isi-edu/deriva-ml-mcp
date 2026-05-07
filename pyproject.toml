@@ -28,6 +28,7 @@ dependencies = [
     # (v1.32.0) and validate_dataset_specs / validate_execution_configuration
     # (v1.33.0).
     "deriva-ml>=1.33.0",
+    "pip-system-certs>=5.3",
 ]
 
 [project.optional-dependencies]
@@ -53,7 +54,7 @@ packages = ["src/deriva_ml_mcp"]
 
 [tool.uv]
 override-dependencies = [
-    "deriva @ git+https://github.com/informatics-isi-edu/deriva-py@2.0-dev",
+    "deriva @ git+https://github.com/informatics-isi-edu/deriva-py@deriva-ml",
 ]
 
 [tool.uv.sources]
