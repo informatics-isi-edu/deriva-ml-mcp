@@ -532,19 +532,41 @@ for the wire name.
                   skill. Verbs: list_asset_tables / list_assets /
                   lookup / update.
 
-DISCOVERY: PREFER RESOURCES AND RAG OVER PAGINATED TOOL SCANS
--------------------------------------------------------------
-For browsing and "what is in this catalog" questions, the read-only
-resources are usually the right starting point -- they bundle data that
-would otherwise be several tool calls into one URI fetch:
+READ-SIDE QUESTIONS: FETCH THE RESOURCE FIRST
+---------------------------------------------
+For READ-SIDE QUESTIONS ABOUT AN EXISTING ENTITY -- "show me X by RID",
+"what's in Y", "what did Z produce / consume", "what's the current
+version of W", "have we tried <thing>", "why was <choice> made" -- fetch
+the matching ``deriva://catalog/{h}/{c}/ml/...`` resource BEFORE
+reaching for ``deriva_ml_*`` tools or generic catalog CRUD
+(``get_entities``, ``query_attribute``, ``list_foreign_keys``).
+
+The URI is constructable from the catalog hostname + catalog id + entity
+RID -- no tool search needed. The resources bundle the entity's summary
+plus its associated children (a dataset's members and version, an
+execution's inputs / outputs / metadata, an asset's producing-execution
+chain) in a stable shape, while the equivalent tool path typically
+takes 2-7 round trips of fetch + filter + join.
+
+ANTI-PATTERN: do NOT call ``deriva_ml_get_execution`` (or
+``deriva_ml_get_dataset``, etc.) when you already have the RID and want
+the entity's full state. Those tools return a thinner record and force
+follow-up ``deriva_ml_list_assets`` / ``query_attribute`` calls. The
+``ml/<kind>/{rid}`` resource is the one-fetch answer.
+
+The full read-only resource family:
 
     deriva://catalog/{h}/{c}/ml/datasets         -- all datasets, capped at 1000
-    deriva://catalog/{h}/{c}/ml/dataset/{rid}    -- one dataset + version_history
+    deriva://catalog/{h}/{c}/ml/dataset/{rid}    -- one dataset + version_history + members
     deriva://catalog/{h}/{c}/ml/dataset/{rid}/members  -- members grouped by table
     deriva://catalog/{h}/{c}/ml/workflows        -- all workflows
     deriva://catalog/{h}/{c}/ml/workflow/{rid}   -- one workflow
     deriva://catalog/{h}/{c}/ml/executions       -- all executions
-    deriva://catalog/{h}/{c}/ml/execution/{rid}  -- one execution + inputs/outputs/metadata
+    deriva://catalog/{h}/{c}/ml/execution/{rid}  -- one execution: summary + inputs +
+                                                    outputs (split into ``assets`` and
+                                                    ``metadata``) + experiment
+    deriva://catalog/{h}/{c}/ml/lineage/{rid}    -- provenance chain for any artifact
+                                                    (Dataset, Asset, Feature value, Execution)
     deriva://catalog/{h}/{c}/ml/features/{table} -- features defined on one table
     deriva://catalog/{h}/{c}/ml/asset/{rid}      -- one asset + bundled executions
     deriva://catalog/{h}/{c}/ml/assets/{schema}  -- asset tables in one schema
@@ -555,19 +577,23 @@ would otherwise be several tool calls into one URI fetch:
     deriva://catalog/{h}/{c}/ml/vocabularies/{schema}/{vocab_name}
                                                  -- terms in one vocabulary table
 
-For semantic discovery ("which workflows train CNN models", "find
+For SEMANTIC DISCOVERY ("which workflows train CNN models", "find
 executions that produced quality scores"), prefer ``rag_search`` over
-listing tools:
+the paginated list tools:
 
     rag_search(query="...", doc_type="ml-docs")      -- search DerivaML docs
     rag_search(query="...", doc_type="catalog-data") -- search per-user RAG
                                                         index of Dataset /
                                                         Workflow / Execution rows
 
-Fall back to the paginated list tools (``deriva_ml_list_datasets``,
-``deriva_ml_list_workflows``, ``deriva_ml_list_executions``, ``deriva_ml_list_features``) only when
-you need filtered scans (e.g. "executions with status=Failed for
-workflow 1-WF") that resources cannot express.
+Reach for the paginated list tools (``deriva_ml_list_datasets``,
+``deriva_ml_list_workflows``, ``deriva_ml_list_executions``,
+``deriva_ml_list_features``, ``deriva_ml_list_assets``) only when you
+need filtered scans (e.g. "executions with status=Failed for workflow
+1-WF") that resources cannot express, or for paginated browse of large
+asset tables. Reach for ``deriva_ml_*`` mutation tools (create / update
+/ commit / abort / start) only for write-side operations -- those have
+no resource counterpart.
 
 DISCOVERY: RESOLVING USER-MENTIONED NAMES TO CATALOG IDENTIFIERS
 ----------------------------------------------------------------
