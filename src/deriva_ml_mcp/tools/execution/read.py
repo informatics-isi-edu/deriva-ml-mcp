@@ -226,8 +226,24 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> ExecutionDetail:
     except Exception:  # noqa: BLE001 -- record may not be bound on all paths
         input_datasets = []
 
+    # ``record.list_assets(asset_role=...)`` already walks every
+    # ``*_Execution`` association table -- including
+    # ``Execution_Asset_Execution`` AND ``Execution_Metadata_Execution``
+    # -- so a single call returns both kinds of outputs mixed together.
+    # We categorize them by the asset row's ``asset_table`` attribute:
+    # ``"Execution_Metadata"`` rows go into ``outputs.metadata`` (Hydra
+    # configs, env snapshots, uv.lock, etc.); everything else goes into
+    # ``outputs.assets`` (the run's real products: model weights,
+    # prediction CSVs, training logs, plots).
+    #
+    # Inputs do not need this split today -- the caller-facing
+    # ``inputs.assets`` represents user-supplied input files and these
+    # are conventionally not ``Execution_Metadata`` rows. If that
+    # assumption ever breaks, mirror the categorization on the input
+    # branch.
     input_assets: list[ExecutionAssetRef] = []
     output_assets: list[ExecutionAssetRef] = []
+    output_metadata: list[ExecutionAssetRef] = []
     try:
         for asset in record.list_assets(asset_role="Input"):
             input_assets.append(
@@ -237,23 +253,16 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> ExecutionDetail:
                 )
             )
         for asset in record.list_assets(asset_role="Output"):
-            output_assets.append(
-                ExecutionAssetRef(
-                    rid=getattr(asset, "asset_rid", None),
-                    filename=getattr(asset, "filename", None),
-                )
+            ref = ExecutionAssetRef(
+                rid=getattr(asset, "asset_rid", None),
+                filename=getattr(asset, "filename", None),
             )
+            if getattr(asset, "asset_table", None) == "Execution_Metadata":
+                output_metadata.append(ref)
+            else:
+                output_assets.append(ref)
     except Exception:  # noqa: BLE001 -- assets are optional
         pass
-
-    # TODO(deriva-ml-execution-metadata-api): no generic API on
-    # ExecutionRecord to enumerate Execution_Metadata files by role
-    # (Deriva_Config / Execution_Config / Hydra_Config / Runtime_Env --
-    # they're stored as Asset rows joined through Execution_Metadata,
-    # not under list_assets's asset_role filter which only handles
-    # Input/Output). Until an upstream enumerator exists, no metadata
-    # field on ExecutionDetail -- the Experiment-bound hydra_config
-    # below covers the most common reader use case.
 
     # Experiment: try lookup_experiment(execution_rid). The deriva-ml
     # API raises if the execution has no Experiment row; treat that as
@@ -280,7 +289,7 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> ExecutionDetail:
     return ExecutionDetail(
         **summary.model_dump(),
         inputs=ExecutionInputs(datasets=input_datasets, assets=input_assets),
-        outputs=ExecutionOutputs(assets=output_assets),
+        outputs=ExecutionOutputs(assets=output_assets, metadata=output_metadata),
         experiment=experiment,
     )
 

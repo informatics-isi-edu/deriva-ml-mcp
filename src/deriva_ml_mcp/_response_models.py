@@ -413,17 +413,33 @@ class ExecutionInputs(BaseModel):
 class ExecutionOutputs(BaseModel):
     """Outputs grouping on an Execution detail.
 
-    Outputs are asset-only today -- DerivaML doesn't currently model
-    "this execution produced this dataset" as a first-class output
-    relationship (datasets are produced by features that link back to
-    their producing execution; the relationship is reachable but not
-    direct). Kept as a single-key dict for forward compatibility with
-    a possible future ``outputs.datasets`` field.
+    Outputs are split into two buckets:
+
+    - ``assets`` -- "real" ``Execution_Asset`` outputs the run produced
+      (model weights, prediction CSVs, training logs, plots).
+    - ``metadata`` -- ``Execution_Metadata`` outputs (configuration.json,
+      hydra-*.yaml, uv.lock, environment snapshots). These are
+      provenance-of-the-run rather than products-of-the-run, and most
+      reader use cases want them separated from the real outputs.
+
+    Categorization is by the asset row's ``asset_table`` attribute,
+    which deriva-ml's ``ExecutionRecord.list_assets`` already exposes
+    (no upstream change needed -- the underlying enumerator walks both
+    ``Execution_Asset_Execution`` and ``Execution_Metadata_Execution``
+    association tables).
+
+    DerivaML doesn't currently model "this execution produced this
+    dataset" as a first-class output relationship (datasets are
+    produced by features that link back to their producing execution;
+    the relationship is reachable but not direct), so an
+    ``outputs.datasets`` field is intentionally absent. The dict stays
+    extensible for that future.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     assets: list[ExecutionAssetRef] = Field(default_factory=list)
+    metadata: list[ExecutionAssetRef] = Field(default_factory=list)
 
 
 class ExecutionExperiment(BaseModel):
@@ -460,10 +476,12 @@ class ExecutionDetail(ExecutionSummary):
     rather than aborting the whole detail payload. Same best-effort
     semantics for ``inputs.assets`` and ``outputs.assets``.
 
-    The ``metadata`` key from the v1.x design (Deriva_Config /
-    Execution_Config / Hydra_Config / Runtime_Env) is intentionally
-    OMITTED until upstream provides a generic enumerator -- see the
-    TODO comment in ``_get_execution_detail_impl``.
+    Outputs are split between ``outputs.assets`` (real
+    ``Execution_Asset`` files like model weights and prediction CSVs)
+    and ``outputs.metadata`` (``Execution_Metadata`` files like
+    ``configuration.json``, ``hydra-*.yaml``, ``uv.lock``, and the
+    environment snapshot). See ``ExecutionOutputs`` for the
+    categorization rationale.
 
     v2.0 wire shape: identical to v1.x (this PR Pydantic-izes the
     contract; there's no field rename or restructure on this model).
