@@ -482,15 +482,19 @@ def register(ctx: PluginContext) -> None:
         """Detail payload for one execution.
 
         Absorbs the old ``execution/{rid}/inputs``, ``/outputs``,
-        ``/metadata`` and ``experiment/{rid}`` URIs. The payload bundles
-        the execution summary plus ``inputs`` and ``outputs``. An
-        ``experiment`` key is added when the execution is a Hydra-driven
-        experiment (carries name + config_choices + model_config; the
-        full hydra_config dict is NOT surfaced -- it can be 10-100 KB,
-        and callers wanting it should fetch the metadata asset directly).
-        The ``metadata`` key is omitted entirely until deriva-ml provides
-        a generic enumerator for ``Execution_Metadata`` files (TODO in
-        ``_get_execution_detail_impl``).
+        ``/metadata`` and ``experiment/{rid}`` URIs into a single
+        bundle: the execution summary plus ``inputs`` and ``outputs``.
+
+        Outputs are split into ``outputs.assets`` (real
+        ``Execution_Asset`` files like model weights and prediction
+        CSVs) and ``outputs.metadata`` (``Execution_Metadata`` files
+        like ``configuration.json``, ``hydra-*.yaml``, ``uv.lock``, and
+        the environment snapshot). Both lists are always present even
+        when empty. An ``experiment`` key is added when the execution
+        is a Hydra-driven experiment (carries name + config_choices +
+        model_config; the full hydra_config dict is NOT surfaced -- it
+        can be 10-100 KB, and callers wanting it should fetch the
+        metadata asset directly).
         """
         try:
             with deriva_call():

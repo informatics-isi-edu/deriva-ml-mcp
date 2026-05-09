@@ -447,13 +447,18 @@ async def test_ml_execution_detail_includes_inputs_outputs(resource_ctx, capturi
     input_ds.current_version = "1.0.0"
     record.list_input_datasets.return_value = [input_ds]
 
-    # Stub one input asset and one output asset.
+    # Stub one input asset and one output asset. The ``asset_table``
+    # attribute distinguishes regular ``Execution_Asset`` outputs from
+    # ``Execution_Metadata`` outputs (Hydra configs, env snapshots, etc.);
+    # categorization in ``_get_execution_detail_impl`` keys off it.
     input_asset = MagicMock()
     input_asset.asset_rid = "1-IN"
     input_asset.filename = "in.txt"
+    input_asset.asset_table = "Execution_Asset"
     output_asset = MagicMock()
     output_asset.asset_rid = "1-OUT"
     output_asset.filename = "out.txt"
+    output_asset.asset_table = "Execution_Asset"
 
     def _list_assets(asset_role: str | None = None):
         if asset_role == "Input":
@@ -478,17 +483,89 @@ async def test_ml_execution_detail_includes_inputs_outputs(resource_ctx, capturi
         "datasets": [{"rid": "1-DS", "version": "1.0.0"}],
         "assets": [{"rid": "1-IN", "filename": "in.txt"}],
     }
+    # Outputs split into two buckets: ``assets`` (real Execution_Asset
+    # outputs -- model weights, predictions, etc.) and ``metadata``
+    # (Execution_Metadata outputs -- Hydra configs, env snapshots,
+    # uv.lock, etc.). Both buckets are always present even when empty.
     assert out["outputs"] == {
         "assets": [{"rid": "1-OUT", "filename": "out.txt"}],
+        "metadata": [],
     }
-    # No metadata bucket (omit-when-no-upstream-API; see TODO in
-    # _get_execution_detail_impl).
-    assert "metadata" not in out
     # v2.0 wire change: experiment is always present, set to None when
     # the execution is not a Hydra-driven Experiment. v1.x omitted the
     # key entirely; the typed contract from PR 2 (#6) now surfaces it
     # explicitly so consumers can introspect without a KeyError.
     assert out["experiment"] is None
+
+
+async def test_ml_execution_detail_categorizes_metadata_outputs(
+    resource_ctx, capturing_mcp, mock_ml
+):
+    """Output assets split by ``asset_table`` into ``assets`` vs ``metadata``.
+
+    ``record.list_assets(asset_role="Output")`` returns BOTH ``Execution_Asset``
+    rows (model weights, prediction CSVs, training logs) and
+    ``Execution_Metadata`` rows (configuration.json, hydra-*.yaml, uv.lock,
+    environment snapshots) mixed together. The detail payload categorizes
+    them by their ``asset_table`` attribute so a consumer can answer "what
+    real outputs did this run produce?" without filtering metadata
+    out themselves.
+    """
+    record = _make_execution_record_mock(rid="1-EXEC", workflow_rid="1-WF")
+    record.list_input_datasets.return_value = []
+
+    # Three real outputs (Execution_Asset) and three metadata files
+    # (Execution_Metadata), shaped like a typical CIFAR-10 training run.
+    weights = MagicMock()
+    weights.asset_rid = "1-WEIGHT"
+    weights.filename = "cifar10_cnn_weights.pt"
+    weights.asset_table = "Execution_Asset"
+    log = MagicMock()
+    log.asset_rid = "1-LOG"
+    log.filename = "training_log.txt"
+    log.asset_table = "Execution_Asset"
+    preds = MagicMock()
+    preds.asset_rid = "1-CSV"
+    preds.filename = "prediction_probabilities.csv"
+    preds.asset_table = "Execution_Asset"
+
+    config = MagicMock()
+    config.asset_rid = "1-CFG"
+    config.filename = "configuration.json"
+    config.asset_table = "Execution_Metadata"
+    hydra = MagicMock()
+    hydra.asset_rid = "1-HYDRA"
+    hydra.filename = "hydra-1-config.yaml"
+    hydra.asset_table = "Execution_Metadata"
+    lockfile = MagicMock()
+    lockfile.asset_rid = "1-LOCK"
+    lockfile.filename = "uv.lock"
+    lockfile.asset_table = "Execution_Metadata"
+
+    def _list_assets(asset_role: str | None = None):
+        if asset_role == "Output":
+            return [weights, log, preds, config, hydra, lockfile]
+        return []
+
+    record.list_assets.side_effect = _list_assets
+    mock_ml.lookup_execution.return_value = record
+    mock_ml.lookup_experiment.side_effect = RuntimeError("Execution has no Experiment")
+
+    out = json.loads(
+        await capturing_mcp.resources[_EXECUTION_DETAIL_URI](
+            hostname="h", catalog_id="1", execution_rid="1-EXEC"
+        )
+    )
+    assert out["outputs"]["assets"] == [
+        {"rid": "1-WEIGHT", "filename": "cifar10_cnn_weights.pt"},
+        {"rid": "1-LOG", "filename": "training_log.txt"},
+        {"rid": "1-CSV", "filename": "prediction_probabilities.csv"},
+    ]
+    assert out["outputs"]["metadata"] == [
+        {"rid": "1-CFG", "filename": "configuration.json"},
+        {"rid": "1-HYDRA", "filename": "hydra-1-config.yaml"},
+        {"rid": "1-LOCK", "filename": "uv.lock"},
+    ]
 
 
 async def test_ml_execution_detail_includes_experiment_when_present(
