@@ -526,11 +526,12 @@ for the wire name.
                   create / start / commit / update / abort /
                   create_execution_dataset / add_nested_execution.
 
-    asset      -- 4 tools. File-backed catalog rows (images, model
+    asset      -- 3 tools. File-backed catalog rows (images, model
                   weights, etc.) -- catalog-state operations only.
                   File I/O lives in deriva-skills's work-with-assets
-                  skill. Verbs: list_asset_tables / list_assets /
-                  lookup / update.
+                  skill. Verbs: list_assets / lookup / update.
+                  For "what asset tables exist in a schema?" use the
+                  ml/assets/{schema} resource (no dedicated tool).
 
 READ-SIDE QUESTIONS: FETCH THE RESOURCE FIRST
 ---------------------------------------------
