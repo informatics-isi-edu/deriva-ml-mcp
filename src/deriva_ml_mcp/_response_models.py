@@ -387,12 +387,35 @@ class ExecutionInputDatasetRef(BaseModel):
 
 
 class ExecutionAssetRef(BaseModel):
-    """One asset on an Execution detail's ``inputs.assets`` / ``outputs.assets``."""
+    """One asset on an Execution detail's ``inputs.assets`` / ``outputs.assets`` / ``outputs.metadata``.
+
+    Carries enough per-asset detail to answer "what is this?" without a
+    follow-up ``ml/asset/{rid}`` fetch:
+
+    - ``rid`` / ``filename`` -- the navigation handle and the
+      human-readable name.
+    - ``description`` -- the asset row's free-text description column,
+      ideally a one-liner explaining what the file is for. May be
+      ``None`` if the producing code (or the framework upload step)
+      didn't set one.
+    - ``asset_types`` -- controlled-vocab tags from the asset table's
+      ``Asset_Type`` join (e.g. ``["Model_File"]``,
+      ``["Hydra_Config"]``, ``["Output_File"]``). Empty list when the
+      asset has no Asset_Type associations.
+    - ``asset_table`` -- the underlying asset table name (e.g.
+      ``"Execution_Asset"``, ``"Execution_Metadata"``, ``"Image"``).
+      Used by the detail payload's outputs categorization (Execution_Asset
+      vs Execution_Metadata) and useful to downstream consumers that
+      want to know "is this an Image vs a generic Execution_Asset?".
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     rid: str | None
     filename: str | None
+    description: str | None = None
+    asset_types: list[str] = Field(default_factory=list)
+    asset_table: str | None = None
 
 
 class ExecutionInputs(BaseModel):

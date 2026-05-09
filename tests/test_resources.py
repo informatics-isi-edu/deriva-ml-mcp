@@ -447,18 +447,24 @@ async def test_ml_execution_detail_includes_inputs_outputs(resource_ctx, capturi
     input_ds.current_version = "1.0.0"
     record.list_input_datasets.return_value = [input_ds]
 
-    # Stub one input asset and one output asset. The ``asset_table``
-    # attribute distinguishes regular ``Execution_Asset`` outputs from
-    # ``Execution_Metadata`` outputs (Hydra configs, env snapshots, etc.);
-    # categorization in ``_get_execution_detail_impl`` keys off it.
+    # Stub one input asset and one output asset. All Asset attributes the
+    # impl reads (asset_rid, filename, description, asset_types,
+    # asset_table) must be set explicitly -- MagicMock auto-creates
+    # missing attributes as nested MagicMocks, which would silently fail
+    # the iterable-coercion in the production code's `list(asset_types)`
+    # and trigger the except-pass guard.
     input_asset = MagicMock()
     input_asset.asset_rid = "1-IN"
     input_asset.filename = "in.txt"
     input_asset.asset_table = "Execution_Asset"
+    input_asset.asset_types = []
+    input_asset.description = None
     output_asset = MagicMock()
     output_asset.asset_rid = "1-OUT"
     output_asset.filename = "out.txt"
     output_asset.asset_table = "Execution_Asset"
+    output_asset.asset_types = []
+    output_asset.description = None
 
     def _list_assets(asset_role: str | None = None):
         if asset_role == "Input":
@@ -479,16 +485,35 @@ async def test_ml_execution_detail_includes_inputs_outputs(resource_ctx, capturi
     )
     assert out["rid"] == "1-EXEC"
     assert out["status"] == "Stopped"
+    # Asset rows include description, asset_types, asset_table. The
+    # mocks here only set asset_table; description/asset_types come back
+    # as their defaults (None / []).
     assert out["inputs"] == {
         "datasets": [{"rid": "1-DS", "version": "1.0.0"}],
-        "assets": [{"rid": "1-IN", "filename": "in.txt"}],
+        "assets": [
+            {
+                "rid": "1-IN",
+                "filename": "in.txt",
+                "description": None,
+                "asset_types": [],
+                "asset_table": "Execution_Asset",
+            }
+        ],
     }
     # Outputs split into two buckets: ``assets`` (real Execution_Asset
     # outputs -- model weights, predictions, etc.) and ``metadata``
     # (Execution_Metadata outputs -- Hydra configs, env snapshots,
     # uv.lock, etc.). Both buckets are always present even when empty.
     assert out["outputs"] == {
-        "assets": [{"rid": "1-OUT", "filename": "out.txt"}],
+        "assets": [
+            {
+                "rid": "1-OUT",
+                "filename": "out.txt",
+                "description": None,
+                "asset_types": [],
+                "asset_table": "Execution_Asset",
+            }
+        ],
         "metadata": [],
     }
     # v2.0 wire change: experiment is always present, set to None when
@@ -516,31 +541,26 @@ async def test_ml_execution_detail_categorizes_metadata_outputs(
 
     # Three real outputs (Execution_Asset) and three metadata files
     # (Execution_Metadata), shaped like a typical CIFAR-10 training run.
-    weights = MagicMock()
-    weights.asset_rid = "1-WEIGHT"
-    weights.filename = "cifar10_cnn_weights.pt"
-    weights.asset_table = "Execution_Asset"
-    log = MagicMock()
-    log.asset_rid = "1-LOG"
-    log.filename = "training_log.txt"
-    log.asset_table = "Execution_Asset"
-    preds = MagicMock()
-    preds.asset_rid = "1-CSV"
-    preds.filename = "prediction_probabilities.csv"
-    preds.asset_table = "Execution_Asset"
+    # All Asset attributes the impl reads (asset_rid, filename,
+    # description, asset_types, asset_table) must be set explicitly --
+    # MagicMock auto-creates missing attributes as nested MagicMocks,
+    # which would silently fail the iterable-coercion in the production
+    # code's `list(asset_types)` and trigger the except-pass guard.
+    def _mock_asset(rid, fn, table):
+        m = MagicMock()
+        m.asset_rid = rid
+        m.filename = fn
+        m.asset_table = table
+        m.asset_types = []
+        m.description = None
+        return m
 
-    config = MagicMock()
-    config.asset_rid = "1-CFG"
-    config.filename = "configuration.json"
-    config.asset_table = "Execution_Metadata"
-    hydra = MagicMock()
-    hydra.asset_rid = "1-HYDRA"
-    hydra.filename = "hydra-1-config.yaml"
-    hydra.asset_table = "Execution_Metadata"
-    lockfile = MagicMock()
-    lockfile.asset_rid = "1-LOCK"
-    lockfile.filename = "uv.lock"
-    lockfile.asset_table = "Execution_Metadata"
+    weights = _mock_asset("1-WEIGHT", "cifar10_cnn_weights.pt", "Execution_Asset")
+    log = _mock_asset("1-LOG", "training_log.txt", "Execution_Asset")
+    preds = _mock_asset("1-CSV", "prediction_probabilities.csv", "Execution_Asset")
+    config = _mock_asset("1-CFG", "configuration.json", "Execution_Metadata")
+    hydra = _mock_asset("1-HYDRA", "hydra-1-config.yaml", "Execution_Metadata")
+    lockfile = _mock_asset("1-LOCK", "uv.lock", "Execution_Metadata")
 
     def _list_assets(asset_role: str | None = None):
         if asset_role == "Output":
@@ -556,15 +576,136 @@ async def test_ml_execution_detail_categorizes_metadata_outputs(
             hostname="h", catalog_id="1", execution_rid="1-EXEC"
         )
     )
+    # Mocks here set asset_table only; description / asset_types come
+    # back as their defaults (None / []).
+    _bare = lambda rid, fn, table: {  # noqa: E731
+        "rid": rid, "filename": fn, "description": None,
+        "asset_types": [], "asset_table": table,
+    }
     assert out["outputs"]["assets"] == [
-        {"rid": "1-WEIGHT", "filename": "cifar10_cnn_weights.pt"},
-        {"rid": "1-LOG", "filename": "training_log.txt"},
-        {"rid": "1-CSV", "filename": "prediction_probabilities.csv"},
+        _bare("1-WEIGHT", "cifar10_cnn_weights.pt", "Execution_Asset"),
+        _bare("1-LOG", "training_log.txt", "Execution_Asset"),
+        _bare("1-CSV", "prediction_probabilities.csv", "Execution_Asset"),
     ]
     assert out["outputs"]["metadata"] == [
-        {"rid": "1-CFG", "filename": "configuration.json"},
-        {"rid": "1-HYDRA", "filename": "hydra-1-config.yaml"},
-        {"rid": "1-LOCK", "filename": "uv.lock"},
+        _bare("1-CFG", "configuration.json", "Execution_Metadata"),
+        _bare("1-HYDRA", "hydra-1-config.yaml", "Execution_Metadata"),
+        _bare("1-LOCK", "uv.lock", "Execution_Metadata"),
+    ]
+
+
+async def test_ml_execution_detail_includes_asset_descriptions_and_types(
+    resource_ctx, capturing_mcp, mock_ml
+):
+    """Asset rows on the bundle carry description, asset_types, asset_table.
+
+    Without these fields, an agent asking "what assets did this execution
+    produce" gets only RID + filename and has to fetch ``ml/asset/{rid}``
+    per row to see what each asset is for. The bundle should be
+    sufficient on its own for the typical "what outputs are these" reader
+    use case; these three fields cover description (one-line "what is
+    this?"), asset_types (controlled-vocab tags like Model_File /
+    Output_File / Hydra_Config), and asset_table (the underlying table,
+    which the categorization step also keys off but is useful for
+    downstream code that wants to know "is this an Image vs an
+    Execution_Asset?").
+    """
+    record = _make_execution_record_mock(rid="1-EXEC", workflow_rid="1-WF")
+    record.list_input_datasets.return_value = []
+
+    # One Execution_Asset output and one Execution_Metadata output, each
+    # with full attribute coverage.
+    weights = MagicMock()
+    weights.asset_rid = "1-WEIGHT"
+    weights.filename = "cifar10_cnn_weights.pt"
+    weights.asset_table = "Execution_Asset"
+    weights.asset_types = ["Model_File"]
+    weights.description = "Trained CNN model weights"
+
+    hydra = MagicMock()
+    hydra.asset_rid = "1-HYDRA"
+    hydra.filename = "hydra-1-config.yaml"
+    hydra.asset_table = "Execution_Metadata"
+    hydra.asset_types = ["Hydra_Config"]
+    hydra.description = "Resolved Hydra configuration for this execution"
+
+    def _list_assets(asset_role: str | None = None):
+        if asset_role == "Output":
+            return [weights, hydra]
+        return []
+
+    record.list_assets.side_effect = _list_assets
+    mock_ml.lookup_execution.return_value = record
+    mock_ml.lookup_experiment.side_effect = RuntimeError("Execution has no Experiment")
+
+    out = json.loads(
+        await capturing_mcp.resources[_EXECUTION_DETAIL_URI](
+            hostname="h", catalog_id="1", execution_rid="1-EXEC"
+        )
+    )
+    assert out["outputs"]["assets"] == [
+        {
+            "rid": "1-WEIGHT",
+            "filename": "cifar10_cnn_weights.pt",
+            "description": "Trained CNN model weights",
+            "asset_types": ["Model_File"],
+            "asset_table": "Execution_Asset",
+        },
+    ]
+    assert out["outputs"]["metadata"] == [
+        {
+            "rid": "1-HYDRA",
+            "filename": "hydra-1-config.yaml",
+            "description": "Resolved Hydra configuration for this execution",
+            "asset_types": ["Hydra_Config"],
+            "asset_table": "Execution_Metadata",
+        },
+    ]
+
+
+async def test_ml_execution_detail_handles_missing_asset_attributes(
+    resource_ctx, capturing_mcp, mock_ml
+):
+    """Asset objects missing description / asset_types degrade to None / [].
+
+    Older Asset implementations or unbound mocks may not expose every
+    field. The detail payload should fall back gracefully rather than
+    raising.
+    """
+    record = _make_execution_record_mock(rid="1-EXEC", workflow_rid="1-WF")
+    record.list_input_datasets.return_value = []
+
+    # Asset with only the bare-minimum attributes (rid, filename,
+    # asset_table for categorization). description and asset_types are
+    # absent -- spec=[] gives a strict mock with NO auto-attribute
+    # behavior, so getattr() returns the supplied default.
+    bare = MagicMock(spec=["asset_rid", "filename", "asset_table"])
+    bare.asset_rid = "1-BARE"
+    bare.filename = "bare.bin"
+    bare.asset_table = "Execution_Asset"
+
+    def _list_assets(asset_role: str | None = None):
+        if asset_role == "Output":
+            return [bare]
+        return []
+
+    record.list_assets.side_effect = _list_assets
+    mock_ml.lookup_execution.return_value = record
+    mock_ml.lookup_experiment.side_effect = RuntimeError("Execution has no Experiment")
+
+    out = json.loads(
+        await capturing_mcp.resources[_EXECUTION_DETAIL_URI](
+            hostname="h", catalog_id="1", execution_rid="1-EXEC"
+        )
+    )
+    assert out["outputs"]["assets"] == [
+        {
+            "rid": "1-BARE",
+            "filename": "bare.bin",
+            "description": None,
+            "asset_types": [],
+            "asset_table": "Execution_Asset",
+        },
     ]
 
 

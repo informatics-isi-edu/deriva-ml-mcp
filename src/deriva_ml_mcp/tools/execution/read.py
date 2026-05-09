@@ -244,20 +244,28 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> ExecutionDetail:
     input_assets: list[ExecutionAssetRef] = []
     output_assets: list[ExecutionAssetRef] = []
     output_metadata: list[ExecutionAssetRef] = []
+
+    def _ref(asset: Any) -> ExecutionAssetRef:
+        """Build a ref from a deriva-ml ``Asset`` object.
+
+        Uses ``getattr`` with safe defaults so a thinly-mocked or
+        older-API asset (missing description / asset_types) still
+        produces a well-formed ref rather than raising.
+        """
+        return ExecutionAssetRef(
+            rid=getattr(asset, "asset_rid", None),
+            filename=getattr(asset, "filename", None),
+            description=getattr(asset, "description", None),
+            asset_types=list(getattr(asset, "asset_types", []) or []),
+            asset_table=getattr(asset, "asset_table", None),
+        )
+
     try:
         for asset in record.list_assets(asset_role="Input"):
-            input_assets.append(
-                ExecutionAssetRef(
-                    rid=getattr(asset, "asset_rid", None),
-                    filename=getattr(asset, "filename", None),
-                )
-            )
+            input_assets.append(_ref(asset))
         for asset in record.list_assets(asset_role="Output"):
-            ref = ExecutionAssetRef(
-                rid=getattr(asset, "asset_rid", None),
-                filename=getattr(asset, "filename", None),
-            )
-            if getattr(asset, "asset_table", None) == "Execution_Metadata":
+            ref = _ref(asset)
+            if ref.asset_table == "Execution_Metadata":
                 output_metadata.append(ref)
             else:
                 output_assets.append(ref)
