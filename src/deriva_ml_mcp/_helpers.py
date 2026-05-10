@@ -325,3 +325,116 @@ def _row_rid_for(row_per: str | None) -> Callable[[dict[str, Any]], str]:
         return ""
 
     return extract
+
+
+# ---------------------------------------------------------------------------
+# Cite URLs (RFC-style /id/{cat}/{rid}[@snaptime] resolver links)
+# ---------------------------------------------------------------------------
+
+
+def _cite_url(ml: Any, rid: str) -> str | None:
+    """Return the live (no-snaptime) cite URL for ``rid``.
+
+    Used by per-row response models for non-dataset entities (assets,
+    executions, workflows, etc.). Always returns the live form; clients
+    that need a snaptime-pinned URL for a dataset version go through
+    ``_cite_dataset_version_url`` instead.
+
+    The URL form is ``https://{host}/id/{catalog}/{rid}``.
+
+    Args:
+        ml: A connected ``deriva_ml.DerivaML`` instance.
+        rid: The entity RID to cite.
+
+    Returns:
+        The cite URL string, or ``None`` if construction fails (e.g.
+        the rid does not resolve, or ``ml.cite`` raises). The
+        ``cite_url`` field is best-effort from a presentation
+        standpoint -- a missing URL is recoverable; a missing field
+        would break the whole bundle.
+
+    Note:
+        Uses ``ml.cite(rid, current=True)`` under the hood. The
+        ``current=True`` argument selects the no-snaptime form;
+        the default ``current=False`` would append the *latest*
+        catalog snaptime, which is the wrong form for a per-row
+        navigation link in a bundle resource.
+    """
+    try:
+        return ml.cite(rid, current=True)
+    except Exception:  # noqa: BLE001 -- presentation field, never raise
+        return None
+
+
+def _cite_dataset_version_url(
+    ml: Any, dataset_rid: str, version: str | None, *, ds: Any | None = None
+) -> str | None:
+    """Return the cite URL for a specific dataset version.
+
+    Routing per ADR-0003 / 0004:
+
+    - **Released version** (PEP 440 not-devrelease, e.g. ``"0.4.0"``)
+      → snaptime-pinned URL ``.../id/{cat}/{rid}@{snaptime}``.
+      The snaptime comes from the dataset's version-history row for
+      that release.
+    - **Current dev version** (PEP 440 devrelease matching the
+      dataset's current dev row, e.g. ``"0.4.0.post1.dev3"``) →
+      no-snaptime URL ``.../id/{cat}/{rid}``. Dev rows have no
+      ``Snapshot``; per ADR-0003 they resolve to the live state.
+    - **`None` / current_version** → resolves to whichever shape
+      ``current_version`` takes (released or dev), routed as above.
+
+    Args:
+        ml: A connected ``deriva_ml.DerivaML`` instance.
+        dataset_rid: The Dataset RID.
+        version: A PEP 440 version string, or None to use the
+            dataset's ``current_version``.
+        ds: Optional pre-fetched ``Dataset`` object for ``dataset_rid``.
+            Pass it when the caller has already looked up the dataset
+            to avoid a redundant ``ml.lookup_dataset`` call.
+
+    Returns:
+        The cite URL string, or ``None`` if construction fails. A
+        degraded-to-live URL is preferred over None when the live
+        form is constructible; ``None`` is returned only when even
+        ``ml.cite(rid, current=True)`` raises.
+
+    Note:
+        Defensive: if anything in the version-history walk raises,
+        falls back to the live URL. The cite_url field is best-effort
+        from a presentation standpoint -- a missing snaptime is
+        recoverable; a missing field would break the whole bundle.
+    """
+    try:
+        if ds is None:
+            ds = ml.lookup_dataset(dataset_rid)
+        if version is None:
+            version = str(ds.current_version)
+
+        # Dev versions have no snapshot. Detect via the PEP 440 typed
+        # property. Construct a DatasetVersion to query is_devrelease.
+        from deriva_ml.dataset.aux_classes import DatasetVersion
+
+        try:
+            parsed = DatasetVersion.parse(version)
+        except Exception:  # noqa: BLE001 -- malformed version strings degrade
+            parsed = None
+
+        if parsed is not None and parsed.is_devrelease:
+            return _cite_url(ml, dataset_rid)
+
+        # Released version: look up snapshot via dataset_history().
+        for entry in ds.dataset_history():
+            if str(entry.dataset_version) == version:
+                snapshot = getattr(entry, "snapshot", None)
+                if snapshot:
+                    return f"https://{ml.host_name}/id/{ml.catalog_id}/{dataset_rid}@{snapshot}"
+                # Released version with no recorded snapshot is a catalog
+                # inconsistency (released rows must carry one); fall
+                # through to the live URL rather than synthesising one.
+                break
+
+        # Version not found in history (or had no snapshot): degrade.
+        return _cite_url(ml, dataset_rid)
+    except Exception:  # noqa: BLE001 -- presentation field, never raise
+        return _cite_url(ml, dataset_rid)

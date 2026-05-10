@@ -158,7 +158,10 @@ async def test_get_dataset_success(dataset_ctx, capturing_mcp, mock_ml):
     assert out["description"] == "desc"
     assert out["dataset_types"] == ["Training"]
     assert out["current_version"] == "1.0.0"
-    assert out["chaise_url"] == "https://example.org/chaise"
+    # cite_url is built via _cite_dataset_version_url; under the mock
+    # fixture both lookup_dataset and ml.cite return MagicMocks, which
+    # the impl coerces to None rather than failing Pydantic validation.
+    assert out["cite_url"] is None
     assert "history" not in out
     mock_ml.lookup_dataset.assert_called_once_with("1-AAAA")
 

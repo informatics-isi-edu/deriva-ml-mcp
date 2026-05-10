@@ -38,6 +38,7 @@ from deriva_ml.dataset.aux_classes import DatasetSpec
 import deriva_ml_mcp.tools.dataset as _pkg  # noqa: E402  (intentional cycle)
 from deriva_ml_mcp._helpers import (
     _MAX_LIMIT,
+    _cite_dataset_version_url,
     _error_envelope,
     _paginate,
     _read_rid,
@@ -164,9 +165,12 @@ def _get_dataset_detail_impl(ml: Any, dataset_rid: str) -> DatasetDetail:
         )
         for h in ds.dataset_history()
     ]
+    cite = _cite_dataset_version_url(
+        ml, dataset_rid, str(ds.current_version), ds=ds
+    )
     return DatasetDetail(
         **summary.model_dump(),
-        chaise_url=ds.get_chaise_url(),
+        cite_url=cite if isinstance(cite, str) else None,
         version_history=version_history,
     )
 
@@ -352,7 +356,7 @@ def register(ctx: PluginContext) -> None:
         Example:
             ``{"rid": "1-AAAA", "description": "Training set",
             "dataset_types": ["Training"], "current_version": "1.0.0",
-            "chaise_url": "https://example.org/chaise/...",
+            "cite_url": "https://example.org/id/1/1-AAAA@350-XXXX-YYYY",
             "version_history": []}``.
         """
         try:
@@ -376,9 +380,12 @@ def register(ctx: PluginContext) -> None:
                     # shape.
                     ds = await asyncio.to_thread(ml.lookup_dataset, dataset_rid)
                     summary = _summarize_dataset(ds)
+                    cite = _cite_dataset_version_url(
+                        ml, dataset_rid, str(ds.current_version), ds=ds
+                    )
                     payload = DatasetDetail(
                         **summary.model_dump(),
-                        chaise_url=ds.get_chaise_url(),
+                        cite_url=cite if isinstance(cite, str) else None,
                         version_history=[],
                     )
             return payload.model_dump_json(by_alias=True)
