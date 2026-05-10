@@ -222,6 +222,12 @@ async def test_ml_dataset_detail_includes_version_history(resource_ctx, capturin
     history_entry.execution_rid = "EXEC-1"
     ds.dataset_history.return_value = [history_entry]
     mock_ml.lookup_dataset.return_value = ds
+    # _cite_dataset_version_url interpolates ml.host_name and
+    # ml.catalog_id into the snapshot URL; set them to real strings so
+    # the f-string produces a real URL rather than embedding MagicMock
+    # reprs.
+    mock_ml.host_name = "data.example.org"
+    mock_ml.catalog_id = "1"
 
     out = json.loads(
         await capturing_mcp.resources[_DATASET_DETAIL_URI](
@@ -229,7 +235,10 @@ async def test_ml_dataset_detail_includes_version_history(resource_ctx, capturin
         )
     )
     assert out["rid"] == "1-AAAA"
-    assert out["chaise_url"] == "https://example.org/chaise"
+    # current_version "1.0.0" is a released label (not is_devrelease),
+    # found in dataset_history with snapshot "snap1" -- the cite_url
+    # routes to the snaptime-pinned form.
+    assert out["cite_url"] == "https://data.example.org/id/1/1-AAAA@snap1"
     assert out["version_history"] == [
         {
             "version": "1.0.0",
@@ -485,11 +494,15 @@ async def test_ml_execution_detail_includes_inputs_outputs(resource_ctx, capturi
     )
     assert out["rid"] == "1-EXEC"
     assert out["status"] == "Stopped"
-    # Asset rows include description, asset_types, asset_table. The
-    # mocks here only set asset_table; description/asset_types come back
-    # as their defaults (None / []).
+    # Asset rows include description, asset_types, asset_table, cite_url.
+    # The mocks here only set asset_table; description/asset_types/cite_url
+    # come back as their defaults (None / [] / None — the cite_url helper's
+    # ml.cite call returns a MagicMock under this fixture, which the
+    # impl coerces to None rather than failing Pydantic validation).
     assert out["inputs"] == {
-        "datasets": [{"rid": "1-DS", "version": "1.0.0"}],
+        "datasets": [
+            {"rid": "1-DS", "version": "1.0.0", "cite_url": None},
+        ],
         "assets": [
             {
                 "rid": "1-IN",
@@ -497,6 +510,7 @@ async def test_ml_execution_detail_includes_inputs_outputs(resource_ctx, capturi
                 "description": None,
                 "asset_types": [],
                 "asset_table": "Execution_Asset",
+                "cite_url": None,
             }
         ],
     }
@@ -512,6 +526,7 @@ async def test_ml_execution_detail_includes_inputs_outputs(resource_ctx, capturi
                 "description": None,
                 "asset_types": [],
                 "asset_table": "Execution_Asset",
+                "cite_url": None,
             }
         ],
         "metadata": [],
@@ -576,11 +591,11 @@ async def test_ml_execution_detail_categorizes_metadata_outputs(
             hostname="h", catalog_id="1", execution_rid="1-EXEC"
         )
     )
-    # Mocks here set asset_table only; description / asset_types come
-    # back as their defaults (None / []).
+    # Mocks here set asset_table only; description / asset_types / cite_url
+    # come back as their defaults (None / [] / None).
     _bare = lambda rid, fn, table: {  # noqa: E731
         "rid": rid, "filename": fn, "description": None,
-        "asset_types": [], "asset_table": table,
+        "asset_types": [], "asset_table": table, "cite_url": None,
     }
     assert out["outputs"]["assets"] == [
         _bare("1-WEIGHT", "cifar10_cnn_weights.pt", "Execution_Asset"),
@@ -650,6 +665,7 @@ async def test_ml_execution_detail_includes_asset_descriptions_and_types(
             "description": "Trained CNN model weights",
             "asset_types": ["Model_File"],
             "asset_table": "Execution_Asset",
+            "cite_url": None,
         },
     ]
     assert out["outputs"]["metadata"] == [
@@ -659,6 +675,7 @@ async def test_ml_execution_detail_includes_asset_descriptions_and_types(
             "description": "Resolved Hydra configuration for this execution",
             "asset_types": ["Hydra_Config"],
             "asset_table": "Execution_Metadata",
+            "cite_url": None,
         },
     ]
 
@@ -705,6 +722,7 @@ async def test_ml_execution_detail_handles_missing_asset_attributes(
             "description": None,
             "asset_types": [],
             "asset_table": "Execution_Asset",
+            "cite_url": None,
         },
     ]
 

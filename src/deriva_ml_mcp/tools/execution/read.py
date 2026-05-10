@@ -36,6 +36,8 @@ from deriva_ml.execution.execution import ExecutionStatus
 import deriva_ml_mcp.tools.execution as _pkg  # noqa: E402  (intentional cycle)
 from deriva_ml_mcp._helpers import (
     _MAX_LIMIT,
+    _cite_dataset_version_url,
+    _cite_url,
     _error_envelope,
     _paginate,
     _read_rid,
@@ -215,16 +217,26 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> ExecutionDetail:
     # Inputs: datasets + input assets.
     input_datasets: list[ExecutionInputDatasetRef] = []
     try:
-        for ds in record.list_input_datasets():
+        ds_iter = record.list_input_datasets()
+    except Exception:  # noqa: BLE001 -- record may not be bound on all paths
+        ds_iter = []
+    for ds in ds_iter:
+        try:
             current = getattr(ds, "current_version", None)
+            version_str = str(current) if current is not None else None
+            cite = _cite_dataset_version_url(ml, ds.dataset_rid, version_str)
             input_datasets.append(
                 ExecutionInputDatasetRef(
                     rid=ds.dataset_rid,
-                    version=str(current) if current is not None else None,
+                    version=version_str,
+                    # Pydantic rejects non-string cite values (e.g. when
+                    # ml.cite is mocked and returns a MagicMock); coerce
+                    # defensively rather than dropping the whole entry.
+                    cite_url=cite if isinstance(cite, str) else None,
                 )
             )
-    except Exception:  # noqa: BLE001 -- record may not be bound on all paths
-        input_datasets = []
+        except Exception:  # noqa: BLE001 -- per-row presentation field
+            continue
 
     # ``record.list_assets(asset_role=...)`` already walks every
     # ``*_Execution`` association table -- including
@@ -252,25 +264,43 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> ExecutionDetail:
         older-API asset (missing description / asset_types) still
         produces a well-formed ref rather than raising.
         """
+        rid = getattr(asset, "asset_rid", None)
+        cite = _cite_url(ml, rid) if rid else None
         return ExecutionAssetRef(
-            rid=getattr(asset, "asset_rid", None),
+            rid=rid,
             filename=getattr(asset, "filename", None),
             description=getattr(asset, "description", None),
             asset_types=list(getattr(asset, "asset_types", []) or []),
             asset_table=getattr(asset, "asset_table", None),
+            # Pydantic rejects non-string cite values (e.g. when
+            # ml.cite is mocked and returns a MagicMock); coerce
+            # defensively rather than dropping the whole entry.
+            cite_url=cite if isinstance(cite, str) else None,
         )
 
     try:
-        for asset in record.list_assets(asset_role="Input"):
-            input_assets.append(_ref(asset))
-        for asset in record.list_assets(asset_role="Output"):
-            ref = _ref(asset)
-            if ref.asset_table == "Execution_Metadata":
-                output_metadata.append(ref)
-            else:
-                output_assets.append(ref)
+        in_iter = list(record.list_assets(asset_role="Input"))
     except Exception:  # noqa: BLE001 -- assets are optional
-        pass
+        in_iter = []
+    try:
+        out_iter = list(record.list_assets(asset_role="Output"))
+    except Exception:  # noqa: BLE001 -- assets are optional
+        out_iter = []
+
+    for asset in in_iter:
+        try:
+            input_assets.append(_ref(asset))
+        except Exception:  # noqa: BLE001 -- per-row presentation field
+            continue
+    for asset in out_iter:
+        try:
+            ref = _ref(asset)
+        except Exception:  # noqa: BLE001 -- per-row presentation field
+            continue
+        if ref.asset_table == "Execution_Metadata":
+            output_metadata.append(ref)
+        else:
+            output_assets.append(ref)
 
     # Experiment: try lookup_experiment(execution_rid). The deriva-ml
     # API raises if the execution has no Experiment row; treat that as

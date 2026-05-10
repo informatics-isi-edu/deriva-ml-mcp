@@ -229,13 +229,22 @@ class DatasetVersionEntry(BaseModel):
 
 
 class DatasetDetail(DatasetSummary):
-    """Full Dataset detail: summary + chaise URL + version history.
+    """Full Dataset detail: summary + cite URL + version history.
 
     Produced by ``_get_dataset_detail_impl``. Used by the
     ``deriva://catalog/{h}/{c}/ml/dataset/{rid}`` resource.
+
+    The ``cite_url`` field replaces the previous ``chaise_url`` field
+    (renamed in v3.4 with no compat shim). The new URL is the
+    ``/id/{cat}/{rid}[@snaptime]`` resolver form -- table-agnostic,
+    routable to whatever current Chaise UI is hosted, and (for
+    released dataset versions) snaptime-pinned. For dev versions
+    (``current_version.is_devrelease``) the URL has no ``@snaptime``
+    component, per ADR-0003. Returns ``None`` if URL construction
+    failed (degraded but never blocking).
     """
 
-    chaise_url: str
+    cite_url: str | None = None
     version_history: list[DatasetVersionEntry]
 
 
@@ -378,12 +387,26 @@ class ExecutionSummary(BaseModel):
 
 
 class ExecutionInputDatasetRef(BaseModel):
-    """One input dataset on an Execution detail's ``inputs.datasets`` list."""
+    """One input dataset on an Execution detail's ``inputs.datasets`` list.
+
+    Carries the dataset RID, the version that was consumed, and a cite
+    URL pinned to that version. The cite URL routing matches ADR-0003:
+
+    - For a released ``version`` (PEP 440 not-devrelease), the URL
+      includes the ``@snaptime`` for that release.
+    - For a dev ``version`` (PEP 440 devrelease, e.g.
+      ``"0.4.0.post1.dev3"``), the URL has no ``@snaptime`` -- it
+      resolves to the live catalog state, per ADR-0003's "dev rows
+      have no snapshot" rule.
+    - When ``version`` is ``None`` (rare; consumed-without-pinned-version),
+      the URL resolves to the live state.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     rid: str
     version: str | None
+    cite_url: str | None = None
 
 
 class ExecutionAssetRef(BaseModel):
@@ -407,6 +430,10 @@ class ExecutionAssetRef(BaseModel):
       Used by the detail payload's outputs categorization (Execution_Asset
       vs Execution_Metadata) and useful to downstream consumers that
       want to know "is this an Image vs a generic Execution_Asset?".
+    - ``cite_url`` -- the ``/id/{cat}/{rid}`` resolver URL for this
+      asset. Always the live (no-snaptime) form -- assets are not
+      versioned the way datasets are, so there is no historical
+      snapshot to pin to. ``None`` when the rid is missing.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -416,6 +443,7 @@ class ExecutionAssetRef(BaseModel):
     description: str | None = None
     asset_types: list[str] = Field(default_factory=list)
     asset_table: str | None = None
+    cite_url: str | None = None
 
 
 class ExecutionInputs(BaseModel):
