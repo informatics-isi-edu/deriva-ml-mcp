@@ -41,7 +41,7 @@ _DATASET_TOOLS = frozenset(
         # widened to take both `dataset_types` and `description`.
         "deriva_ml_update_dataset",
         "deriva_ml_add_dataset_element_type",
-        "deriva_ml_increment_dataset_version",
+        "deriva_ml_release",
         # Complex / local-FS tools
         "deriva_ml_cache_dataset",
         "deriva_ml_denormalize_dataset",
