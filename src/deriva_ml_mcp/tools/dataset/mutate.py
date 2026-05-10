@@ -4,7 +4,7 @@ This submodule houses the 7 simple-mutation dataset tools:
 ``deriva_ml_create_dataset``, ``deriva_ml_delete_dataset``,
 ``deriva_ml_add_dataset_members``, ``deriva_ml_delete_dataset_members``,
 ``deriva_ml_update_dataset``, ``deriva_ml_add_dataset_element_type``,
-and ``deriva_ml_increment_dataset_version``.
+and ``deriva_ml_release``.
 
 These are the "one operation, one catalog mutation" tools -- each is
 short, body fits in a screen, no multi-step orchestration. The three
@@ -56,7 +56,7 @@ from deriva_ml_mcp._response_models import (
     CreateDatasetResponse,
     DeleteDatasetMembersResponse,
     DeleteDatasetResponse,
-    IncrementDatasetVersionResponse,
+    ReleaseDatasetResponse,
     UpdateDatasetResponse,
 )
 from deriva_ml_mcp.tools.dataset.read import _summarize_dataset
@@ -258,21 +258,29 @@ def register(ctx: PluginContext) -> None:
         -- faster, no resolution needed). Exactly one of the two must be
         non-empty.
 
-        Adding members automatically increments the dataset's minor
-        version. Member tables must already be registered as dataset
-        element types (see ``deriva_ml_add_dataset_element_type``).
+        Per ADR-0003 (deriva-ml 1.34+), adding members flips the
+        dataset to a *dev* version (``<last_release>.post1.devN``),
+        not a released version. To mint a stable, citable released
+        label, call ``deriva_ml_release`` after the mutation. The
+        returned ``new_version`` will be a dev label.
+
+        Member tables must already be registered as dataset element
+        types (see ``deriva_ml_add_dataset_element_type``).
 
         Args:
             dataset_rid: The RID of the dataset to add members to.
             member_rids: Mixed-table list of RIDs to add.
             members_by_table: Map of table name to list of RIDs.
-            description: Free-text description recorded with the version
-                bump.
+            description: Free-text description recorded with the dev
+                row's ``Description`` column. **Replaces** any prior
+                dev-period description rather than appending.
             execution_rid: Optional execution to attribute the change to.
 
         Returns:
             JSON string ``{"status": "added", "added_count",
-            "dataset_rid", "new_version"}``.
+            "dataset_rid", "new_version"}``. ``new_version`` is a
+            dev label; call ``deriva_ml_release`` to promote to a
+            released label.
 
         Raises:
             ValueError: If neither or both of ``member_rids``/
@@ -284,7 +292,7 @@ def register(ctx: PluginContext) -> None:
 
         Example:
             ``{"status": "added", "added_count": 3, "dataset_rid":
-            "1-AAAA", "new_version": "1.2.0"}``.
+            "1-AAAA", "new_version": "0.4.0.post1.dev1"}``.
         """
         has_list = bool(member_rids)
         has_dict = bool(members_by_table)
@@ -364,19 +372,27 @@ def register(ctx: PluginContext) -> None:
         """Remove records from a dataset.
 
         The records themselves are NOT deleted -- only the association
-        rows linking them to the dataset are removed. Removing members
-        increments the dataset's minor version.
+        rows linking them to the dataset are removed.
+
+        Per ADR-0003 (deriva-ml 1.34+), removing members flips the
+        dataset to a *dev* version (``<last_release>.post1.devN``),
+        not a released version. To mint a stable, citable released
+        label, call ``deriva_ml_release`` after the mutation. The
+        returned ``new_version`` will be a dev label.
 
         Args:
             dataset_rid: The RID of the dataset to remove members from.
             member_rids: List of member RIDs to remove.
-            description: Free-text description recorded with the version
-                bump.
+            description: Free-text description recorded with the dev
+                row's ``Description`` column. **Replaces** any prior
+                dev-period description rather than appending.
             execution_rid: Optional execution to attribute the change to.
 
         Returns:
             JSON string ``{"status": "removed", "removed_count",
-            "dataset_rid", "new_version"}``.
+            "dataset_rid", "new_version"}``. ``new_version`` is a
+            dev label; call ``deriva_ml_release`` to promote to a
+            released label.
 
         Raises:
             RuntimeError: Wrapped, propagated from
@@ -385,7 +401,7 @@ def register(ctx: PluginContext) -> None:
 
         Example:
             ``{"status": "removed", "removed_count": 2, "dataset_rid":
-            "1-AAAA", "new_version": "1.3.0"}``.
+            "1-AAAA", "new_version": "0.4.0.post1.dev2"}``.
         """
         removed_count = len(member_rids)
         try:
@@ -675,42 +691,64 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def deriva_ml_increment_dataset_version(
+    async def deriva_ml_release(
         hostname: str,
         catalog_id: str,
         dataset_rid: str,
-        component: Literal["major", "minor", "patch"] = "minor",
+        bump: Literal["major", "minor", "patch"] = "minor",
         description: str = "",
         execution_rid: str | None = None,
     ) -> str:
-        """Bump a dataset's semver version after upstream changes.
+        """Promote a dataset's dev period to a released version.
 
-        Use this to record a new version after metadata/data updates that
-        the regular member/type APIs don't already version (e.g. after an
-        out-of-band catalog edit). Bumping a higher-order component resets
-        lower-order components to zero.
+        Per ADR-0003 (deriva-ml 1.34+), ``release`` is the only operation
+        that produces a released ``Dataset_Version`` row. Member-mutation
+        operations (``deriva_ml_add_dataset_members``,
+        ``deriva_ml_delete_dataset_members``) flip the dataset to a dev
+        version (``<last_release>.post1.devN``); call this tool afterward
+        to mint a stable, citable released version.
+
+        Promotes the existing dev row in place: rewrites ``Version`` to
+        the released label, stamps ``Snapshot`` with the catalog snapshot
+        at release time, replaces ``Description`` with release notes, and
+        sets the row's ``Execution`` link to the supplied execution RID
+        (or ``NULL`` if none). Bumping a higher-order release segment
+        resets lower-order segments to zero.
 
         Args:
-            dataset_rid: The RID of the dataset to bump.
-            component: Which semver component to increment.
-            description: Free-text description recorded with the bump.
-            execution_rid: Optional execution to attribute the bump to.
+            dataset_rid: The RID of the dataset to release.
+            bump: Which release segment to advance from the last released
+                version (``"minor"`` is the common case;
+                ``"major"`` for schema-breaking changes;
+                ``"patch"`` for small clean-ups).
+            description: Release notes. **Replaces** the dev row's
+                accumulated description, not appended.
+            execution_rid: Optional execution RID to attribute the
+                release to. Stored on the released row's ``Execution``
+                link.
 
         Returns:
-            JSON string ``{"status": "incremented", "dataset_rid",
-            "previous_version", "new_version", "component"}``.
+            JSON string ``{"status": "released", "dataset_rid",
+            "previous_version", "new_version", "bump"}``.
+            ``previous_version`` is the dev label that was promoted
+            (e.g. ``"0.4.0.post1.dev3"``); ``new_version`` is the
+            released label (e.g. ``"0.5.0"``).
 
         Raises:
             RuntimeError: Wrapped, propagated from
-                ``deriva_ml.dataset.dataset.Dataset.increment_dataset_version``.
+                ``deriva_ml.dataset.dataset.Dataset.release``. Most
+                common: the dataset has no dev period to promote (call
+                ``deriva_ml_add_dataset_members`` first, or call the
+                ``deriva_ml.Dataset.mark_dev`` Python API to declare a
+                dev period for a no-op release).
 
         Example:
-            ``{"status": "incremented", "dataset_rid": "1-AAAA",
-            "previous_version": "1.2.0", "new_version": "1.3.0",
-            "component": "minor"}``.
+            ``{"status": "released", "dataset_rid": "1-AAAA",
+            "previous_version": "0.4.0.post1.dev3",
+            "new_version": "0.5.0", "bump": "minor"}``.
         """
         try:
-            version_part = VersionPart(component)
+            version_part = VersionPart(bump)
             with deriva_call():
                 # Run the synchronous deriva-ml calls in a thread pool so
                 # the event loop stays responsive. See deriva-mcp-core
@@ -720,19 +758,29 @@ def register(ctx: PluginContext) -> None:
                 previous_version = (
                     str(ds.current_version) if ds.current_version is not None else None
                 )
+
+                # The deriva-ml Dataset.release(execution=...) takes an
+                # Execution object, not a RID. Resolve to the typed
+                # object only when an execution_rid was supplied.
+                execution_obj = None
+                if execution_rid is not None:
+                    execution_obj = await asyncio.to_thread(
+                        ml.lookup_execution, execution_rid
+                    )
+
                 new_version = await asyncio.to_thread(
-                    ds.increment_dataset_version,
-                    component=version_part,
+                    ds.release,
+                    bump=version_part,
                     description=description,
-                    execution_rid=execution_rid,
+                    execution=execution_obj,
                 )
                 new_version_str = str(new_version)
             _pkg.audit_event(
-                "deriva_ml_increment_dataset_version",
+                "deriva_ml_release",
                 hostname=hostname,
                 catalog_id=catalog_id,
                 dataset_rid=dataset_rid,
-                component=component,
+                bump=bump,
                 previous_version=previous_version,
                 new_version=new_version_str,
             )
@@ -743,22 +791,22 @@ def register(ctx: PluginContext) -> None:
                 await _reindex_dataset(hostname, catalog_id, dataset_rid)
             except Exception:  # noqa: BLE001 -- best-effort cache refresh
                 logger.exception(
-                    "re-index failed for dataset %s after increment_dataset_version",
+                    "re-index failed for dataset %s after release",
                     dataset_rid,
                 )
-            return IncrementDatasetVersionResponse(
-                status="incremented",
+            return ReleaseDatasetResponse(
+                status="released",
                 dataset_rid=dataset_rid,
                 previous_version=previous_version,
                 new_version=new_version_str,
-                component=component,
+                bump=bump,
             ).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
-                operation="increment_dataset_version",
+                operation="release",
                 hostname=hostname,
                 catalog_id=catalog_id,
                 dataset_rid=dataset_rid,
-                component=component,
+                bump=bump,
             )

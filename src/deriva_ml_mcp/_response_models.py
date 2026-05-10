@@ -1068,13 +1068,20 @@ class AddNestedExecutionResponse(BaseModel):
 
 
 class _DatasetVersionBumpMixin(BaseModel):
-    """Common fields for tools that bump a dataset's version.
+    """Common fields for tools that change a dataset's version.
 
     Three tools share this shape: ``add_dataset_members``,
-    ``delete_dataset_members``, and ``increment_dataset_version``.
-    They all return the dataset RID and the post-bump version
-    string. Subclasses add the ``status`` discriminator and any
-    tool-specific delta fields (e.g. ``added_count``).
+    ``delete_dataset_members``, and ``release``. They all return the
+    dataset RID and the post-call version string. Subclasses add the
+    ``status`` discriminator and any tool-specific delta fields
+    (e.g. ``added_count``).
+
+    Per ADR-0003 (deriva-ml 1.34+), ``add_dataset_members`` and
+    ``delete_dataset_members`` flip the dataset to a *dev* version
+    (a label of the form ``<last_release>.post1.devN``); the
+    returned ``new_version`` may therefore be a dev label, not a
+    released label. ``release`` is the only operation that produces
+    a released version.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1085,6 +1092,11 @@ class _DatasetVersionBumpMixin(BaseModel):
 
 class AddDatasetMembersResponse(_DatasetVersionBumpMixin):
     """Response from ``deriva_ml_add_dataset_members``.
+
+    Per ADR-0003 (deriva-ml 1.34+), the returned ``new_version`` is
+    a dev label (``<last_release>.post1.devN``) — adding members
+    flips the dataset to dev, not to a released version. Call
+    ``deriva_ml_release`` afterward to mint a released version.
 
     v3.0: ``status`` was renamed from ``"success"`` to ``"added"`` to
     match the v3.0 status vocabulary (operation-specific verbs).
@@ -1097,6 +1109,11 @@ class AddDatasetMembersResponse(_DatasetVersionBumpMixin):
 class DeleteDatasetMembersResponse(_DatasetVersionBumpMixin):
     """Response from ``deriva_ml_delete_dataset_members``.
 
+    Per ADR-0003 (deriva-ml 1.34+), the returned ``new_version`` is
+    a dev label (``<last_release>.post1.devN``) — deleting members
+    flips the dataset to dev, not to a released version. Call
+    ``deriva_ml_release`` afterward to mint a released version.
+
     v3.0: ``status`` was renamed from ``"success"`` to ``"removed"``.
     """
 
@@ -1104,15 +1121,20 @@ class DeleteDatasetMembersResponse(_DatasetVersionBumpMixin):
     removed_count: int
 
 
-class IncrementDatasetVersionResponse(_DatasetVersionBumpMixin):
-    """Response from ``deriva_ml_increment_dataset_version``.
+class ReleaseDatasetResponse(_DatasetVersionBumpMixin):
+    """Response from ``deriva_ml_release``.
 
-    v3.0: ``status`` was renamed from ``"success"`` to ``"incremented"``.
+    Per ADR-0003 (deriva-ml 1.34+), ``release`` promotes a dev
+    period to a released version. The returned ``new_version`` is
+    a released label (e.g. ``"0.5.0"``); ``previous_version`` is
+    the dev label (e.g. ``"0.4.0.post1.dev3"``) that was promoted.
+    The ``bump`` field records which release segment was advanced
+    (``major`` / ``minor`` / ``patch``).
     """
 
-    status: Literal["incremented"]
+    status: Literal["released"]
     previous_version: str
-    component: str
+    bump: str
 
 
 class CreateDatasetResponse(DatasetSummary):

@@ -125,11 +125,15 @@ stored as one or more Deriva tables underneath, but TREAT THEM AS
 DERIVA-ML DOMAIN OBJECTS, NOT AS RAW TABLES.
 
   Dataset    A versioned collection of catalog rows that an execution
-             consumed or produced. Datasets have a type
+             consumed or produced. Datasets carry a type
              (``Dataset_Type`` vocabulary), an element-type spec, a
-             version history, and can be downloaded as bags. Use
-             ``deriva_ml_create_dataset``, ``deriva_ml_add_dataset_members``,
-             ``deriva_ml_increment_dataset_version``,
+             version history, and can be downloaded as bags. Versions
+             are two-state per ADR-0003: every member-mutation flips
+             the dataset to a *dev* version
+             (``<last_release>.post1.devN``); ``deriva_ml_release`` is
+             the only operation that produces a released version.
+             Use ``deriva_ml_create_dataset``,
+             ``deriva_ml_add_dataset_members``, ``deriva_ml_release``,
              ``deriva_ml_cache_dataset``.
 
   Workflow   A versioned reference to the code (URL + git commit hash)
@@ -231,9 +235,11 @@ or Asset rows -- bypasses real machinery:
     producing Execution; raw inserts can create dangling references).
   - Provenance tracking (each mutation links back to the active
     Execution; raw inserts have no Execution context).
-  - Version management (``deriva_ml_increment_dataset_version`` creates
-    a new snapshot; raw inserts skip the version bump and leave consumers
-    pointed at stale data).
+  - Version management (``deriva_ml_add_dataset_members`` and
+    siblings flip the dataset to a dev version;
+    ``deriva_ml_release`` promotes that dev period to a released
+    snapshot. Raw inserts skip the version flip entirely and leave
+    consumers pointed at stale data).
   - RAG re-indexing (the ``deriva_ml_*`` tools fire surgical re-index
     hooks so freshly mutated rows are searchable on the next
     ``rag_search``; raw inserts do not).

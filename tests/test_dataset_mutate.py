@@ -3,7 +3,7 @@
 Covers ``deriva_ml_create_dataset``, ``deriva_ml_delete_dataset``,
 ``deriva_ml_add_dataset_members``, ``deriva_ml_delete_dataset_members``,
 ``deriva_ml_update_dataset``, ``deriva_ml_add_dataset_element_type``,
-``deriva_ml_increment_dataset_version``, plus the v1.3 surgical
+``deriva_ml_release``, plus the v1.3 surgical
 RAG re-index wiring on the create / delete paths.
 
 The split mirrors the source-side ``tools/dataset/{read,mutate,complex}.py``
@@ -596,84 +596,99 @@ async def test_add_dataset_element_type_error(dataset_ctx, capturing_mcp, mock_m
 
 
 # ---------------------------------------------------------------------------
-# increment_dataset_version
+# release (replaces the old increment_dataset_version per ADR-0003)
 # ---------------------------------------------------------------------------
 
 
-async def test_increment_dataset_version_success(dataset_ctx, capturing_mcp, mock_ml):
-    ds = _make_dataset_mock("1-AAAA", current_version="1.2.0")
+async def test_release_success(dataset_ctx, capturing_mcp, mock_ml):
+    """Successful release: dev label -> released label, execution resolved to object."""
+    ds = _make_dataset_mock("1-AAAA", current_version="0.4.0.post1.dev3")
     new_ver = MagicMock()
-    new_ver.__str__ = lambda self: "1.3.0"
-    ds.increment_dataset_version.return_value = new_ver
+    new_ver.__str__ = lambda self: "0.5.0"
+    ds.release.return_value = new_ver
     mock_ml.lookup_dataset.return_value = ds
+
+    # The MCP tool resolves execution_rid -> Execution object via
+    # ml.lookup_execution before calling Dataset.release(execution=...).
+    exec_obj = MagicMock()
+    exec_obj.execution_rid = "EXEC-3"
+    mock_ml.lookup_execution.return_value = exec_obj
+
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["deriva_ml_increment_dataset_version"](
+            await capturing_mcp.tools["deriva_ml_release"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
-                component="minor",
-                description="rebuilt members",
+                bump="minor",
+                description="Add training images for v0.5.0",
                 execution_rid="EXEC-3",
             )
         )
-    assert out["status"] == "incremented"
+    assert out["status"] == "released"
     assert out["dataset_rid"] == "1-AAAA"
-    assert out["previous_version"] == "1.2.0"
-    assert out["new_version"] == "1.3.0"
-    assert out["component"] == "minor"
+    assert out["previous_version"] == "0.4.0.post1.dev3"
+    assert out["new_version"] == "0.5.0"
+    assert out["bump"] == "minor"
 
-    # Check that VersionPart.minor was passed (not the raw string).
+    # Check that VersionPart.minor was passed and the typed Execution
+    # object was forwarded (not the bare RID).
     from deriva_ml.dataset.aux_classes import VersionPart
 
-    forwarded = ds.increment_dataset_version.call_args.kwargs
-    assert forwarded["component"] == VersionPart.minor
-    assert forwarded["description"] == "rebuilt members"
-    assert forwarded["execution_rid"] == "EXEC-3"
+    forwarded = ds.release.call_args.kwargs
+    assert forwarded["bump"] == VersionPart.minor
+    assert forwarded["description"] == "Add training images for v0.5.0"
+    assert forwarded["execution"] is exec_obj
 
-    success = _success_calls(mock_audit, "deriva_ml_increment_dataset_version")
+    success = _success_calls(mock_audit, "deriva_ml_release")
     assert success
-    assert success[0].kwargs["component"] == "minor"
-    assert success[0].kwargs["previous_version"] == "1.2.0"
-    assert success[0].kwargs["new_version"] == "1.3.0"
+    assert success[0].kwargs["bump"] == "minor"
+    assert success[0].kwargs["previous_version"] == "0.4.0.post1.dev3"
+    assert success[0].kwargs["new_version"] == "0.5.0"
 
 
-async def test_increment_dataset_version_major(dataset_ctx, capturing_mcp, mock_ml):
-    """component='major' is forwarded as VersionPart.major."""
-    ds = _make_dataset_mock("1-AAAA", current_version="1.2.3")
+async def test_release_major(dataset_ctx, capturing_mcp, mock_ml):
+    """bump='major' is forwarded as VersionPart.major."""
+    ds = _make_dataset_mock("1-AAAA", current_version="1.2.3.post1.dev1")
     new_ver = MagicMock()
     new_ver.__str__ = lambda self: "2.0.0"
-    ds.increment_dataset_version.return_value = new_ver
+    ds.release.return_value = new_ver
     mock_ml.lookup_dataset.return_value = ds
     with patch("deriva_ml_mcp.tools.dataset.audit_event"):
         out = json.loads(
-            await capturing_mcp.tools["deriva_ml_increment_dataset_version"](
-                hostname="h", catalog_id="1", dataset_rid="1-AAAA", component="major"
+            await capturing_mcp.tools["deriva_ml_release"](
+                hostname="h", catalog_id="1", dataset_rid="1-AAAA", bump="major"
             )
         )
     assert out["new_version"] == "2.0.0"
     from deriva_ml.dataset.aux_classes import VersionPart
 
-    assert ds.increment_dataset_version.call_args.kwargs["component"] == VersionPart.major
+    forwarded = ds.release.call_args.kwargs
+    assert forwarded["bump"] == VersionPart.major
+    # No execution_rid given -- the typed execution argument should be None.
+    assert forwarded["execution"] is None
 
 
-async def test_increment_dataset_version_error(dataset_ctx, capturing_mcp, mock_ml):
+async def test_release_error_no_dev_period(dataset_ctx, capturing_mcp, mock_ml):
+    """Releasing a dataset with no dev period surfaces the deriva-ml error."""
     ds = _make_dataset_mock("1-AAAA")
-    ds.increment_dataset_version.side_effect = RuntimeError("version conflict")
+    ds.release.side_effect = RuntimeError(
+        "Dataset 1-AAAA has no dev period to release"
+    )
     mock_ml.lookup_dataset.return_value = ds
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["deriva_ml_increment_dataset_version"](
+            await capturing_mcp.tools["deriva_ml_release"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
-                component="patch",
+                bump="patch",
             )
         )
-    assert out == {"error": "version conflict"}
-    failed = _success_calls(mock_audit, "deriva_ml_increment_dataset_version_failed")
+    assert "no dev period" in out["error"]
+    failed = _success_calls(mock_audit, "deriva_ml_release_failed")
     assert failed
-    assert failed[0].kwargs["component"] == "patch"
+    assert failed[0].kwargs["bump"] == "patch"
 
 
 # ---------------------------------------------------------------------------
