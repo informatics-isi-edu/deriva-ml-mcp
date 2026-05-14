@@ -47,6 +47,44 @@ uv tool install --reinstall \
 Source edits in any of the three checkouts take effect on the next MCP
 server restart -- no reinstall needed.
 
+### Docker (deriva-docker pre-release)
+
+To run the plugin inside a [`deriva-docker`](https://github.com/informatics-isi-edu/deriva-docker)
+deployment that uses `DERIVA_MCP_EXTRA_PACKAGES` to install plugins
+into the MCP server's image, add this line to your deriva-docker env
+file (typically `~/.deriva-docker/env/localhost.env`):
+
+```bash
+DERIVA_MCP_EXTRA_PACKAGES="deriva-ml-mcp@git+https://github.com/informatics-isi-edu/deriva-ml-mcp.git@main deriva-ml@git+https://github.com/informatics-isi-edu/deriva-ml.git@main deriva@git+https://github.com/informatics-isi-edu/deriva-py@deriva-ml"
+```
+
+The three packages pin against `main` (or a working branch for
+`deriva-py`) so each rebuild picks up the latest commits. Pin to a
+specific tag/commit for reproducible deployments.
+
+To pick up new commits, rebuild and restart the MCP service:
+
+```bash
+docker-compose --env-file ~/.deriva-docker/env/localhost.env down deriva-mcp-test
+docker-compose --env-file ~/.deriva-docker/env/localhost.env build deriva-mcp-test --no-cache
+docker-compose --env-file ~/.deriva-docker/env/localhost.env up -d deriva-mcp-test
+```
+
+The `scripts/rebuild-deriva-docker-mcp.sh` helper in this repo wraps
+those three commands. From a deriva-docker checkout (where
+`docker-compose.yml` lives):
+
+```bash
+/path/to/deriva-ml-mcp/scripts/rebuild-deriva-docker-mcp.sh
+# or pass a non-default env file:
+/path/to/deriva-ml-mcp/scripts/rebuild-deriva-docker-mcp.sh /path/to/env
+```
+
+> **Pre-release status.** This workflow exists because `deriva-docker`
+> support for the deriva-ml-mcp plugin is currently pre-release. When
+> the final deriva-docker release ships, this section and the helper
+> script will be replaced by deriva-docker's canonical workflow.
+
 ## Configuration
 
 The plugin reads no environment variables directly; its behavior is
