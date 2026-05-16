@@ -62,6 +62,24 @@ The three packages pin against `main` (or a working branch for
 `deriva-py`) so each rebuild picks up the latest commits. Pin to a
 specific tag/commit for reproducible deployments.
 
+The plugin's entry-point name (set in `pyproject.toml` under
+`[project.entry-points."deriva_mcp.plugins"]`) is **`deriva-ml-mcp`** --
+deliberately the same as the PyPI package name so the deriva-docker
+default config (`mcp/config/deriva-mcp.env`,
+`DERIVA_MCP_PLUGIN_ALLOWLIST=facebase,deriva-ml-mcp`) loads the
+plugin out of the box, no override needed.
+
+The same config file sets `DERIVA_MCP_DISABLE_MUTATING_TOOLS=false`,
+so the server runs in mutable mode -- write tools (`create_dataset`,
+`add_dataset_members`, `start_execution`, etc.) are exposed.
+
+Confirm both on startup by grepping the container log for:
+
+```
+INFO ... Mutating tools are ENABLED (DERIVA_MCP_DISABLE_MUTATING_TOOLS=false).
+INFO ... Loaded plugin: deriva-ml-mcp (deriva_ml_mcp.plugin:register)
+```
+
 To pick up new commits, rebuild and restart the MCP service:
 
 ```bash
@@ -79,6 +97,23 @@ those three commands. From a deriva-docker checkout (where
 # or pass a non-default env file:
 /path/to/deriva-ml-mcp/scripts/rebuild-deriva-docker-mcp.sh /path/to/env
 ```
+
+### Connecting Claude Code to the dockerized server
+
+Once the container is up, point Claude Code at the HTTP MCP endpoint:
+
+```bash
+claude mcp add -t http dev-localhost https://localhost/mcp \
+    --client-id deriva-mcp --callback-port 8080
+```
+
+Verify with `claude mcp list` -- the entry should show
+`dev-localhost: https://localhost/mcp (HTTP) - ✓ Connected`. The OAuth
+client-id (`deriva-mcp`) is the one pre-registered with the credenza
+auth service in the deriva-docker deployment; `--callback-port 8080`
+is where Claude listens for the auth callback. Remove stale stdio-mode
+entries first (`claude mcp remove deriva -s <scope>`) so the tools
+surface in the new HTTP server isn't shadowed.
 
 > **Pre-release status.** This workflow exists because `deriva-docker`
 > support for the deriva-ml-mcp plugin is currently pre-release. When

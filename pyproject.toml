@@ -28,7 +28,11 @@ dependencies = [
     # (v1.32.0) and validate_dataset_specs / validate_execution_configuration
     # (v1.33.0).
     "deriva-ml>=1.33.0",
-    "pip-system-certs>=5.3",
+    # Pin deriva-py to the `deriva-ml` branch in the built wheel metadata --
+    # not just in [tool.uv] (which is local-only and does not ship). Installers
+    # other than uv (pip, plain build envs) would otherwise resolve whatever
+    # version of `deriva` is on PyPI, which is incompatible with this plugin.
+    "deriva @ git+https://github.com/informatics-isi-edu/deriva-py@deriva-ml",
 ]
 
 [project.optional-dependencies]
@@ -39,9 +43,23 @@ dev = [
     "ruff>=0.4",
     "bump-my-version",
 ]
+# Use the operating-system trust store for TLS. Useful on hosts behind a
+# corporate MITM proxy whose CA isn't in certifi's bundle. Opt-in: install
+# with `pip install deriva-ml-mcp[system-certs]` or `uv sync --extra system-certs`.
+system-certs = [
+    "pip-system-certs>=5.3",
+]
 
 [project.entry-points."deriva_mcp.plugins"]
-deriva-ml = "deriva_ml_mcp.plugin:register"
+# Entry-point name matches the PyPI package name so the deriva-docker
+# `DERIVA_MCP_PLUGIN_ALLOWLIST` value (`deriva-ml-mcp`) Just Works without
+# having to remember that "plugin name != package name".
+deriva-ml-mcp = "deriva_ml_mcp.plugin:register"
+
+[tool.hatch.metadata]
+# Required so `deriva @ git+...` in [project.dependencies] is allowed in the
+# built wheel's METADATA. Without this, hatchling rejects the direct URL.
+allow-direct-references = true
 
 [tool.hatch.version]
 source = "vcs"
@@ -53,6 +71,11 @@ version-file = "src/deriva_ml_mcp/_version.py"
 packages = ["src/deriva_ml_mcp"]
 
 [tool.uv]
+# Force uv to ignore deriva-mcp-core's `deriva @ ...@master` pin and use the
+# `deriva-ml` branch instead. The wheel METADATA already declares the
+# `deriva-ml` branch (see [project.dependencies]); this override only kicks
+# in for local `uv sync`/`uv run` to resolve the conflict between sibling
+# pins. Drop this once deriva-mcp-core moves off the `master` branch pin.
 override-dependencies = [
     "deriva @ git+https://github.com/informatics-isi-edu/deriva-py@deriva-ml",
 ]
