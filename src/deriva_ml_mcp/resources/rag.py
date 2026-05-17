@@ -348,6 +348,7 @@ def _fetch_execution_rows(hostname: str, catalog_id: str) -> list[dict[str, Any]
     payload = _list_executions_impl(
         ml,
         workflow_rid=None,
+        workflow_type=None,
         status=None,
         after_rid=None,
         limit=_MAX_LIMIT,

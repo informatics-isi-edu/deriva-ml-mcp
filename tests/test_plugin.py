@@ -161,6 +161,13 @@ _ML_RESOURCE_URIS = frozenset(
         "deriva://catalog/{hostname}/{catalog_id}/ml/lineage/{rid}",
         # v3.3 dataset-spec resource (mirrors deriva_ml_get_dataset_spec tool).
         "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/spec",
+        # Static cold-start orientation resources. Same content as the
+        # matching MCP prompts (``deriva_ml_getting_started`` /
+        # ``deriva_ml_concepts``); exposed as resources so resource-walking
+        # clients discover the orientation without going through the prompt
+        # subsystem (closes Section A / C1c of the 2026-05-16 findings).
+        "deriva://deriva-ml/getting-started",
+        "deriva://deriva-ml/concepts",
     }
 )
 

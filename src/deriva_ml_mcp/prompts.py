@@ -408,6 +408,9 @@ Now that you have the conceptual frame, read these in this order:
   1. ``deriva_ml_getting_started``  -- operational orientation:
      stateless model, pagination, error envelope, the five tool
      domains, discovery via resources / RAG, the mutation chain.
+     Also reachable as a resource at
+     ``deriva://deriva-ml/getting-started`` for clients that walk
+     resources instead of prompts.
 
   2. The lifecycle tool docstrings (``deriva_ml_start_execution``,
      ``deriva_ml_commit_execution``, ``deriva_ml_abort_execution``,
@@ -434,7 +437,8 @@ or resource.
 If you do not already have a mental model of DerivaML's domain (what a
 Dataset / Workflow / Execution / Feature / Asset is, why every artifact
 is linked to its producing Execution), read the ``deriva_ml_concepts``
-prompt FIRST. This prompt assumes that conceptual frame.
+prompt FIRST (also reachable as resource ``deriva://deriva-ml/concepts``).
+This prompt assumes that conceptual frame.
 
 This plugin exposes DerivaML's ML-workflow surface (datasets, features,
 workflows, executions) on top of any Deriva catalog. It is layered above

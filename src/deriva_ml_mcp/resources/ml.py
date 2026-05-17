@@ -313,6 +313,48 @@ def register(ctx: PluginContext) -> None:
         >>> register(ctx)  # doctest: +SKIP
     """
 
+    # ------------------------------------------------------------------
+    # Cold-start orientation: same content as the
+    # ``deriva_ml_getting_started`` and ``deriva_ml_concepts`` PROMPTS,
+    # exposed as static RESOURCES so resource-walking clients (the
+    # failure mode in the 2026-05-13 e2e test, Section A of the
+    # 2026-05-16 findings doc) discover the orientation text without
+    # going through the prompt subsystem. Two channels, one source of
+    # truth: both handlers return the same constants used by the
+    # prompts in ``prompts.py``. Findings ref: C1c.
+    # ------------------------------------------------------------------
+
+    # Late import: ``prompts.py`` imports nothing heavy at module scope,
+    # but keeping the import inside ``register`` mirrors the per-resource
+    # import discipline used by the catalog handlers below (no module-
+    # level side effects at plugin load time).
+    from deriva_ml_mcp.prompts import _CONCEPTS_GUIDE, _GETTING_STARTED_GUIDE
+
+    @ctx.resource("deriva://deriva-ml/getting-started")
+    async def deriva_ml_getting_started_resource() -> str:
+        """Cold-start orientation guide for the deriva-ml-mcp plugin.
+
+        Same content as the ``deriva_ml_getting_started`` MCP prompt --
+        exposed here as a resource so clients that walk resources (and
+        skip prompts) still see the (hostname, catalog_id) rule, the
+        pagination contract, the resource-vs-tool decision, and the
+        discovery-via-resources orientation. Read this before using any
+        ``deriva_ml_*`` tool or ``deriva://catalog/.../ml/...`` resource.
+        """
+        return _GETTING_STARTED_GUIDE
+
+    @ctx.resource("deriva://deriva-ml/concepts")
+    async def deriva_ml_concepts_resource() -> str:
+        """Conceptual frame for the DerivaML domain.
+
+        Same content as the ``deriva_ml_concepts`` MCP prompt -- the
+        five core abstractions (Dataset, Workflow, Execution, Feature,
+        Asset), the provenance principle, and the vocabulary-extension
+        pattern. Read this BEFORE ``deriva://deriva-ml/getting-started``
+        if you do not already have a DerivaML mental model.
+        """
+        return _CONCEPTS_GUIDE
+
     @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/datasets")
     async def ml_datasets(hostname: str, catalog_id: str) -> str:
         """Snapshot of all datasets in the catalog (up to 1000 rows).
@@ -463,6 +505,7 @@ def register(ctx: PluginContext) -> None:
                 payload = _list_executions_impl(
                     ml,
                     workflow_rid=None,
+                    workflow_type=None,
                     status=None,
                     after_rid=None,
                     limit=_MAX_LIMIT,

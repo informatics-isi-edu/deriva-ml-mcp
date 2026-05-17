@@ -149,9 +149,21 @@ def _make_vocab_term_mock(name: str, description: str = "") -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
-def test_register_adds_fourteen_resources(resource_ctx, capturing_mcp):
-    """resources/ml.py.register() must register exactly 14 URIs (v3.4)."""
+def test_register_adds_all_resources(resource_ctx, capturing_mcp):
+    """resources/ml.py.register() must register exactly the expected URI set.
+
+    Two static cold-start resources (``deriva://deriva-ml/concepts`` and
+    ``deriva://deriva-ml/getting-started``) plus 15 catalog-scoped ML
+    resource templates. The cold-start resources expose the same content
+    as the matching MCP prompts -- a second discovery channel for
+    resource-walking clients. See ``resources/ml.py`` register() preamble
+    for the rationale (closes Section A / C1c of the 2026-05-16 findings).
+    """
     expected = {
+        # Cold-start orientation -- static URIs, no parameters.
+        "deriva://deriva-ml/concepts",
+        "deriva://deriva-ml/getting-started",
+        # Catalog-scoped ML resource templates.
         "deriva://catalog/{hostname}/{catalog_id}/ml/datasets",
         "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}",
         "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/spec",
@@ -172,6 +184,29 @@ def test_register_adds_fourteen_resources(resource_ctx, capturing_mcp):
     assert actual == expected, (
         f"missing: {sorted(expected - actual)}; extra: {sorted(actual - expected)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Cold-start static resources (deriva://deriva-ml/{concepts,getting-started})
+# ---------------------------------------------------------------------------
+
+
+async def test_static_resources_return_prompt_constants(resource_ctx, capturing_mcp):
+    """Static cold-start resources return the SAME content as their MCP prompts.
+
+    Pins the "two channels, one source of truth" contract: both
+    ``deriva_ml_concepts`` (prompt) and ``deriva://deriva-ml/concepts``
+    (resource) MUST return ``_CONCEPTS_GUIDE``, and the same for
+    ``getting-started``. If the resource handler ever wraps or trims the
+    content, this test catches it.
+    """
+    from deriva_ml_mcp.prompts import _CONCEPTS_GUIDE, _GETTING_STARTED_GUIDE
+
+    concepts_handler = capturing_mcp.resources["deriva://deriva-ml/concepts"]
+    getting_started_handler = capturing_mcp.resources["deriva://deriva-ml/getting-started"]
+
+    assert (await concepts_handler()) == _CONCEPTS_GUIDE
+    assert (await getting_started_handler()) == _GETTING_STARTED_GUIDE
 
 
 # ---------------------------------------------------------------------------

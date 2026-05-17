@@ -112,6 +112,7 @@ def _list_executions_impl(
     ml: Any,
     *,
     workflow_rid: str | None,
+    workflow_type: str | None,
     status: str | None,
     after_rid: str | None,
     limit: int,
@@ -121,7 +122,16 @@ def _list_executions_impl(
 
     Args:
         ml: A connected ``deriva_ml.DerivaML`` instance.
-        workflow_rid: Optional workflow filter.
+        workflow_rid: Optional filter -- executions of one specific workflow
+            (by RID). Mutually compatible with ``workflow_type``: when both
+            are set, ``find_executions`` returns executions of the named
+            workflow type that ALSO ran the specific workflow RID. Pass one
+            or the other in practice.
+        workflow_type: Optional filter -- executions of workflows whose
+            ``Workflow_Type`` vocabulary term matches this string (e.g.
+            ``"Model_Training"``, ``"Inference"``). Enables cross-workflow
+            queries ("show me every Training execution") without having
+            to enumerate workflows first.
         status: Optional ``ExecutionStatus`` value (string).
         after_rid: Cursor for cursor pagination.
         limit: Max executions per page (already capped by caller).
@@ -141,6 +151,7 @@ def _list_executions_impl(
     raw = list(
         ml.find_executions(
             workflow=workflow_rid,
+            workflow_type=workflow_type,
             status=status_enum,
             sort=True if sort else None,
         )
@@ -352,18 +363,26 @@ def register(ctx: PluginContext) -> None:
         hostname: str,
         catalog_id: str,
         workflow_rid: str | None = None,
+        workflow_type: str | None = None,
         status: str | None = None,
         limit: int = 100,
         after_rid: str | None = None,
         preflight_count: bool = False,
         sort: bool = False,
     ) -> str:
-        """Browse executions in the catalog, optionally filtered by workflow or status.
+        """Browse executions in the catalog, optionally filtered by workflow, workflow type, or status.
 
         See ``deriva_ml_getting_started`` (PAGINATION CONTRACT) for the two-step pagination flow.
 
         Args:
-            workflow_rid: If set, return only executions of this workflow.
+            workflow_rid: If set, return only executions of this workflow
+                (by RID). Mutually compatible with ``workflow_type`` --
+                pass one or the other in practice.
+            workflow_type: If set, return executions of workflows whose
+                ``Workflow_Type`` vocabulary term matches this string
+                (e.g. ``"Model_Training"``, ``"Inference"``). Enables
+                cross-workflow queries ("show me every Training execution")
+                without enumerating workflows first.
             status: If set, restrict to one ``ExecutionStatus`` value
                 (e.g. ``"Running"``, ``"Uploaded"``).
             limit: Max executions per page (default 100, max 1000).
@@ -403,7 +422,15 @@ def register(ctx: PluginContext) -> None:
                     status_enum = ExecutionStatus(status) if status else None
 
                     def _count_executions() -> int:
-                        return len(list(ml.find_executions(workflow=workflow_rid, status=status_enum)))
+                        return len(
+                            list(
+                                ml.find_executions(
+                                    workflow=workflow_rid,
+                                    workflow_type=workflow_type,
+                                    status=status_enum,
+                                )
+                            )
+                        )
 
                     total = await asyncio.to_thread(_count_executions)
                     return PreflightCountResponse(
@@ -418,6 +445,7 @@ def register(ctx: PluginContext) -> None:
                     _list_executions_impl,
                     ml,
                     workflow_rid=workflow_rid,
+                    workflow_type=workflow_type,
                     status=status,
                     after_rid=after_rid,
                     limit=capped,
@@ -543,10 +571,16 @@ def register(ctx: PluginContext) -> None:
                     ).model_dump_json(by_alias=True)
 
                 capped = min(max(limit, 0), _MAX_LIMIT)
+                # `workflow_type=None` here because this tool is RID-scoped
+                # by design -- the workflow's own type is already implied
+                # by the RID, so a `workflow_type` filter would be
+                # redundant. Cross-workflow type-filtered queries belong
+                # in `deriva_ml_list_executions(workflow_type=...)`.
                 payload = await asyncio.to_thread(
                     _list_executions_impl,
                     ml,
                     workflow_rid=workflow_rid,
+                    workflow_type=None,
                     status=status,
                     after_rid=after_rid,
                     limit=capped,

@@ -152,6 +152,35 @@ async def test_list_executions_status_filter_passes_enum(execution_ctx, capturin
     assert kwargs["status"] == ExecutionStatus.Running
 
 
+async def test_list_executions_workflow_type_filter_forwarded(
+    execution_ctx, capturing_mcp, mock_ml
+):
+    """workflow_type forwards verbatim to find_executions, including in preflight.
+
+    Pins the cross-workflow type-filter path enabled in deriva-ml's
+    find_executions(workflow_type=...) signature. Without the
+    parameter being threaded through, "show me every Training
+    execution" forces the LLM to enumerate workflows first.
+    """
+    mock_ml.find_executions.return_value = []
+    # Non-preflight: workflow_type travels through _list_executions_impl.
+    await capturing_mcp.tools["deriva_ml_list_executions"](
+        hostname="h", catalog_id="1", workflow_type="Model_Training"
+    )
+    _args, kwargs = mock_ml.find_executions.call_args
+    assert kwargs["workflow_type"] == "Model_Training"
+    # Preflight: workflow_type also travels through the count closure.
+    mock_ml.find_executions.reset_mock()
+    await capturing_mcp.tools["deriva_ml_list_executions"](
+        hostname="h",
+        catalog_id="1",
+        workflow_type="Inference",
+        preflight_count=True,
+    )
+    _args, kwargs = mock_ml.find_executions.call_args
+    assert kwargs["workflow_type"] == "Inference"
+
+
 # ---------------------------------------------------------------------------
 # get_execution
 # ---------------------------------------------------------------------------
