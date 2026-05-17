@@ -184,10 +184,17 @@ def test_register_runs_without_error(ctx):
 
 
 def test_entry_point_resolves_to_register():
-    """The 'deriva-ml' entry point must resolve to our register function."""
+    """The 'deriva-ml-mcp' entry point must resolve to our register function.
+
+    Name matches the PyPI package name (set in pyproject.toml under
+    ``[project.entry-points."deriva_mcp.plugins"]``) so the deriva-docker
+    default ``DERIVA_MCP_PLUGIN_ALLOWLIST=facebase,deriva-ml-mcp`` loads
+    the plugin without override. The earlier name was ``deriva-ml`` --
+    see commit edd2aae for the alignment rationale.
+    """
     eps = metadata.entry_points(group="deriva_mcp.plugins")
-    matching = [ep for ep in eps if ep.name == "deriva-ml"]
-    assert matching, "entry point 'deriva-ml' not declared"
+    matching = [ep for ep in eps if ep.name == "deriva-ml-mcp"]
+    assert matching, "entry point 'deriva-ml-mcp' not declared"
     assert matching[0].load() is register
 
 

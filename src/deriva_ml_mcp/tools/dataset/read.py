@@ -247,7 +247,50 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """Browse all datasets in the catalog with optional pagination.
 
-        See ``deriva_ml_getting_started`` (PAGINATION CONTRACT) for the two-step pagination flow.
+        [Cold-start orientation -- WORKAROUND pending deriva-mcp-core's
+        plugin-contributed server-instructions hook. When that lands,
+        remove this whole bracketed block (this docstring and any other
+        tool that grew one); the same content will be advertised once at
+        server-init time via the ``instructions=`` field instead of being
+        duplicated on every client schema fetch. See CLAUDE.md
+        "Cross-Repo Sync" section for the upstream change.]
+
+        DerivaML's five core abstractions:
+          Dataset    -- versioned collection of catalog rows (typed via
+                        ``Dataset_Type`` vocabulary; has an element-type
+                        spec, may include assets).
+          Workflow   -- versioned reference to code (URL + git commit);
+                        content-addressed, typed via ``Workflow_Type``.
+          Execution  -- one run of a Workflow against input Datasets,
+                        producing output Datasets / Features / Assets.
+          Feature    -- typed per-row annotation produced by an
+                        Execution (e.g. a per-image label, a per-execution
+                        scalar metric).
+          Asset      -- file uploaded to hatrac with provenance link to
+                        the producing Execution.
+
+        Provenance principle: every Dataset / Feature / Asset row points
+        at the Execution that produced it. Create the Execution BEFORE
+        writing outputs. Traverse with ``deriva_ml_get_lineage``.
+
+        Vocabularies: extend with ``add_term(schema="deriva-ml",
+        table="<Vocab>", ...)`` -- do NOT create new vocabulary tables
+        for ML domain concepts.
+
+        Full guide prompts (fetch via MCP ``prompts/get``):
+          ``deriva_ml_concepts`` -- the conceptual frame above in full.
+          ``deriva_ml_getting_started`` -- the (hostname, catalog_id)
+            call rule, pagination contract, resource-vs-tool discovery,
+            and workflow-to-execution-to-outputs chain.
+
+        PAGINATION CONTRACT (two-step):
+          1. Call with ``preflight_count=True`` -- returns ``total_count``,
+             no rows.
+          2. If ``total_count > limit``, call again with
+             ``after_rid=<last RID>`` from the prior page to advance the
+             cursor. Repeat until ``truncated`` is False.
+
+        [End cold-start block.]
 
         Args:
             include_deleted: Include soft-deleted datasets if True.

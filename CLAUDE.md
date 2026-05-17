@@ -417,8 +417,50 @@ serve cold-start orientation for non-Claude-Code clients and have no
 clean alternative without a deriva-mcp-core API addition for plugin-
 contributed server `instructions=` content. The architectural target
 is to migrate them to that field once the API exists; the ask has
-been raised with the deriva-mcp-core maintainer. Until then the two
+been raised with the deriva-mcp-core maintainer (hook is being added
+upstream; no tracking issue number yet). Until then the two
 remaining prompts are the right home for cold-start orientation.
+
+### Workaround: cold-start frame inlined in `deriva_ml_list_datasets`
+
+The two cold-start prompts (`deriva_ml_concepts`,
+`deriva_ml_getting_started`) carry the conceptual frame (five
+abstractions, provenance principle, vocabulary-extension pattern,
+pagination contract). The 2026-05-13 e2e platform test surfaced a
+real symptom of clients ignoring these prompts: the journal author
+saw the deriva-mcp-core server-level `instructions=` string (which
+names the four core prompts), did NOT fetch any prompt, and only
+learned the pagination contract by trial-and-error.
+
+Root cause: deriva-mcp-core's `instructions=` is closed to plugins
+(see `server.py:237-243` in deriva-mcp-core), so this plugin's two
+prompt names are never advertised at server-init. A client that
+ignores the named-prompt hint never discovers the unnamed ones.
+
+Until the upstream `instructions=` hook lands, the entire cold-start
+frame is **inlined verbatim into `deriva_ml_list_datasets`'s
+docstring** (`tools/dataset/read.py`). That tool was chosen because
+"what's in this catalog?" is the canonical cold-start opening move
+for a DerivaML LLM client -- any first-time agent will fetch its
+schema. The inlined block is fenced with `[Cold-start orientation
+-- WORKAROUND ...]` / `[End cold-start block.]` markers so removal
+is mechanical when the upstream hook arrives.
+
+**When the deriva-mcp-core hook lands, do all three:**
+
+1. Delete the bracketed cold-start block from
+   `deriva_ml_list_datasets` docstring (and any other tool that
+   grew one in the meantime).
+2. Register the conceptual frame at server-init time via the new
+   `instructions=` extension hook, in `plugin.py:register(ctx)`.
+3. Update this section of CLAUDE.md to reflect the migration; the
+   inline workaround is no longer the architectural truth.
+
+The full prompt text stays in `prompts.py` -- prompts are the
+authoritative source for any deeper detail clients can fetch on
+demand, both before and after the hook lands. The inline frame is
+only the load-bearing FACTS that a client must see *without
+fetching anything*.
 
 ## Coverage Report
 
