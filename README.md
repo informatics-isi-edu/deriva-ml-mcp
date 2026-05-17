@@ -47,7 +47,7 @@ uv tool install --reinstall \
 Source edits in any of the three checkouts take effect on the next MCP
 server restart -- no reinstall needed.
 
-### Docker (deriva-docker pre-release)
+### Docker (deriva-docker)
 
 To run the plugin inside a [`deriva-docker`](https://github.com/informatics-isi-edu/deriva-docker)
 deployment that uses `DERIVA_MCP_EXTRA_PACKAGES` to install plugins
@@ -115,10 +115,12 @@ is where Claude listens for the auth callback. Remove stale stdio-mode
 entries first (`claude mcp remove deriva -s <scope>`) so the tools
 surface in the new HTTP server isn't shadowed.
 
-> **Pre-release status.** This workflow exists because `deriva-docker`
-> support for the deriva-ml-mcp plugin is currently pre-release. When
-> the final deriva-docker release ships, this section and the helper
-> script will be replaced by deriva-docker's canonical workflow.
+> **This is the current canonical recipe for dev-localhost.** It will
+> be superseded by `deriva-docker`'s built-in plugin-installation
+> workflow once that ships (currently the plugin is bolted in via
+> `DERIVA_MCP_EXTRA_PACKAGES` + `--no-cache` rebuild rather than as a
+> first-class deriva-docker service). Until then, follow this section
+> exactly -- it is not a placeholder.
 
 ## Configuration
 

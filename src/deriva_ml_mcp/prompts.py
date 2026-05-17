@@ -584,6 +584,36 @@ The full read-only resource family:
     deriva://catalog/{h}/{c}/ml/vocabularies/{schema}/{vocab_name}
                                                  -- terms in one vocabulary table
 
+RESOURCE-TOOL PAIRINGS (when in doubt, prefer the resource)
+-----------------------------------------------------------
+Every browseable group below has both a snapshot resource and a
+paginated list tool. The resource is one read (up to 1000 rows + a
+``truncated`` hint); the tool is the cursor-paginated alternative for
+filtered queries or for drilling past the snapshot bound.
+
+Default: prefer the resource. Switch to the tool when EITHER
+``truncated`` came back true on the snapshot OR you need a filter the
+resource cannot express (status, workflow, deleted-only, etc.).
+
+    Snapshot resource                                      Paginated tool
+    --------------------------------------------------     -------------------------------
+    deriva://catalog/{h}/{c}/ml/datasets                   deriva_ml_list_datasets
+    deriva://catalog/{h}/{c}/ml/dataset/{rid}              deriva_ml_get_dataset
+    deriva://catalog/{h}/{c}/ml/dataset/{rid}/members      deriva_ml_list_dataset_members
+    deriva://catalog/{h}/{c}/ml/workflows                  deriva_ml_list_workflows
+    deriva://catalog/{h}/{c}/ml/workflow/{rid}             deriva_ml_get_workflow
+    deriva://catalog/{h}/{c}/ml/executions                 deriva_ml_list_executions
+    deriva://catalog/{h}/{c}/ml/execution/{rid}            deriva_ml_get_execution
+    deriva://catalog/{h}/{c}/ml/features/{table}           deriva_ml_list_features (table-scoped)
+    deriva://catalog/{h}/{c}/ml/assets/{schema}            deriva_ml_list_assets (schema-scoped)
+    deriva://catalog/{h}/{c}/ml/asset/{rid}                (no list tool -- one-RID only)
+    deriva://catalog/{h}/{c}/ml/lineage/{rid}              deriva_ml_get_lineage
+    deriva://catalog/{h}/{c}/ml/vocabularies/{schema}      list_vocabulary_terms (core; per-table)
+
+Write tools (create / update / commit / abort / start / add_members /
+delete_members / ...) have NO resource counterpart -- resources are
+read-only by MCP convention.
+
 For SEMANTIC DISCOVERY ("which workflows train CNN models", "find
 executions that produced quality scores"), prefer ``rag_search`` over
 the paginated list tools:
