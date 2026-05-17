@@ -772,19 +772,20 @@ def register(ctx: PluginContext) -> None:
             "cache_path": null}``.
         """
         try:
-            spec = DatasetSpec(
-                rid=dataset_rid,
-                version=version,
-                exclude_tables=set(exclude_tables) if exclude_tables else None,
-            )
             with deriva_call():
                 # Run the synchronous deriva-ml calls in a thread pool so
-                # the event loop stays responsive. ``bag_info`` inspects
-                # the bag manifest and may touch the local cache. See
-                # deriva-mcp-core plugin-authoring-guide.md §"Synchronous
-                # work in threads".
+                # the event loop stays responsive. ``_bag_info_impl``
+                # inspects the bag manifest and may touch the local
+                # cache. See deriva-mcp-core plugin-authoring-guide.md
+                # §"Synchronous work in threads".
                 ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
-                info = await asyncio.to_thread(ml.bag_info, spec)
+                info = await asyncio.to_thread(
+                    _bag_info_impl,
+                    ml,
+                    dataset_rid,
+                    version,
+                    exclude_tables=exclude_tables,
+                )
             return json.dumps(info, default=str)
         except Exception as exc:
             # Read-only tool: log+return without an audit row (I-2 fix).
@@ -1007,6 +1008,68 @@ def register(ctx: PluginContext) -> None:
                 catalog_id=catalog_id,
                 audit=False,
             )
+
+
+def _bag_info_impl(
+    ml: Any,
+    dataset_rid: str,
+    version: str | None,
+    *,
+    exclude_tables: list[str] | None = None,
+) -> dict[str, Any]:
+    """Shared helper: tool ``deriva_ml_bag_info`` and resource
+    ``deriva://catalog/{h}/{c}/ml/dataset/{rid}/bag-preview`` both call
+    this so their payloads cannot drift.
+
+    Args:
+        ml: The ``DerivaML`` instance bound to the catalog.
+        dataset_rid: Dataset RID to inspect.
+        version: Explicit version to pin, or None to use the dataset's
+            current version (a ``warning`` is added to the payload when
+            the substitution happens; same convention as
+            ``_get_dataset_spec_impl``).
+        exclude_tables: Optional tables to omit from the bag preview
+            (e.g. large blob tables the caller doesn't intend to
+            download). Resource form omits this; tool form forwards
+            verbatim.
+
+    Returns:
+        The dict produced by ``deriva_ml.DerivaML.bag_info(spec)``,
+        with non-JSON-serializable values (e.g. ``Path``) stringified
+        at the wire by callers. Adds a ``warning`` key when ``version``
+        was None and current-version fallback fired; the warning is
+        None otherwise.
+
+    Example:
+        >>> _bag_info_impl(ml, "1-AAAA", None)  # doctest: +SKIP
+    """
+    warning: str | None
+    if version is not None:
+        used_version = version
+        warning = None
+    else:
+        ds = ml.lookup_dataset(dataset_rid)
+        used_version = (
+            str(ds.current_version) if ds.current_version is not None else "0.1.0"
+        )
+        warning = (
+            f"version not specified; using current version "
+            f"{used_version}. For reproducibility, pin to an explicit "
+            "version when downloading."
+        )
+
+    spec = DatasetSpec(
+        rid=dataset_rid,
+        version=used_version,
+        exclude_tables=set(exclude_tables) if exclude_tables else None,
+    )
+    info = ml.bag_info(spec)
+    # ``ml.bag_info`` returns a plain dict; add the warning + the
+    # resolved version so callers can see what was actually inspected.
+    info["dataset_rid"] = dataset_rid
+    info["version"] = used_version
+    info["warning"] = warning
+    return info
 
 
 def _get_dataset_spec_impl(

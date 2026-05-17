@@ -43,6 +43,9 @@ def resource_ctx(ctx, mock_ml):
 _DATASETS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/datasets"
 _DATASET_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}"
 _DATASET_SPEC_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/spec"
+_DATASET_BAG_PREVIEW_URI = (
+    "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/bag-preview"
+)
 _DATASET_MEMBERS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/members"
 _WORKFLOWS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/workflows"
 _WORKFLOW_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{workflow_rid}"
@@ -167,6 +170,7 @@ def test_register_adds_all_resources(resource_ctx, capturing_mcp):
         "deriva://catalog/{hostname}/{catalog_id}/ml/datasets",
         "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}",
         "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/spec",
+        "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/bag-preview",
         "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/members",
         "deriva://catalog/{hostname}/{catalog_id}/ml/workflows",
         "deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{workflow_rid}",
@@ -387,6 +391,64 @@ async def test_ml_dataset_spec_error_path_is_silent(resource_ctx, capturing_mcp,
     with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
         out = json.loads(
             await capturing_mcp.resources[_DATASET_SPEC_URI](
+                hostname="h", catalog_id="1", dataset_rid="missing"
+            )
+        )
+    assert out == {"error": "Dataset not found"}
+    assert mock_audit.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# ml/dataset/{rid}/bag-preview
+# ---------------------------------------------------------------------------
+
+
+async def test_ml_dataset_bag_preview_uses_current_version(
+    resource_ctx, capturing_mcp, mock_ml
+):
+    """Resource form omits ``version`` -- always inspects current version
+    with a warning recommending an explicit pin. The shared
+    ``_bag_info_impl`` helper is what the tool uses too, so a drift in
+    response shape would break both."""
+    ds = MagicMock()
+    ds.current_version = "1.2.0"
+    mock_ml.lookup_dataset.return_value = ds
+    mock_ml.bag_info.return_value = {
+        "tables": {"Image": {"row_count": 100, "is_asset": True, "asset_bytes": 12345}},
+        "total_rows": 100,
+        "total_asset_bytes": 12345,
+        "total_asset_size": "12 KB",
+        "cache_status": "not_cached",
+        "cache_path": None,
+    }
+
+    out = json.loads(
+        await capturing_mcp.resources[_DATASET_BAG_PREVIEW_URI](
+            hostname="h", catalog_id="1", dataset_rid="1-DSAA"
+        )
+    )
+    assert out["dataset_rid"] == "1-DSAA"
+    assert out["version"] == "1.2.0"
+    assert out["total_rows"] == 100
+    assert out["cache_status"] == "not_cached"
+    # Resource always uses current version, so warning is always set.
+    assert out["warning"] is not None
+    assert "version not specified" in out["warning"]
+    # bag_info was called with a DatasetSpec carrying the resolved
+    # version and no exclude_tables (resource omits that parameter).
+    spec_arg = mock_ml.bag_info.call_args.args[0]
+    assert spec_arg.rid == "1-DSAA"
+    assert str(spec_arg.version) == "1.2.0"
+    assert spec_arg.exclude_tables is None
+
+
+async def test_ml_dataset_bag_preview_error_path_is_silent(
+    resource_ctx, capturing_mcp, mock_ml
+):
+    mock_ml.lookup_dataset.side_effect = RuntimeError("Dataset not found")
+    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+        out = json.loads(
+            await capturing_mcp.resources[_DATASET_BAG_PREVIEW_URI](
                 hostname="h", catalog_id="1", dataset_rid="missing"
             )
         )

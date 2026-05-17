@@ -65,6 +65,7 @@ from deriva_ml_mcp.ml_context import get_ml
 # ``from deriva_ml_mcp.tools.dataset import _list_datasets_impl, ...``
 # is preserved here so the resource modules don't need to change.
 from deriva_ml_mcp.tools.dataset.read import (
+    _bag_info_impl,
     _get_dataset_detail_impl,
     _get_dataset_spec_impl,
     _list_dataset_members_summary_impl,
@@ -81,6 +82,7 @@ __all__ = [
     "audit_event",
     "get_ml",
     "register",
+    "_bag_info_impl",
     "_get_dataset_detail_impl",
     "_get_dataset_spec_impl",
     "_list_dataset_members_summary_impl",

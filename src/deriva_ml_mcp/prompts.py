@@ -570,6 +570,10 @@ The full read-only resource family:
     deriva://catalog/{h}/{c}/ml/datasets         -- all datasets, capped at 1000
     deriva://catalog/{h}/{c}/ml/dataset/{rid}    -- one dataset + version_history + members
     deriva://catalog/{h}/{c}/ml/dataset/{rid}/members  -- members grouped by table
+    deriva://catalog/{h}/{c}/ml/dataset/{rid}/spec     -- DatasetSpecConfig snippet for hydra-zen configs
+    deriva://catalog/{h}/{c}/ml/dataset/{rid}/bag-preview
+                                                 -- bag size + table counts BEFORE downloading
+                                                    (use to size a download before cache_dataset)
     deriva://catalog/{h}/{c}/ml/workflows        -- all workflows
     deriva://catalog/{h}/{c}/ml/workflow/{rid}   -- one workflow
     deriva://catalog/{h}/{c}/ml/executions       -- all executions
@@ -604,6 +608,8 @@ resource cannot express (status, workflow, deleted-only, etc.).
     deriva://catalog/{h}/{c}/ml/datasets                   deriva_ml_list_datasets
     deriva://catalog/{h}/{c}/ml/dataset/{rid}              deriva_ml_get_dataset
     deriva://catalog/{h}/{c}/ml/dataset/{rid}/members      deriva_ml_list_dataset_members
+    deriva://catalog/{h}/{c}/ml/dataset/{rid}/spec         deriva_ml_get_dataset_spec
+    deriva://catalog/{h}/{c}/ml/dataset/{rid}/bag-preview  deriva_ml_bag_info
     deriva://catalog/{h}/{c}/ml/workflows                  deriva_ml_list_workflows
     deriva://catalog/{h}/{c}/ml/workflow/{rid}             deriva_ml_get_workflow
     deriva://catalog/{h}/{c}/ml/executions                 deriva_ml_list_executions

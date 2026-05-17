@@ -161,6 +161,10 @@ _ML_RESOURCE_URIS = frozenset(
         "deriva://catalog/{hostname}/{catalog_id}/ml/lineage/{rid}",
         # v3.3 dataset-spec resource (mirrors deriva_ml_get_dataset_spec tool).
         "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/spec",
+        # bag-preview resource (mirrors deriva_ml_bag_info tool, current
+        # version, no exclusions). Closes a documented-but-missing URI
+        # flagged by the debug-bag-contents skill (2026-05-13 e2e findings).
+        "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/bag-preview",
         # Static cold-start orientation resources. Same content as the
         # matching MCP prompts (``deriva_ml_getting_started`` /
         # ``deriva_ml_concepts``); exposed as resources so resource-walking

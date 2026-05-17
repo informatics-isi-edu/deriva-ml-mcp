@@ -65,6 +65,7 @@ from deriva_ml_mcp.tools.asset import (
     _summarize_asset,
 )
 from deriva_ml_mcp.tools.dataset import (
+    _bag_info_impl,
     _get_dataset_detail_impl,
     _get_dataset_spec_impl,
     _list_dataset_members_summary_impl,
@@ -425,6 +426,43 @@ def register(ctx: PluginContext) -> None:
             return _error_envelope(
                 exc,
                 operation="resource_ml_dataset_spec",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/bag-preview")
+    async def ml_dataset_bag_preview(hostname: str, catalog_id: str, dataset_rid: str) -> str:
+        """Bag-content preview for one dataset (current version, no exclusions).
+
+        Same payload as ``deriva_ml_bag_info`` -- the resource and tool
+        share an internal helper (``_bag_info_impl``) so the two cannot
+        drift. The resource form omits the ``version`` and
+        ``exclude_tables`` parameters: it always inspects the dataset's
+        current version with no table exclusions, and includes a
+        ``warning`` field recommending an explicit version pin for
+        reproducibility before any actual download. Callers needing to
+        pin a specific version or skip large blob tables use the tool.
+
+        Use to decide whether to download a bag (``deriva_ml_cache_dataset``):
+        the response carries per-table row counts, asset byte totals, and
+        the current cache status -- enough to decide cost without
+        materializing the bag.
+
+        Closes a documented-but-missing URI flagged in the 2026-05-13
+        e2e findings (referenced by the debug-bag-contents skill).
+        """
+        try:
+            with deriva_call():
+                ml = get_ml(hostname, catalog_id)
+                info = _bag_info_impl(ml, dataset_rid, None)
+            import json as _json
+
+            return _json.dumps(info, default=str)
+        except Exception as exc:  # noqa: BLE001
+            return _error_envelope(
+                exc,
+                operation="resource_ml_dataset_bag_preview",
                 hostname=hostname,
                 catalog_id=catalog_id,
                 audit=False,
