@@ -505,6 +505,44 @@ Individual tool ``Returns:`` blocks document only the success shape;
 the failure shape is implicit. Individual tool docstrings DO NOT
 redocument the error envelope.
 
+VERB CONVENTIONS ON THE WIRE
+----------------------------
+All tools share the ``deriva_ml_`` prefix; the verb that follows
+predicts the call shape and the response shape. Knowing the rule
+means you don't have to guess from the tool catalog which call to
+reach for:
+
+    list_*    Paginated browse of entities of one kind, optionally
+              filtered. PAGINATION CONTRACT applies (preflight ->
+              page -> advance). Response carries ``count``,
+              ``truncated``, ``next_after_rid``.
+
+    get_*     Single-RID detail read. Takes the RID as a required
+              parameter; returns one bundled detail payload. No
+              pagination.
+
+    find_*    Catalog-wide search by a non-RID identifier (a URL,
+              an external name, a workflow's executions). Use when
+              you HAVE the identifying information but DON'T have
+              the RID yet. Response shape mirrors the matching
+              ``list_*`` (paginated) or ``get_*`` (single hit)
+              depending on the search's arity.
+
+    create_ / update_ / delete_ / add_ / start_ / commit_ / abort_
+              Mutating operations. Every one emits an audit row
+              (success or ``_failed``). Mutating tools have NO
+              resource counterpart -- resources are read-only by
+              MCP convention.
+
+    lookup_*  Specialized RID-or-name resolution (currently only
+              ``lookup_asset``). Treat as a sibling of ``get_*``.
+
+This convention applies to the MCP wire surface only. The Python
+``deriva-ml`` library uses a slightly different ``find_*`` vs
+``list_*`` rule (catalog-wide vs parent-scoped) -- see the
+``DerivaML`` class docstring or the ``deriva-ml-context`` skill if
+you're driving the library directly from a notebook or skill.
+
 THE FIVE ML DOMAINS
 -------------------
 The 45 tools are organized into five domain modules. Pick the domain
