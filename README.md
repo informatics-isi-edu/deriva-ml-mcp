@@ -122,6 +122,14 @@ surface in the new HTTP server isn't shadowed.
 > first-class deriva-docker service). Until then, follow this section
 > exactly -- it is not a placeholder.
 
+The model template's README §"Set Up Claude Code (Optional)"
+([deriva-ml-model-template/README.md](https://github.com/informatics-isi-edu/deriva-ml-model-template/blob/main/README.md#4-set-up-claude-code-optional))
+mirrors this recipe and adds the `NODE_EXTRA_CA_CERTS` step for
+trusting the dev-localhost self-signed CA from Claude Code's
+Node.js HTTP transport. If you're setting up the model template
+for the first time, the README is the better starting point;
+this section is the upstream definition.
+
 ## Configuration
 
 The plugin reads no environment variables directly; its behavior is
