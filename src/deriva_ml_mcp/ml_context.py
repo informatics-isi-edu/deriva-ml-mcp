@@ -8,7 +8,7 @@ connections.
 
 from __future__ import annotations
 
-from deriva_mcp_core import get_credential
+from deriva_mcp_core import get_credential, remap_hostname
 from deriva_ml import DerivaML
 
 
@@ -20,6 +20,14 @@ def get_ml(hostname: str, catalog_id: str) -> DerivaML:
     derived token from the auth verifier's contextvar, and in stdio mode
     it returns the credential from ``~/.deriva/credential.json`` for the
     given hostname. The same call site works under both transports.
+
+    Applies the deriva-mcp-core hostname remap so connections opened by
+    deriva-ml (which constructs its own ``DerivaServer`` internally) route
+    through the same internal alias as connections opened by core's
+    ``get_catalog()``. Without this, an external-facing hostname like
+    ``"localhost"`` would resolve to the MCP container's own loopback
+    (where nothing listens on 443) instead of the configured internal
+    Deriva host (e.g. ``"deriva"`` inside the deriva-docker stack).
 
     Args:
         hostname: The Deriva server hostname (e.g. ``"my.deriva.org"``).
@@ -45,4 +53,5 @@ def get_ml(hostname: str, catalog_id: str) -> DerivaML:
             ml = get_ml(hostname, catalog_id)
             datasets = ml.find_datasets()
     """
-    return DerivaML(hostname, catalog_id, credential=get_credential(hostname))
+    internal = remap_hostname(hostname)
+    return DerivaML(internal, catalog_id, credential=get_credential(internal))
