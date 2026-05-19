@@ -30,20 +30,28 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-PLUGIN_ROOT = Path(__file__).resolve().parent.parent / "src" / "deriva_ml_mcp" / "tools"
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent / "src" / "deriva_ml_mcp"
+TOOLS_ROOT = PLUGIN_ROOT / "tools"
+RESOURCES_ROOT = PLUGIN_ROOT / "resources"
 
-# Modules whose async tool functions are required to thread-wrap every
-# sync deriva-ml call inside ``with deriva_call():`` blocks.
+# Modules whose async tool/resource functions are required to thread-wrap
+# every sync deriva-ml call inside ``with deriva_call():`` blocks.
+#
+# Resource handlers run on the same asyncio event loop as tool handlers
+# and have the same blocking-call hazard. ``resources/rag.py`` does not
+# use ``with deriva_call():`` (it manages its own retries) so it's not
+# in this list; the rule only fires inside that context manager.
 TOOL_MODULES: list[Path] = [
-    PLUGIN_ROOT / "asset.py",
-    PLUGIN_ROOT / "feature.py",
-    PLUGIN_ROOT / "workflow.py",
-    PLUGIN_ROOT / "maintenance.py",
-    PLUGIN_ROOT / "dataset" / "read.py",
-    PLUGIN_ROOT / "dataset" / "mutate.py",
-    PLUGIN_ROOT / "dataset" / "complex.py",
-    PLUGIN_ROOT / "execution" / "read.py",
-    PLUGIN_ROOT / "execution" / "mutate.py",
+    TOOLS_ROOT / "asset.py",
+    TOOLS_ROOT / "feature.py",
+    TOOLS_ROOT / "workflow.py",
+    TOOLS_ROOT / "maintenance.py",
+    TOOLS_ROOT / "dataset" / "read.py",
+    TOOLS_ROOT / "dataset" / "mutate.py",
+    TOOLS_ROOT / "dataset" / "complex.py",
+    TOOLS_ROOT / "execution" / "read.py",
+    TOOLS_ROOT / "execution" / "mutate.py",
+    RESOURCES_ROOT / "ml.py",
 ]
 
 # Names whose method calls indicate sync deriva-ml I/O. Any

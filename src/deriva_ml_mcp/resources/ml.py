@@ -39,11 +39,13 @@ Resources registered:
 
 from __future__ import annotations
 
+import asyncio
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from deriva_mcp_core import deriva_call
 
+import deriva_ml_mcp.resources.ml as _pkg  # noqa: E402  (intentional self-import)
 from deriva_ml_mcp._helpers import (
     _MAX_LIMIT,
     _error_envelope,
@@ -59,7 +61,15 @@ from deriva_ml_mcp._response_models import (
     VocabularyTermDetail,
     VocabularyTermsResponse,
 )
-from deriva_ml_mcp.ml_context import get_ml
+
+# ``get_ml`` is accessed inside resource bodies via attribute lookup on
+# the module (``_pkg.get_ml``) so tests patching
+# ``deriva_ml_mcp.resources.ml.get_ml`` rebind the module attribute,
+# and ``_pkg.get_ml`` (resolved at call time) sees the patched value.
+# A direct ``from deriva_ml_mcp.ml_context import get_ml`` here would
+# capture the unpatched reference at module-import time and bypass the
+# patch -- same rationale as ``tools/dataset/read.py``.
+from deriva_ml_mcp.ml_context import get_ml  # noqa: F401  (re-exported for test patching)
 from deriva_ml_mcp.tools.asset import (
     _get_asset_detail_impl,
     _summarize_asset,
@@ -366,8 +376,13 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                payload = _list_datasets_impl(
+                # Sync deriva-py I/O runs in a worker thread so the
+                # asyncio event loop is not blocked. See
+                # ``tests/test_async_thread_wrap.py`` for the structural
+                # rule that enforces this pattern.
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(
+                    _list_datasets_impl,
                     ml,
                     after_rid=None,
                     limit=_MAX_LIMIT,
@@ -392,8 +407,8 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                payload = _get_dataset_detail_impl(ml, dataset_rid)
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(_get_dataset_detail_impl, ml, dataset_rid)
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
@@ -417,8 +432,8 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                payload = _get_dataset_spec_impl(ml, dataset_rid, None)
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(_get_dataset_spec_impl, ml, dataset_rid, None)
             import json as _json
 
             return _json.dumps(payload)
@@ -454,8 +469,8 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                info = _bag_info_impl(ml, dataset_rid, None)
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                info = await asyncio.to_thread(_bag_info_impl, ml, dataset_rid, None)
             import json as _json
 
             return _json.dumps(info, default=str)
@@ -479,8 +494,10 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                payload = _list_dataset_members_summary_impl(ml, dataset_rid)
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(
+                    _list_dataset_members_summary_impl, ml, dataset_rid
+                )
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
@@ -500,8 +517,10 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                payload = _list_workflows_impl(ml, after_rid=None, limit=_MAX_LIMIT)
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(
+                    _list_workflows_impl, ml, after_rid=None, limit=_MAX_LIMIT
+                )
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
@@ -517,8 +536,8 @@ def register(ctx: PluginContext) -> None:
         """Detail payload for one workflow: name, type, url, checksum, version, etc."""
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                payload = _get_workflow_impl(ml, workflow_rid)
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(_get_workflow_impl, ml, workflow_rid)
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
@@ -539,8 +558,9 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                payload = _list_executions_impl(
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(
+                    _list_executions_impl,
                     ml,
                     workflow_rid=None,
                     workflow_type=None,
@@ -579,8 +599,8 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                payload = _get_execution_detail_impl(ml, execution_rid)
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(_get_execution_detail_impl, ml, execution_rid)
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
@@ -609,8 +629,10 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                payload = _get_lineage_impl(ml, rid, depth=None, max_executions=500)
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(
+                    _get_lineage_impl, ml, rid, depth=None, max_executions=500
+                )
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
@@ -630,8 +652,9 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                payload = _list_features_impl(
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(
+                    _list_features_impl,
                     ml,
                     table=table_name,
                     after_rid=None,
@@ -663,8 +686,8 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                payload = _get_asset_detail_impl(ml, asset_rid)
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(_get_asset_detail_impl, ml, asset_rid)
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
@@ -690,7 +713,9 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                # schema lookup on ml.model is an in-memory dict access
+                # populated during get_ml's schema fetch; safe in async.
                 if schema not in ml.model.schemas:
                     return _error_envelope(
                         KeyError(f"schema not found: {schema}"),
@@ -699,7 +724,7 @@ def register(ctx: PluginContext) -> None:
                         catalog_id=catalog_id,
                         audit=False,
                     )
-                payload = _list_schema_asset_tables_impl(ml, schema)
+                payload = await asyncio.to_thread(_list_schema_asset_tables_impl, ml, schema)
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
@@ -728,8 +753,10 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                payload = _get_asset_table_contents_impl(ml, schema, asset_table)
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(
+                    _get_asset_table_contents_impl, ml, schema, asset_table
+                )
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
@@ -756,7 +783,7 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
                 if schema not in ml.model.schemas:
                     return _error_envelope(
                         KeyError(f"schema not found: {schema}"),
@@ -765,7 +792,7 @@ def register(ctx: PluginContext) -> None:
                         catalog_id=catalog_id,
                         audit=False,
                     )
-                payload = _list_schema_vocabularies_impl(ml, schema)
+                payload = await asyncio.to_thread(_list_schema_vocabularies_impl, ml, schema)
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
@@ -794,8 +821,10 @@ def register(ctx: PluginContext) -> None:
         """
         try:
             with deriva_call():
-                ml = get_ml(hostname, catalog_id)
-                payload = _get_vocabulary_terms_impl(ml, schema, vocab_name)
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(
+                    _get_vocabulary_terms_impl, ml, schema, vocab_name
+                )
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:  # noqa: BLE001
             return _error_envelope(
