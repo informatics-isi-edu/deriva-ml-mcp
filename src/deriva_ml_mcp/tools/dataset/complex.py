@@ -420,6 +420,9 @@ def register(ctx: PluginContext) -> None:
         split_description: str = "",
         workflow_type: str = "Dataset_Split",
         dry_run: bool = False,
+        row_per: str | None = None,
+        via: list[str] | None = None,
+        ignore_unrelated_anchors: bool | None = None,
     ) -> str:
         """Split a dataset into train/test/(validation) child datasets in the catalog.
 
@@ -463,6 +466,26 @@ def register(ctx: PluginContext) -> None:
             dry_run: If True, compute the split assignment without creating
                 any catalog datasets. Use to validate strategy choice and
                 partition sizes before committing.
+            row_per: Explicit leaf table for denormalization. Optional;
+                omit for the common case. When ``stratify_by_column`` is
+                set and ``row_per`` is None, the Python API auto-defaults
+                to ``element_table`` (one row per element). Set
+                explicitly to override -- e.g. when projecting through a
+                feature-association bridge and you want one row per
+                feature value rather than per element.
+            via: Tables forced into the join chain without contributing
+                columns (denormalizer ``via=`` parameter). Used to
+                disambiguate path ambiguity when multiple FK paths exist
+                between ``element_table`` and a column in
+                ``stratify_by_column``, without polluting the output
+                column list. Optional; omit for the common case.
+            ignore_unrelated_anchors: If True, silently drop dataset
+                anchors whose table has no FK path to any requested
+                table (denormalizer ``ignore_unrelated_anchors``).
+                Useful when the source dataset has heterogeneous member
+                tables and only a subset participates in the split.
+                Optional; omit for the common case (defaults to False
+                in the Python API).
 
         Returns:
             JSON string ``{"status": "split", "source", "split", "training",
@@ -493,6 +516,18 @@ def register(ctx: PluginContext) -> None:
                 # plugin-authoring-guide.md §"Synchronous work in
                 # threads".
                 ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                # Denormalization-control kwargs (deriva-ml #174/#176):
+                # only forward when the caller set them, so the Python
+                # API's own defaults (row_per=None auto-resolves to
+                # element_table when stratifying; ignore_unrelated_anchors
+                # defaults to False) remain in control for the common case.
+                extra_kwargs: dict = {}
+                if row_per is not None:
+                    extra_kwargs["row_per"] = row_per
+                if via is not None:
+                    extra_kwargs["via"] = via
+                if ignore_unrelated_anchors is not None:
+                    extra_kwargs["ignore_unrelated_anchors"] = ignore_unrelated_anchors
                 result = await asyncio.to_thread(
                     _pkg._split_dataset,
                     ml,
@@ -512,6 +547,7 @@ def register(ctx: PluginContext) -> None:
                     include_tables=include_tables,
                     workflow_type=workflow_type,
                     dry_run=dry_run,
+                    **extra_kwargs,
                 )
                 payload = result.model_dump()
 

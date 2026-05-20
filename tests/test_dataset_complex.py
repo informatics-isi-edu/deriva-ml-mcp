@@ -564,3 +564,63 @@ async def test_split_dataset_error_path(dataset_ctx, capturing_mcp, mock_ml):
     assert failed
     assert failed[0].kwargs["source_dataset_rid"] == "1-AAAA"
     assert failed[0].kwargs["dry_run"] is False
+
+
+async def test_split_dataset_denorm_kwargs_omitted_by_default(dataset_ctx, capturing_mcp, mock_ml):
+    """Default call MUST NOT forward row_per / via / ignore_unrelated_anchors.
+
+    The Python API owns the defaults (row_per auto-resolves to
+    element_table when stratifying; ignore_unrelated_anchors defaults to
+    False). The wrapper only forwards these kwargs when the caller set
+    them explicitly so that the Python API can keep evolving the
+    defaults without the MCP layer re-asserting None.
+    """
+    payload = _split_result_payload()
+    result_obj = MagicMock()
+    result_obj.model_dump.return_value = payload
+    with (
+        patch("deriva_ml_mcp.tools.dataset._split_dataset", return_value=result_obj) as mock_split,
+        _patch_audit(),
+    ):
+        await capturing_mcp.tools["deriva_ml_split_dataset"](
+            hostname="h",
+            catalog_id="1",
+            source_dataset_rid="1-AAAA",
+        )
+    kwargs = mock_split.call_args.kwargs
+    assert "row_per" not in kwargs
+    assert "via" not in kwargs
+    assert "ignore_unrelated_anchors" not in kwargs
+
+
+async def test_split_dataset_forwards_denorm_kwargs(dataset_ctx, capturing_mcp, mock_ml):
+    """row_per / via / ignore_unrelated_anchors flow through to split_dataset.
+
+    Regression test for the deriva-ml #174/#176 wrapper update: when
+    the caller sets any of the denormalization-control kwargs, the
+    MCP wrapper must forward them verbatim to
+    ``deriva_ml.dataset.split.split_dataset``.
+    """
+    payload = _split_result_payload()
+    payload["strategy"] = "stratified"
+    result_obj = MagicMock()
+    result_obj.model_dump.return_value = payload
+    with (
+        patch("deriva_ml_mcp.tools.dataset._split_dataset", return_value=result_obj) as mock_split,
+        _patch_audit(),
+    ):
+        await capturing_mcp.tools["deriva_ml_split_dataset"](
+            hostname="h",
+            catalog_id="1",
+            source_dataset_rid="1-AAAA",
+            stratify_by_column="Image_Classification.Image_Class",
+            include_tables=["Image", "Image_Classification"],
+            element_table="Image",
+            row_per="Image_Classification",
+            via=["Execution_Image_Image_Classification"],
+            ignore_unrelated_anchors=True,
+        )
+    kwargs = mock_split.call_args.kwargs
+    assert kwargs["row_per"] == "Image_Classification"
+    assert kwargs["via"] == ["Execution_Image_Image_Classification"]
+    assert kwargs["ignore_unrelated_anchors"] is True
