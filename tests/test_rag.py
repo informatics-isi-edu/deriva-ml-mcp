@@ -256,6 +256,8 @@ def test_execution_serializer_renders_full_row() -> None:
         "start_time": datetime(2026, 1, 1, 12, 0, 0),
         "stop_time": datetime(2026, 1, 1, 12, 30, 0),
         "duration": "0:30:00",
+        "download_duration": "0:00:05",
+        "upload_duration": "0:00:12",
     }
     md = _ExecutionSerializer().serialize("Execution", row)
 
@@ -266,7 +268,12 @@ def test_execution_serializer_renders_full_row() -> None:
     assert "**Description:** Run #1." in md
     assert "**Start Time:** 2026-01-01 12:00:00" in md
     assert "**Stop Time:** 2026-01-01 12:30:00" in md
-    assert "**Duration:** 0:30:00" in md
+    # Three duration phases each get their own line; the legacy
+    # "Duration" label was renamed to "Execution Duration" in PR 2
+    # (2026-05-19) for consistency with Download/Upload Duration.
+    assert "**Execution Duration:** 0:30:00" in md
+    assert "**Download Duration:** 0:00:05" in md
+    assert "**Upload Duration:** 0:00:12" in md
 
 
 def test_execution_serializer_omits_unset_timestamps() -> None:

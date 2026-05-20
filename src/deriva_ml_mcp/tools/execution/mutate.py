@@ -531,7 +531,8 @@ def register(ctx: PluginContext) -> None:
                 total_failed=summary["total_failed"],
                 retry_failed=retry_failed,
             )
-            # v1.3 surgical re-index: status + stop_time + duration changed.
+            # v1.3 surgical re-index: status + stop_time + the three
+            # *_duration fields changed.
             try:
                 from deriva_ml_mcp.resources.rag import _reindex_execution
 

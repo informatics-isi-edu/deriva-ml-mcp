@@ -373,6 +373,13 @@ class ExecutionSummary(BaseModel):
     auto-serializes them as ISO 8601 in JSON output) or string
     representations from mocks. ``duration`` is similarly tolerant
     -- deriva-ml may return a ``timedelta`` or a string.
+
+    ``duration`` is the algorithm-phase measurement (catalog column
+    ``Execution_Duration``); ``download_duration`` and
+    ``upload_duration`` are the two companion phases added 2026-05-19.
+    All three are ``None`` for catalogs that predate the schema bump
+    (forward-only migration -- see
+    docs/bugs/2026-05-19-execution-phase-durations-design.md).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -384,6 +391,8 @@ class ExecutionSummary(BaseModel):
     start_time: datetime | str | None
     stop_time: datetime | str | None
     duration: timedelta | str | None
+    download_duration: timedelta | str | None = None
+    upload_duration: timedelta | str | None = None
 
 
 class ExecutionInputDatasetRef(BaseModel):
