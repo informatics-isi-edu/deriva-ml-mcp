@@ -26,8 +26,10 @@ dependencies = [
     "deriva-mcp-core",
     # v3.3.0 raised from >=1.31.0 to >=1.33.0 to require lookup_lineage
     # (v1.32.0) and validate_dataset_specs / validate_execution_configuration
-    # (v1.33.0).
-    "deriva-ml>=1.33.0",
+    # (v1.33.0). v3.3.5 raises to >=1.36.6 to require the new
+    # split_dataset(row_per=, via=, ignore_unrelated_anchors=) kwargs
+    # added in deriva-ml #174/#176.
+    "deriva-ml>=1.36.6",
     # Pin deriva-py to the `deriva-ml` branch in the built wheel metadata --
     # not just in [tool.uv] (which is local-only and does not ship). Installers
     # other than uv (pip, plain build envs) would otherwise resolve whatever
