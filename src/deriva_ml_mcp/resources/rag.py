@@ -274,7 +274,9 @@ class _ExecutionSerializer(RowSerializer):
                 "Stop Time",
                 str(row["stop_time"]) if row.get("stop_time") is not None else None,
             ),
-            _kv_line("Duration", row.get("duration")),
+            _kv_line("Execution Duration", row.get("duration")),
+            _kv_line("Download Duration", row.get("download_duration")),
+            _kv_line("Upload Duration", row.get("upload_duration")),
         ]
         return _render_block(f"## Execution: {rid}", lines)
 

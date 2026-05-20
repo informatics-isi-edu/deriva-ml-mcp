@@ -105,6 +105,8 @@ def _summarize_execution(record: Any) -> ExecutionSummary:
         start_time=getattr(record, "start_time", None),
         stop_time=getattr(record, "stop_time", None),
         duration=getattr(record, "duration", None),
+        download_duration=getattr(record, "download_duration", None),
+        upload_duration=getattr(record, "upload_duration", None),
     )
 
 
@@ -559,7 +561,9 @@ def register(ctx: PluginContext) -> None:
                     status_enum = ExecutionStatus(status) if status else None
 
                     def _count_executions() -> int:
-                        return len(list(ml.find_executions(workflow=workflow_rid, status=status_enum)))
+                        return len(
+                            list(ml.find_executions(workflow=workflow_rid, status=status_enum))
+                        )
 
                     total = await asyncio.to_thread(_count_executions)
                     return PreflightCountResponse(
@@ -793,9 +797,7 @@ def register(ctx: PluginContext) -> None:
                 # See deriva-mcp-core plugin-authoring-guide.md
                 # §"Synchronous work in threads".
                 ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
-                payload = await asyncio.to_thread(
-                    _get_lineage_impl, ml, rid, depth, max_executions
-                )
+                payload = await asyncio.to_thread(_get_lineage_impl, ml, rid, depth, max_executions)
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
