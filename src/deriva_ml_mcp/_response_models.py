@@ -509,18 +509,29 @@ class ExecutionExperiment(BaseModel):
     experiment run. The ``model_config`` field name conflicts with
     Pydantic's reserved attribute, so it's aliased to ``model_cfg``
     in Python while the wire JSON key remains ``"model_config"``.
+
+    The ``config_choices`` and ``model_config`` dicts are typed as
+    ``dict[str, Any]`` because real Hydra-zen configs include
+    non-primitive values — lists (e.g. ``_zen_exclude: ["description"]``),
+    nested dicts (e.g. nested optimizer config), and class-path
+    strings under reserved keys (``_target_``, ``_zen_target``). An
+    earlier typing of ``dict[str, str | int | float | bool | None]``
+    rejected those values at Pydantic validation time, the bare
+    ``except Exception`` in ``_get_execution_detail_impl`` silently
+    swallowed the failure, and ``experiment: null`` came back for
+    every real Hydra-driven execution. Broadening to ``Any`` is the
+    right contract: this is the cheap-accessor surface, not a
+    schema-validated one.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True, protected_namespaces=())
 
     name: str | None
-    config_choices: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    config_choices: dict[str, Any] = Field(default_factory=dict)
     # Aliased: Python attribute is ``model_cfg``; wire key is ``"model_config"``
     # to preserve the v1.x wire shape. Pydantic's protected_namespaces=() above
     # is needed because ``model_*`` is a reserved prefix.
-    model_cfg: dict[str, str | int | float | bool | None] = Field(
-        default_factory=dict, alias="model_config"
-    )
+    model_cfg: dict[str, Any] = Field(default_factory=dict, alias="model_config")
 
 
 class ExecutionDetail(ExecutionSummary):

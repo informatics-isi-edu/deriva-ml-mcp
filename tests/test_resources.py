@@ -403,9 +403,7 @@ async def test_ml_dataset_spec_error_path_is_silent(resource_ctx, capturing_mcp,
 # ---------------------------------------------------------------------------
 
 
-async def test_ml_dataset_bag_preview_uses_current_version(
-    resource_ctx, capturing_mcp, mock_ml
-):
+async def test_ml_dataset_bag_preview_uses_current_version(resource_ctx, capturing_mcp, mock_ml):
     """Resource form omits ``version`` -- always inspects current version
     with a warning recommending an explicit pin. The shared
     ``_bag_info_impl`` helper is what the tool uses too, so a drift in
@@ -442,9 +440,7 @@ async def test_ml_dataset_bag_preview_uses_current_version(
     assert spec_arg.exclude_tables is None
 
 
-async def test_ml_dataset_bag_preview_error_path_is_silent(
-    resource_ctx, capturing_mcp, mock_ml
-):
+async def test_ml_dataset_bag_preview_error_path_is_silent(resource_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.side_effect = RuntimeError("Dataset not found")
     with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
         out = json.loads(
@@ -691,8 +687,12 @@ async def test_ml_execution_detail_categorizes_metadata_outputs(
     # Mocks here set asset_table only; description / asset_types / cite_url
     # come back as their defaults (None / [] / None).
     _bare = lambda rid, fn, table: {  # noqa: E731
-        "rid": rid, "filename": fn, "description": None,
-        "asset_types": [], "asset_table": table, "cite_url": None,
+        "rid": rid,
+        "filename": fn,
+        "description": None,
+        "asset_types": [],
+        "asset_table": table,
+        "cite_url": None,
     }
     assert out["outputs"]["assets"] == [
         _bare("1-WEIGHT", "cifar10_cnn_weights.pt", "Execution_Asset"),
@@ -853,6 +853,57 @@ async def test_ml_execution_detail_includes_experiment_when_present(
     # We deliberately do NOT surface the full hydra_config dict (can be 10-100 KB);
     # the resource exposes the cheap accessors only.
     assert "hydra_config" not in out["experiment"]
+
+
+async def test_ml_execution_detail_experiment_tolerates_non_primitive_values(
+    resource_ctx, capturing_mcp, mock_ml
+):
+    """Regression: ExecutionExperiment must accept list / dict values in
+    model_config and config_choices.
+
+    Surfaced 2026-05-19 in the e2e platform test session: a real Hydra-zen
+    config produces a model_config dict that includes keys like
+    ``_zen_exclude: list[str]`` (e.g. ``['description']``). The earlier
+    typing of ``model_cfg: dict[str, str | int | float | bool | None]``
+    rejected the list value at validation time, the bare ``except Exception``
+    at read.py:337-338 silently turned the failure into ``experiment=None``,
+    and the resource reported ``"experiment": null`` for every real
+    Hydra-driven execution. The typing has been broadened to accept any
+    JSON-serializable value (``Any``); this test pins that contract.
+    """
+    record = _make_execution_record_mock(rid="1-EXP", workflow_rid="1-WF")
+    record.list_input_datasets.return_value = []
+    record.list_assets.return_value = []
+    mock_ml.lookup_execution.return_value = record
+
+    experiment = MagicMock()
+    experiment.name = "cifar10_quick"
+    experiment.config_choices = {"model": "cnn_2layer", "optimizer": "adam"}
+    # Real hydra-zen model_config carries lists (and could carry nested dicts);
+    # the validator must tolerate all of it without dropping the field.
+    experiment.model_config = {
+        "lr": 0.001,
+        "batch_size": 32,
+        "_zen_exclude": ["description"],  # list of strings
+        "_target_": "models.cifar10_cnn.cifar10_cnn",
+        "nested": {"weight_decay": 0.0},  # nested dict
+    }
+    mock_ml.lookup_experiment.return_value = experiment
+
+    out = json.loads(
+        await capturing_mcp.resources[_EXECUTION_DETAIL_URI](
+            hostname="h", catalog_id="1", execution_rid="1-EXP"
+        )
+    )
+
+    # Pre-fix this silently came back as experiment=None.
+    assert out["experiment"] is not None, (
+        "experiment field was silently dropped (likely the ValidationError "
+        "was swallowed by the bare `except Exception` at read.py:337-338)"
+    )
+    assert out["experiment"]["name"] == "cifar10_quick"
+    assert out["experiment"]["model_config"]["_zen_exclude"] == ["description"]
+    assert out["experiment"]["model_config"]["nested"] == {"weight_decay": 0.0}
 
 
 async def test_ml_execution_detail_not_found(resource_ctx, capturing_mcp, mock_ml):
