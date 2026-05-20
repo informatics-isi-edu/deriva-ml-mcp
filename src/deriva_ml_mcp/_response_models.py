@@ -883,6 +883,38 @@ class ResyncIndexesResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Vocabulary response models
+# ---------------------------------------------------------------------------
+
+
+class CreateVocabularyResponse(BaseModel):
+    """Response from ``deriva_ml_create_vocabulary``.
+
+    Mirrors the canonical DERIVA vocabulary shape produced by
+    ``ml.create_vocabulary``: the table is created in the requested
+    schema (or domain schema when omitted) with the standard
+    columns (Name, ID, URI, Description, Synonyms) typed via
+    deriva-py's ``VocabularyTableDef`` -- the ``ID`` and ``URI``
+    columns use the ``ermrest_curie`` / ``ermrest_uri`` pseudo-types
+    so subsequent ``add_term`` calls succeed without ID / URI
+    supplied at insert time.
+
+    Distinct from the generic ``create_vocabulary`` in deriva-mcp-core:
+    this tool uses ``ml.create_vocabulary``, which scopes the curie
+    template to the deriva-ml project name and updates the
+    navigation bar by default. Prefer this tool on any catalog that
+    has the deriva-ml schema installed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["created"]
+    schema_name: str = Field(..., alias="schema")
+    vocab_name: str
+    columns: list[str]
+
+
+# ---------------------------------------------------------------------------
 # Error envelope (returned by every mutating tool on failure)
 # ---------------------------------------------------------------------------
 
