@@ -115,6 +115,7 @@ _ASSET_TOOLS = frozenset(
 # (audit log treats cache refreshes as reads).
 _VOCABULARY_TOOLS = frozenset(
     {
+        "deriva_ml_create_vocabulary",
         "deriva_ml_reindex_vocabularies",
         "deriva_ml_resync_indexes",
     }
