@@ -179,10 +179,18 @@ async def test_lookup_asset_no_executions(asset_ctx, capturing_mcp, mock_ml):
     assert out["executions"] == []
 
 
-async def test_lookup_asset_executions_call_failure_falls_back_to_empty_list(
+async def test_lookup_asset_executions_call_failure_surfaces_error(
     asset_ctx, capturing_mcp, mock_ml
 ):
-    """If list_executions raises, the detail payload still serializes (best-effort)."""
+    """Issue #41 regression: a list_executions failure now surfaces in
+    ``executions_error`` rather than being silently swallowed into ``[]``.
+
+    Prior behaviour: blanket ``except Exception`` flipped the list to
+    ``[]`` and gave no way for the caller to distinguish "no
+    executions" from "lookup failed". Today the asset detail still
+    serializes (best-effort on the rest of the payload), but the
+    failure is reported.
+    """
     asset = _make_asset_mock(asset_rid="1-AAAA")
     asset.list_executions.side_effect = RuntimeError("association table missing")
     mock_ml.lookup_asset.return_value = asset
@@ -195,6 +203,71 @@ async def test_lookup_asset_executions_call_failure_falls_back_to_empty_list(
     # Best-effort: the asset detail still came through.
     assert out["rid"] == "1-AAAA"
     assert out["executions"] == []
+    # New in #41: the error is reported, not swallowed.
+    assert out["executions_error"] == "RuntimeError: association table missing"
+
+
+async def test_lookup_asset_no_execution_association_returns_clean_empty(
+    asset_ctx, capturing_mcp, mock_ml
+):
+    """Issue #41: the legitimate "asset table has no Execution association"
+    case (raised by ``DerivaModel.find_association``) keeps the clean
+    empty-list shape -- no spurious error message. This is the only
+    case we silence; everything else surfaces in ``executions_error``.
+    """
+    from deriva_ml.core.exceptions import DerivaMLException
+
+    asset = _make_asset_mock(asset_rid="1-AAAA")
+    asset.list_executions.side_effect = DerivaMLException(
+        "No association tables found between Image and Execution."
+    )
+    mock_ml.lookup_asset.return_value = asset
+
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_lookup_asset"](
+            hostname="h", catalog_id="1", asset_rid="1-AAAA"
+        )
+    )
+    assert out["rid"] == "1-AAAA"
+    assert out["executions"] == []
+    assert out["executions_error"] is None
+
+
+async def test_lookup_asset_b18_fresh_then_failed_lookup(asset_ctx, capturing_mcp, mock_ml):
+    """Issue #41 (B18) scenario regression: an MCP request inserts a
+    fresh association, a second MCP request looks up the asset, and an
+    error inside the executions lookup is now surfaced rather than
+    masquerading as "no executions". Two-call sequence -- the original
+    bug's pattern -- proves the second call's failure is no longer
+    invisible.
+    """
+    # First call: lookup succeeds with no executions yet.
+    asset_v1 = _make_asset_mock(asset_rid="1-AAAA", executions=[])
+    mock_ml.lookup_asset.return_value = asset_v1
+    out1 = json.loads(
+        await capturing_mcp.tools["deriva_ml_lookup_asset"](
+            hostname="h", catalog_id="1", asset_rid="1-AAAA"
+        )
+    )
+    assert out1["executions"] == []
+    assert out1["executions_error"] is None
+
+    # Now an association is "inserted" (mock state change) and the
+    # second lookup hits a transient ermrest error -- the original B18
+    # symptom.
+    asset_v2 = _make_asset_mock(asset_rid="1-AAAA")
+    asset_v2.list_executions.side_effect = RuntimeError("ermrest 503 Service Unavailable")
+    mock_ml.lookup_asset.return_value = asset_v2
+    out2 = json.loads(
+        await capturing_mcp.tools["deriva_ml_lookup_asset"](
+            hostname="h", catalog_id="1", asset_rid="1-AAAA"
+        )
+    )
+    # Pre-fix behaviour: out2["executions"] == [] and no signal of why.
+    # Post-fix behaviour: out2["executions"] == [] AND the caller is
+    # told the lookup failed.
+    assert out2["executions"] == []
+    assert out2["executions_error"] == "RuntimeError: ermrest 503 Service Unavailable"
 
 
 async def test_lookup_asset_failure_returns_error_envelope(asset_ctx, capturing_mcp, mock_ml):

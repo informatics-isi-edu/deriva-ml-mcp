@@ -714,15 +714,28 @@ class AssetDetail(AssetSummary):
     Produced by ``_get_asset_detail_impl``. Used by the
     ``deriva://catalog/{h}/{c}/ml/asset/{rid}`` resource.
 
-    The ``executions`` list is best-effort: if
-    ``Asset.list_executions()`` raises (e.g. malformed catalog
-    metadata), it comes back empty rather than aborting the whole
-    detail payload.
+    Executions semantics. Two distinct empty-list cases are
+    distinguishable on the wire so callers can tell "no executions
+    are linked to this asset" apart from "the executions lookup
+    failed" -- the latter previously surfaced as an indistinguishable
+    silent ``[]`` (issue #41 / B18):
+
+    - ``executions == []`` and ``executions_error is None``: the asset
+      genuinely has no execution associations, or its asset table has
+      no Execution association at all (e.g. a domain asset table that
+      doesn't track executions). This is the "no data" answer.
+    - ``executions == []`` and ``executions_error`` is a string: the
+      executions lookup raised. The asset detail (filename, length,
+      url, types, ...) still comes through, but the executions
+      sub-field could not be populated. The string is
+      ``f"{exc.__class__.__name__}: {exc}"`` -- enough for a caller to
+      diagnose without re-running.
     """
 
     url: str | None
     description: str | None
     executions: list[AssetExecutionRef] = Field(default_factory=list)
+    executions_error: str | None = None
 
 
 class AssetListResponse(_PaginationFields):
