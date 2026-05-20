@@ -321,21 +321,46 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> ExecutionDetail:
     # surface the cheap fields (name + config_choices + model_config)
     # but NOT the full hydra_config payload -- it can be 10-100 KB and
     # a caller wanting it should fetch the metadata asset directly.
+    #
+    # NOTE(2026-05-19): the previous bare ``except Exception`` silently
+    # swallowed BOTH "no Experiment row" (correct) and Pydantic
+    # ValidationError from ExecutionExperiment.model_validate (wrong).
+    # That hid a serializer bug for ~6 months: real Hydra-zen configs
+    # carry non-primitive values (lists, nested dicts) and the
+    # narrow typing rejected them, so EVERY Hydra-driven execution
+    # came back with experiment=null. The typing was broadened in the
+    # same commit; this catch now splits the two failure modes so a
+    # future ValidationError surfaces in logs instead of vanishing.
     experiment: ExecutionExperiment | None = None
     try:
         exp = ml.lookup_experiment(execution_rid)
-        experiment = ExecutionExperiment.model_validate(
-            {
-                "name": getattr(exp, "name", None),
-                "config_choices": getattr(exp, "config_choices", {}) or {},
-                # The wire key is "model_config" (alias) -- pass the dict
-                # under the wire-key form to take advantage of model_validate's
-                # alias-aware construction.
-                "model_config": getattr(exp, "model_config", {}) or {},
-            }
-        )
     except Exception:  # noqa: BLE001 -- absent experiment is the common case
-        experiment = None
+        exp = None
+    if exp is not None:
+        try:
+            experiment = ExecutionExperiment.model_validate(
+                {
+                    "name": getattr(exp, "name", None),
+                    "config_choices": getattr(exp, "config_choices", {}) or {},
+                    # The wire key is "model_config" (alias) -- pass the dict
+                    # under the wire-key form to take advantage of model_validate's
+                    # alias-aware construction.
+                    "model_config": getattr(exp, "model_config", {}) or {},
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 -- log but don't break the response
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "ExecutionExperiment serialization failed for %s: %s. "
+                "Returning experiment=None; the underlying Experiment object "
+                "from deriva-ml exists but its fields failed validation. This "
+                "is likely a deriva-ml-mcp serializer regression -- the "
+                "lookup_experiment path itself succeeded.",
+                execution_rid,
+                exc,
+            )
+            experiment = None
 
     return ExecutionDetail(
         **summary.model_dump(),
