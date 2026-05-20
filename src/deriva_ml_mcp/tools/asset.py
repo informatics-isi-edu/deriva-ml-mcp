@@ -138,11 +138,31 @@ def _get_asset_detail_impl(ml: Any, asset_rid: str) -> AssetDetail:
     common case -- ``list_asset_executions`` returns plain
     ``ExecutionRecord``s), the role surfaces as ``None``.
 
-    If ``Asset.list_executions`` raises (e.g. malformed catalog
-    metadata), the executions list comes back empty rather than aborting
-    the whole detail payload -- mirrors the
-    ``_get_execution_detail_impl`` best-effort pattern in
-    ``tools/execution.py``.
+    Executions failure semantics (issue #41 / B18). The executions
+    sub-field is best-effort in the sense that a failure inside
+    ``Asset.list_executions()`` does not abort the whole detail
+    payload -- the asset metadata (filename, length, url, types, ...)
+    still comes through. But the failure is **surfaced**, not
+    swallowed: previously every exception turned into an
+    indistinguishable empty list, which masked transient ermrest
+    errors, auth glitches, and partial-list failures behind a
+    syntactically valid but semantically wrong "no executions" answer.
+    Now:
+
+    - If ``find_association`` raises because the asset table has no
+      ``Execution`` association at all (genuine "no execution
+      tracking" case), ``executions`` is ``[]`` and
+      ``executions_error`` is ``None`` -- same shape as the empty case.
+    - If any other exception is raised, ``executions`` is ``[]`` and
+      ``executions_error`` is ``"<ExcClass>: <message>"``. The caller
+      can distinguish "no associations" from "lookup failed" without
+      re-running.
+
+    The narrow "no association" detection keys on the
+    ``DerivaMLException`` message produced by
+    ``DerivaModel.find_association`` ("No association tables found
+    between ... and Execution.") -- the exception type alone is too
+    broad because the same class covers many distinct failures.
 
     Args:
         ml: A connected ``deriva_ml.DerivaML`` instance.
@@ -153,16 +173,28 @@ def _get_asset_detail_impl(ml: Any, asset_rid: str) -> AssetDetail:
     """
     asset = ml.lookup_asset(asset_rid)
     executions: list[AssetExecutionRef] = []
+    executions_error: str | None = None
     try:
-        for record in asset.list_executions():
+        records = list(asset.list_executions())
+    except Exception as exc:  # noqa: BLE001 -- classified below
+        # "No association tables found between <table> and Execution."
+        # is the legitimate "this asset table has no execution
+        # tracking" case raised by ``DerivaModel.find_association`` --
+        # surface that as a clean empty list. Anything else is a real
+        # error worth showing to the caller.
+        msg = str(exc)
+        if "No association tables found" in msg and "Execution" in msg:
+            executions_error = None
+        else:
+            executions_error = f"{exc.__class__.__name__}: {exc}"
+    else:
+        for record in records:
             executions.append(
                 AssetExecutionRef(
                     rid=getattr(record, "execution_rid", None),
                     asset_role=getattr(record, "asset_role", None),
                 )
             )
-    except Exception:  # noqa: BLE001 -- executions list is best-effort
-        executions = []
     return AssetDetail(
         rid=asset.asset_rid,
         filename=asset.filename,
@@ -173,6 +205,7 @@ def _get_asset_detail_impl(ml: Any, asset_rid: str) -> AssetDetail:
         asset_table=asset.asset_table,
         asset_types=list(asset.asset_types) if asset.asset_types else [],
         executions=executions,
+        executions_error=executions_error,
     )
 
 
@@ -319,13 +352,25 @@ def register(ctx: PluginContext) -> None:
         ``deriva://catalog/{h}/{c}/ml/asset/{rid}`` resource -- the two
         share an internal helper so the payloads cannot drift.
 
+        Executions semantics (issue #41). The ``executions`` list is
+        best-effort: an error inside the executions lookup does not
+        abort the rest of the detail. But the failure is now
+        surfaced via ``executions_error`` rather than swallowed:
+
+        - ``executions: []`` with ``executions_error: null`` means the
+          asset has no execution links (including the case where the
+          asset table has no Execution association at all).
+        - ``executions: []`` with ``executions_error: "<exc>"`` means
+          the lookup failed. Re-run, or inspect ``Execution_Asset_Execution``
+          directly to confirm.
+
         Args:
             asset_rid: The RID of the asset to look up.
 
         Returns:
             JSON string ``{"rid", "filename", "length", "md5", "url",
             "description", "asset_table", "asset_types", "executions":
-            [{"rid", "asset_role"}, ...]}``.
+            [{"rid", "asset_role"}, ...], "executions_error": str|null}``.
 
         Raises:
             RuntimeError: Wrapped as ``{"error": ...}``, propagated
@@ -337,7 +382,7 @@ def register(ctx: PluginContext) -> None:
             12345, "md5": "abc", "url": "/hatrac/...",
             "description": "MRI scan", "asset_table": "Image",
             "asset_types": ["Training_Data"], "executions": [{"rid":
-            "1-EXEC", "asset_role": "Output"}]}``.
+            "1-EXEC", "asset_role": "Output"}], "executions_error": null}``.
         """
         try:
             with deriva_call():
