@@ -86,7 +86,15 @@ override-dependencies = [
 
 [tool.uv.sources]
 deriva-mcp-core = { path = "../deriva-mcp-core", editable = true }
-deriva-ml = { path = "../deriva-ml", editable = true }
+# deriva-ml is pulled from github main on every `uv sync --upgrade` so
+# this repo always picks up the latest release. Local edits to a
+# sibling ../deriva-ml checkout are NOT picked up automatically; commit
+# and push them, then `uv sync --upgrade-package deriva-ml`. If you
+# need an editable sibling for a workflow where push-then-sync is too
+# slow, swap this line for
+#   deriva-ml = { path = "../deriva-ml", editable = true }
+# locally — but do not commit that change.
+deriva-ml = { git = "https://github.com/informatics-isi-edu/deriva-ml.git" }
 
 [tool.ruff]
 line-length = 100

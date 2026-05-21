@@ -630,7 +630,8 @@ provides-extras = ["rag", "dev"]
 
 [[package]]
 name = "deriva-ml"
-source = { editable = "../deriva-ml" }
+version = "1.37.2.post2+g80872f822"
+source = { git = "https://github.com/informatics-isi-edu/deriva-ml.git#80872f8226c4ee8a16ac486090894eb51f7d7f88" }
 dependencies = [
     { name = "bdbag" },
     { name = "bump-my-version" },
@@ -653,50 +654,6 @@ dependencies = [
     { name = "sqlalchemy" },
     { name = "textual" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "bdbag", git = "https://github.com/fair-research/bdbag?rev=1.9.0-dev" },
-    { name = "bump-my-version" },
-    { name = "deepdiff" },
-    { name = "deriva", git = "https://github.com/informatics-isi-edu/deriva-py?branch=deriva-ml" },
-    { name = "hydra-zen" },
-    { name = "nbconvert" },
-    { name = "nbstripout" },
-    { name = "nest-asyncio" },
-    { name = "packaging", specifier = ">=24" },
-    { name = "pandas" },
-    { name = "pandas-stubs" },
-    { name = "papermill" },
-    { name = "pydantic", specifier = ">=2.11" },
-    { name = "pyyaml" },
-    { name = "regex" },
-    { name = "scikit-learn" },
-    { name = "setuptools", specifier = ">=80" },
-    { name = "setuptools-scm", specifier = ">=8.0" },
-    { name = "sqlalchemy" },
-    { name = "tensorflow", marker = "extra == 'tf'", specifier = ">=2.15" },
-    { name = "textual", specifier = ">=3.0" },
-    { name = "torch", marker = "extra == 'torch'", specifier = ">=2.0" },
-]
-provides-extras = ["torch", "tf"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "icecream", specifier = ">=2.1.4" },
-    { name = "ipykernel" },
-    { name = "jupyter", specifier = ">=1.1.1" },
-    { name = "mkdocs-jupyter" },
-    { name = "mkdocs-material" },
-    { name = "mkdocstrings", extras = ["python"] },
-    { name = "pip-system-certs" },
-    { name = "pyright", specifier = ">=1.1.408" },
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-coverage", specifier = ">=0.0" },
-    { name = "pytest-mock" },
-    { name = "ruff" },
-]
-lint = [{ name = "ruff", specifier = ">=0.12.0" }]
 
 [[package]]
 name = "deriva-ml-mcp"
@@ -724,7 +681,7 @@ requires-dist = [
     { name = "bump-my-version", marker = "extra == 'dev'" },
     { name = "deriva", git = "https://github.com/informatics-isi-edu/deriva-py?rev=deriva-ml" },
     { name = "deriva-mcp-core", editable = "../deriva-mcp-core" },
-    { name = "deriva-ml", editable = "../deriva-ml" },
+    { name = "deriva-ml", git = "https://github.com/informatics-isi-edu/deriva-ml.git" },
     { name = "pip-system-certs", marker = "extra == 'system-certs'", specifier = ">=5.3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
