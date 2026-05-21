@@ -23,7 +23,9 @@ from typing import TYPE_CHECKING, Any
 
 from deriva_mcp_core import deriva_call
 from deriva_mcp_core.telemetry import audit_event
+from deriva_ml.core.enums import MLVocab
 from deriva_ml.core.exceptions import DerivaMLException
+from deriva_ml.execution.workflow import Workflow
 
 logger = logging.getLogger(__name__)
 
@@ -467,19 +469,38 @@ def register(ctx: PluginContext) -> None:
                     rid = existing.rid
                     status = "exists"
                 else:
-                    wf = await asyncio.to_thread(
-                        ml.create_workflow,
+                    # Validate every workflow_type term against the
+                    # Workflow_Type vocabulary BEFORE constructing the
+                    # Workflow. Previously this lived inside
+                    # ``ml.create_workflow(name, workflow_type, description)``,
+                    # which we no longer call -- see the note below.
+                    for wt in normalized_types:
+                        await asyncio.to_thread(
+                            ml.lookup_term, MLVocab.workflow_type, wt
+                        )
+                    # Construct ``Workflow`` directly with url / checksum
+                    # / version set at construction time so the model
+                    # validator (``setup_url_checksum``) short-circuits
+                    # at ``if not self.url`` and skips the running-script
+                    # git introspection. The pre-1.36.5 path constructed
+                    # via ``ml.create_workflow`` and then set the three
+                    # attributes post-hoc; under v1.36.5+ the validator
+                    # is strict and tries to derive url/checksum from
+                    # the running script's git context at construction
+                    # time -- which blows up inside the MCP server
+                    # (no script path; no git repo around the worker).
+                    # Boundary rule (per the tool docstring): the
+                    # caller computes url/checksum/version locally and
+                    # passes them in. The MCP server never runs git
+                    # introspection -- direct construction enforces it.
+                    wf = Workflow(
                         name=name,
                         workflow_type=workflow_type,
                         description=description,
+                        url=url,
+                        checksum=checksum,
+                        version=version,
                     )
-                    # url/checksum/version are pure Pydantic attribute
-                    # writes on a not-yet-catalog-bound Workflow (no
-                    # ``_ml_instance`` set), so they don't trigger I/O
-                    # and stay on the event loop.
-                    wf.url = url
-                    wf.checksum = checksum
-                    wf.version = version
                     # _add_workflow is the canonical write path even
                     # though the leading underscore looks private — all
                     # workflow inserts in deriva_ml itself go through it.

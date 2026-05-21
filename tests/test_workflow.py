@@ -224,8 +224,9 @@ async def test_find_workflow_by_url_not_found(workflow_ctx, capturing_mcp, mock_
 async def test_create_workflow_success_emits_audit(workflow_ctx, capturing_mcp, mock_ml):
     # No existing workflow at this URL.
     mock_ml.lookup_workflow_by_url.side_effect = DerivaMLException("no match")
-    new_wf = _make_workflow_mock(rid=None)
-    mock_ml.create_workflow.return_value = new_wf
+    # Vocabulary check passes; the plugin now does explicit lookup_term
+    # for each workflow_type (previously hidden inside ml.create_workflow).
+    mock_ml.lookup_term.return_value = MagicMock()
     mock_ml._add_workflow.return_value = "1-NEW"
     with _patch_workflow_audit() as mock_audit:
         result = await capturing_mcp.tools["deriva_ml_create_workflow"](
@@ -246,11 +247,21 @@ async def test_create_workflow_success_emits_audit(workflow_ctx, capturing_mcp, 
     assert payload["url"] == "https://github.com/example/repo/blob/abc/main.py"
     assert payload["checksum"] == "abc123"
     assert payload["version"] == "1.0.0"
-    # Wf object's url/checksum/version were set before _add_workflow.
-    assert new_wf.url == "https://github.com/example/repo/blob/abc/main.py"
-    assert new_wf.checksum == "abc123"
-    assert new_wf.version == "1.0.0"
-    mock_ml._add_workflow.assert_called_once_with(new_wf)
+    # ml.create_workflow is no longer called -- the plugin constructs
+    # Workflow(...) directly with url/checksum/version at construction
+    # time, then hands off to _add_workflow. Vocabulary validation
+    # happens via lookup_term BEFORE construction.
+    mock_ml.create_workflow.assert_not_called()
+    mock_ml.lookup_term.assert_called_once()
+    # _add_workflow receives the constructed Workflow with url/checksum
+    # /version already set (the v1.36.5+ requirement: setup_url_checksum
+    # validator short-circuits at ``if not self.url``).
+    mock_ml._add_workflow.assert_called_once()
+    wf_arg = mock_ml._add_workflow.call_args.args[0]
+    assert wf_arg.url == "https://github.com/example/repo/blob/abc/main.py"
+    assert wf_arg.checksum == "abc123"
+    assert wf_arg.version == "1.0.0"
+    assert wf_arg.name == "MyPipeline"
     # Audit emitted with bounded identifiers; description NOT included.
     success = _success_calls(mock_audit, "deriva_ml_create_workflow")
     assert len(success) == 1
@@ -329,9 +340,12 @@ async def test_create_workflow_dedup_uses_checksum_when_provided(
 
 
 async def test_create_workflow_failure_emits_failed_audit(workflow_ctx, capturing_mcp, mock_ml):
-    # Dedup pre-check passes (no existing); create_workflow itself raises.
+    # Dedup pre-check passes (no existing); vocabulary lookup itself raises.
+    # Previously the vocab check lived inside ml.create_workflow; now the
+    # plugin calls ml.lookup_term(MLVocab.workflow_type, wt) explicitly
+    # for each type BEFORE constructing the Workflow.
     mock_ml.lookup_workflow_by_url.side_effect = DerivaMLException("no match")
-    mock_ml.create_workflow.side_effect = RuntimeError("vocab term unknown")
+    mock_ml.lookup_term.side_effect = RuntimeError("vocab term unknown")
     with _patch_workflow_audit() as mock_audit:
         result = await capturing_mcp.tools["deriva_ml_create_workflow"](
             hostname="h",
@@ -343,6 +357,8 @@ async def test_create_workflow_failure_emits_failed_audit(workflow_ctx, capturin
     payload = json.loads(result)
     assert "error" in payload
     assert "vocab term unknown" in payload["error"]
+    # _add_workflow must NOT be reached when vocab validation fails.
+    mock_ml._add_workflow.assert_not_called()
     failed = _success_calls(mock_audit, "deriva_ml_create_workflow_failed")
     assert len(failed) == 1
     kwargs = failed[0].kwargs
@@ -461,8 +477,10 @@ async def test_create_workflow_triggers_surgical_reindex(workflow_ctx, capturing
     from unittest.mock import AsyncMock
 
     mock_ml.lookup_workflow_by_url.side_effect = DerivaMLException("no match")
-    new_wf = _make_workflow_mock(rid=None)
-    mock_ml.create_workflow.return_value = new_wf
+    # ml.create_workflow is no longer called; the plugin constructs
+    # Workflow(...) directly under v1.36.5+. lookup_term replaces the
+    # vocab check that used to live inside create_workflow.
+    mock_ml.lookup_term.return_value = MagicMock()
     mock_ml._add_workflow.return_value = "1-NEW"
     fake_reindex = AsyncMock(return_value=1)
     with (
