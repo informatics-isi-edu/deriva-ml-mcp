@@ -28,8 +28,10 @@ dependencies = [
     # (v1.32.0) and validate_dataset_specs / validate_execution_configuration
     # (v1.33.0). v3.3.5 raises to >=1.36.6 to require the new
     # split_dataset(row_per=, via=, ignore_unrelated_anchors=) kwargs
-    # added in deriva-ml #174/#176.
-    "deriva-ml>=1.36.6",
+    # added in deriva-ml #174/#176. Raised again to >=1.36.7 to require
+    # the typed NoAssociationException / AmbiguousAssociationException
+    # added in deriva-ml #180/#185.
+    "deriva-ml>=1.36.7",
     # Pin deriva-py to the `deriva-ml` branch in the built wheel metadata --
     # not just in [tool.uv] (which is local-only and does not ship). Installers
     # other than uv (pip, plain build envs) would otherwise resolve whatever

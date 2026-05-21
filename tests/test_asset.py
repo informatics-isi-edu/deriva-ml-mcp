@@ -211,9 +211,38 @@ async def test_lookup_asset_no_execution_association_returns_clean_empty(
     asset_ctx, capturing_mcp, mock_ml
 ):
     """Issue #41: the legitimate "asset table has no Execution association"
-    case (raised by ``DerivaModel.find_association``) keeps the clean
-    empty-list shape -- no spurious error message. This is the only
-    case we silence; everything else surfaces in ``executions_error``.
+    case (raised by ``DerivaModel.find_association`` as the typed
+    ``NoAssociationException``) keeps the clean empty-list shape --
+    no spurious error message. This is the only case we silence;
+    everything else surfaces in ``executions_error``.
+    """
+    from deriva_ml.core.exceptions import NoAssociationException
+
+    asset = _make_asset_mock(asset_rid="1-AAAA")
+    asset.list_executions.side_effect = NoAssociationException("Image", "Execution")
+    mock_ml.lookup_asset.return_value = asset
+
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_lookup_asset"](
+            hostname="h", catalog_id="1", asset_rid="1-AAAA"
+        )
+    )
+    assert out["rid"] == "1-AAAA"
+    assert out["executions"] == []
+    assert out["executions_error"] is None
+
+
+async def test_lookup_asset_generic_no_association_message_is_not_silenced(
+    asset_ctx, capturing_mcp, mock_ml
+):
+    """Regression: a bare ``DerivaMLException`` carrying the literal
+    message ``"No association tables found ... Execution"`` is **not**
+    silently swallowed -- it surfaces in ``executions_error``.
+
+    This proves the helper no longer depends on the exception's message
+    text to decide whether the error was the legitimate "no association"
+    case. Only the typed ``NoAssociationException`` subclass triggers
+    the clean-empty path now.
     """
     from deriva_ml.core.exceptions import DerivaMLException
 
@@ -230,7 +259,9 @@ async def test_lookup_asset_no_execution_association_returns_clean_empty(
     )
     assert out["rid"] == "1-AAAA"
     assert out["executions"] == []
-    assert out["executions_error"] is None
+    assert out["executions_error"] is not None
+    assert "DerivaMLException" in out["executions_error"]
+    assert "No association tables found" in out["executions_error"]
 
 
 async def test_lookup_asset_b18_fresh_then_failed_lookup(asset_ctx, capturing_mcp, mock_ml):

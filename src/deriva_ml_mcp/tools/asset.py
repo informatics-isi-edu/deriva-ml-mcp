@@ -53,6 +53,7 @@ from typing import TYPE_CHECKING, Any
 
 from deriva_mcp_core import deriva_call
 from deriva_mcp_core.telemetry import audit_event
+from deriva_ml.core.exceptions import NoAssociationException
 
 # Note on testing audit_event: see ``make_patch_audit("asset")`` in
 # ``tests/_helpers.py``. Single-patch facade is impossible due to
@@ -149,20 +150,21 @@ def _get_asset_detail_impl(ml: Any, asset_rid: str) -> AssetDetail:
     syntactically valid but semantically wrong "no executions" answer.
     Now:
 
-    - If ``find_association`` raises because the asset table has no
-      ``Execution`` association at all (genuine "no execution
-      tracking" case), ``executions`` is ``[]`` and
-      ``executions_error`` is ``None`` -- same shape as the empty case.
+    - If ``find_association`` raises ``NoAssociationException``
+      because the asset table has no ``Execution`` association at all
+      (genuine "no execution tracking" case), ``executions`` is ``[]``
+      and ``executions_error`` is ``None`` -- same shape as the empty
+      case.
     - If any other exception is raised, ``executions`` is ``[]`` and
       ``executions_error`` is ``"<ExcClass>: <message>"``. The caller
       can distinguish "no associations" from "lookup failed" without
       re-running.
 
-    The narrow "no association" detection keys on the
-    ``DerivaMLException`` message produced by
-    ``DerivaModel.find_association`` ("No association tables found
-    between ... and Execution.") -- the exception type alone is too
-    broad because the same class covers many distinct failures.
+    The narrow "no association" detection branches on the typed
+    ``NoAssociationException`` subclass raised by
+    ``DerivaModel.find_association`` (deriva-ml #180/#185). Prior
+    revisions of this helper had to match the exception message text;
+    the typed-subclass surface makes that unnecessary.
 
     Args:
         ml: A connected ``deriva_ml.DerivaML`` instance.
@@ -176,17 +178,13 @@ def _get_asset_detail_impl(ml: Any, asset_rid: str) -> AssetDetail:
     executions_error: str | None = None
     try:
         records = list(asset.list_executions())
-    except Exception as exc:  # noqa: BLE001 -- classified below
-        # "No association tables found between <table> and Execution."
-        # is the legitimate "this asset table has no execution
-        # tracking" case raised by ``DerivaModel.find_association`` --
-        # surface that as a clean empty list. Anything else is a real
-        # error worth showing to the caller.
-        msg = str(exc)
-        if "No association tables found" in msg and "Execution" in msg:
-            executions_error = None
-        else:
-            executions_error = f"{exc.__class__.__name__}: {exc}"
+    except NoAssociationException:
+        # Legitimate "this asset table has no execution tracking" case
+        # raised by ``DerivaModel.find_association``. Surface as a
+        # clean empty list with no error.
+        executions_error = None
+    except Exception as exc:  # noqa: BLE001 -- everything else is a real error
+        executions_error = f"{exc.__class__.__name__}: {exc}"
     else:
         for record in records:
             executions.append(
