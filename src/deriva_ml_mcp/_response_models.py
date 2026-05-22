@@ -1330,39 +1330,3 @@ class CacheDatasetResponse(BaseModel):
     bag_info: CacheDatasetBagInfo
 
 
-class SplitDatasetPartitionInfo(BaseModel):
-    """One partition in a split (training, testing, or validation).
-
-    Mirrors upstream ``deriva_ml.dataset.split.PartitionInfo``. We
-    redeclare locally rather than import to keep the v3.0 wire
-    contract independent of upstream model drift.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    rid: str
-    version: str
-    count: int
-
-
-class SplitDatasetResponse(BaseModel):
-    """Response from ``deriva_ml_split_dataset``.
-
-    v3.0: ``status`` renamed from ``"success"`` to ``"split"``. All
-    other fields mirror upstream ``deriva_ml.dataset.split.SplitResult``.
-    ``validation`` is ``null`` for two-way splits (training + testing
-    only).
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["split"]
-    source: str
-    split: SplitDatasetPartitionInfo
-    training: SplitDatasetPartitionInfo
-    testing: SplitDatasetPartitionInfo
-    validation: SplitDatasetPartitionInfo | None = None
-    strategy: str
-    element_table: str
-    seed: int
-    dry_run: bool

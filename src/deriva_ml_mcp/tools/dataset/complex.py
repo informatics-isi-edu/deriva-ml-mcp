@@ -1,6 +1,6 @@
 """Complex dataset tools.
 
-This submodule houses the three substantial dataset tools that warrant
+This submodule houses the two substantial dataset tools that warrant
 their own breathing room:
 
 - ``deriva_ml_cache_dataset`` (~90 lines): warm the local DerivaML
@@ -11,10 +11,6 @@ their own breathing room:
   branch with a paged row preview and the bounded-materialization
   guard (the ``preflight_required`` short-circuit when estimated rows
   vastly exceed the requested limit).
-- ``deriva_ml_split_dataset`` (~140 lines): sklearn-style train / test
-  / (val) split that creates a parent split dataset and 2-3 child
-  datasets in the catalog (``mutates=True``), with a ``dry_run`` path
-  that intentionally skips the audit event.
 
 Audit event lookup goes through ``_pkg.audit_event(...)`` (attribute
 lookup on the parent package) for the same one-patch-site reason as
@@ -34,11 +30,11 @@ from deriva_ml.dataset.aux_classes import DatasetSpec
 
 logger = logging.getLogger(__name__)
 
-# See the header note in ``mutate.py`` for why ``audit_event``,
-# ``get_ml``, and ``_split_dataset`` are accessed via attribute lookup
-# on the parent package (``_pkg.<name>``) rather than direct
-# ``from ... import``: a single ``patch("deriva_ml_mcp.tools.dataset.<name>")``
-# must redirect every call across read / mutate / complex submodules.
+# See the header note in ``mutate.py`` for why ``audit_event`` and
+# ``get_ml`` are accessed via attribute lookup on the parent package
+# (``_pkg.<name>``) rather than direct ``from ... import``: a single
+# ``patch("deriva_ml_mcp.tools.dataset.<name>")`` must redirect every
+# call across read / mutate / complex submodules.
 import deriva_ml_mcp.tools.dataset as _pkg  # noqa: E402  (intentional cycle)
 from deriva_ml_mcp._helpers import (
     _MAX_LIMIT,
@@ -50,7 +46,6 @@ from deriva_ml_mcp._response_models import (
     CacheDatasetBagInfo,
     CacheDatasetResponse,
     PreflightCountResponse,
-    SplitDatasetResponse,
 )
 
 if TYPE_CHECKING:
@@ -398,215 +393,4 @@ def register(ctx: PluginContext) -> None:
                 hostname=hostname,
                 catalog_id=catalog_id,
                 audit=False,
-            )
-
-    @ctx.tool(mutates=True)
-    async def deriva_ml_split_dataset(
-        hostname: str,
-        catalog_id: str,
-        source_dataset_rid: str,
-        test_size: float = 0.2,
-        train_size: float | None = None,
-        val_size: float | None = None,
-        seed: int = 42,
-        shuffle: bool = True,
-        stratify_by_column: str | None = None,
-        stratify_missing: str = "error",
-        element_table: str | None = None,
-        include_tables: list[str] | None = None,
-        training_types: list[str] | None = None,
-        testing_types: list[str] | None = None,
-        validation_types: list[str] | None = None,
-        split_description: str = "",
-        workflow_type: str = "Dataset_Split",
-        dry_run: bool = False,
-        row_per: str | None = None,
-        via: list[str] | None = None,
-        ignore_unrelated_anchors: bool | None = None,
-    ) -> str:
-        """Split a dataset into train/test/(validation) child datasets in the catalog.
-
-        sklearn-style split semantics. Creates a parent "split" dataset and
-        2-3 child datasets (training, testing, optionally validation) in
-        the catalog, all linked to the source via ``Dataset_Dataset``
-        relations with full provenance.
-
-        DerivaML's ``selection_fn`` (a Python callable) cannot cross the
-        MCP boundary; this tool exposes only random and stratified
-        strategies. For custom selection, use the Python API directly.
-
-        Args:
-            source_dataset_rid: RID of the source dataset to split.
-            test_size: Float (0-1) fraction of data for testing. Default 0.2.
-            train_size: Optional float (0-1) fraction for training. If None,
-                complement of ``test_size`` (and ``val_size``).
-            val_size: Optional float (0-1) fraction for validation. If None,
-                no validation split is created (two-way split).
-            seed: Random seed for reproducibility.
-            shuffle: Whether to shuffle before splitting. Ignored when
-                using stratified selection.
-            stratify_by_column: Column name for stratified splitting (dot
-                notation, e.g. ``Image_Classification.Image_Class``).
-            stratify_missing: Policy for null values in the stratify
-                column: ``"error"``, ``"drop"``, or ``"include"``.
-            element_table: Name of the element table to split. If None,
-                auto-detected from the source dataset's members.
-            include_tables: Tables to include when denormalizing for the
-                selection function. Required when ``stratify_by_column``
-                is set.
-            training_types: Additional dataset types for the training set
-                beyond ``"Training"`` (e.g., ``["Labeled"]``).
-            testing_types: Additional dataset types for the testing set
-                beyond ``"Testing"``.
-            validation_types: Additional dataset types for the validation
-                set beyond ``"Validation"``. Ignored when ``val_size`` is None.
-            split_description: Description for the parent Split dataset.
-            workflow_type: Workflow type vocabulary term. Default
-                ``"Dataset_Split"``.
-            dry_run: If True, compute the split assignment without creating
-                any catalog datasets. Use to validate strategy choice and
-                partition sizes before committing.
-            row_per: Explicit leaf table for denormalization. Optional;
-                omit for the common case. When ``stratify_by_column`` is
-                set and ``row_per`` is None, the Python API auto-defaults
-                to ``element_table`` (one row per element). Set
-                explicitly to override -- e.g. when projecting through a
-                feature-association bridge and you want one row per
-                feature value rather than per element.
-            via: Tables forced into the join chain without contributing
-                columns (denormalizer ``via=`` parameter). Used to
-                disambiguate path ambiguity when multiple FK paths exist
-                between ``element_table`` and a column in
-                ``stratify_by_column``, without polluting the output
-                column list. Optional; omit for the common case.
-            ignore_unrelated_anchors: If True, silently drop dataset
-                anchors whose table has no FK path to any requested
-                table (denormalizer ``ignore_unrelated_anchors``).
-                Useful when the source dataset has heterogeneous member
-                tables and only a subset participates in the split.
-                Optional; omit for the common case (defaults to False
-                in the Python API).
-
-        Returns:
-            JSON string ``{"status": "split", "source", "split", "training",
-            "testing", "validation", "strategy", "element_table", "seed",
-            "dry_run"}``. Each partition is ``{"rid", "version", "count"}``.
-            ``validation`` is null for two-way splits.
-
-        Raises:
-            RuntimeError: Wrapped, propagated from
-                ``deriva_ml.dataset.split.split_dataset`` (e.g. invalid
-                strategy, stratify column missing).
-
-        Example:
-            ``{"status": "split", "source": "1-AAAA", "split": {"rid":
-            "1-SPLT", "version": "1.0.0", "count": 100}, "training":
-            {"rid": "1-TRN", "version": "1.0.0", "count": 80}, "testing":
-            {"rid": "1-TST", "version": "1.0.0", "count": 20},
-            "validation": null, "strategy": "random", "element_table":
-            "Image", "seed": 42, "dry_run": false}``.
-        """
-        try:
-            with deriva_call():
-                # Run the synchronous deriva-ml calls in a thread pool
-                # so the event loop stays responsive — split_dataset
-                # creates a parent + 2-3 child datasets and can take a
-                # minute or more for a stratified split over a large
-                # element table. See deriva-mcp-core
-                # plugin-authoring-guide.md §"Synchronous work in
-                # threads".
-                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
-                # Denormalization-control kwargs (deriva-ml #174/#176):
-                # only forward when the caller set them, so the Python
-                # API's own defaults (row_per=None auto-resolves to
-                # element_table when stratifying; ignore_unrelated_anchors
-                # defaults to False) remain in control for the common case.
-                extra_kwargs: dict = {}
-                if row_per is not None:
-                    extra_kwargs["row_per"] = row_per
-                if via is not None:
-                    extra_kwargs["via"] = via
-                if ignore_unrelated_anchors is not None:
-                    extra_kwargs["ignore_unrelated_anchors"] = ignore_unrelated_anchors
-                result = await asyncio.to_thread(
-                    _pkg._split_dataset,
-                    ml,
-                    source_dataset_rid,
-                    test_size=test_size,
-                    train_size=train_size,
-                    val_size=val_size,
-                    shuffle=shuffle,
-                    seed=seed,
-                    stratify_by_column=stratify_by_column,
-                    stratify_missing=stratify_missing,
-                    split_description=split_description,
-                    training_types=training_types,
-                    testing_types=testing_types,
-                    validation_types=validation_types,
-                    element_table=element_table,
-                    include_tables=include_tables,
-                    workflow_type=workflow_type,
-                    dry_run=dry_run,
-                    **extra_kwargs,
-                )
-                payload = result.model_dump()
-
-            # dry_run doesn't mutate catalog state, so no audit row.
-            # Convention: audit logs are for state changes only. The
-            # response carries dry_run=True so callers see the mode.
-            # (I-3 fix from Batch 3 review.)
-            if not dry_run:
-                training = payload.get("training") or {}
-                testing = payload.get("testing") or {}
-                validation = payload.get("validation") or {}
-                _pkg.audit_event(
-                    "deriva_ml_split_dataset",
-                    hostname=hostname,
-                    catalog_id=catalog_id,
-                    source_dataset_rid=source_dataset_rid,
-                    strategy=payload.get("strategy"),
-                    element_table=payload.get("element_table"),
-                    seed=seed,
-                    training_count=training.get("count") if training else None,
-                    testing_count=testing.get("count") if testing else None,
-                    validation_count=validation.get("count") if validation else None,
-                )
-                # v1.3 surgical re-index: split creates a parent + 2-3
-                # child datasets and links them via Dataset_Dataset
-                # relations. Refresh the source dataset (relations
-                # changed), the parent split, and each child so all
-                # affected per-RID sources get fresh chunks. Per-RID
-                # try/except so one failed re-index doesn't cancel the
-                # rest -- defense in depth (the helper itself swallows,
-                # but if the lazy import fails or the iteration raises,
-                # we still want the other RIDs refreshed).
-                from deriva_ml_mcp.resources.rag import _reindex_dataset
-
-                affected_rids: list[str] = [source_dataset_rid]
-                split_meta = payload.get("split") or {}
-                for entry in (split_meta, training, testing, validation):
-                    rid = entry.get("rid") if entry else None
-                    if rid:
-                        affected_rids.append(rid)
-                for rid in affected_rids:
-                    try:
-                        await _reindex_dataset(hostname, catalog_id, rid)
-                    except Exception:  # noqa: BLE001 -- best-effort, per-RID
-                        logger.exception(
-                            "re-index failed for dataset %s after split_dataset (source=%s)",
-                            rid,
-                            source_dataset_rid,
-                        )
-            # v3.0: status renamed from "success" to "split". Construct
-            # via unpacking from the helper's payload (same fields).
-            return SplitDatasetResponse(status="split", **payload).model_dump_json(by_alias=True)
-        except Exception as exc:
-            return _error_envelope(
-                exc,
-                operation="split_dataset",
-                hostname=hostname,
-                catalog_id=catalog_id,
-                source_dataset_rid=source_dataset_rid,
-                seed=seed,
-                dry_run=dry_run,
             )

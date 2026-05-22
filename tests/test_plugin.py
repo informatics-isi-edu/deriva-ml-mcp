@@ -45,7 +45,6 @@ _DATASET_TOOLS = frozenset(
         # Complex / local-FS tools
         "deriva_ml_cache_dataset",
         "deriva_ml_denormalize_dataset",
-        "deriva_ml_split_dataset",
     }
 )
 

@@ -18,9 +18,9 @@ source's declaration order:
   for ``resources/ml.py`` and ``resources/rag.py``.
 - ``mutate.py``: 7 simple-mutation tools (each a thin wrapper around
   one DerivaML method, an audit emission, and a JSON envelope).
-- ``complex.py``: 3 substantial tools (``deriva_ml_cache_dataset``,
-  ``deriva_ml_denormalize_dataset``, ``deriva_ml_split_dataset``)
-  whose bodies deserve their own file space.
+- ``complex.py``: 2 substantial tools (``deriva_ml_cache_dataset``,
+  ``deriva_ml_denormalize_dataset``) whose bodies deserve their own
+  file space.
 
 See deriva-ml-mcp issue #4 for the full backlog context.
 
@@ -46,16 +46,15 @@ from typing import TYPE_CHECKING
 
 # Re-exports below preserve the pre-split single-file patch surface.
 # Test code patches ``deriva_ml_mcp.tools.dataset.{audit_event,
-# get_ml, Dataset, _split_dataset}`` as a single canonical site, and
-# the read/mutate/complex submodules deliberately access those four
+# get_ml, Dataset}`` as a single canonical site, and the
+# read/mutate/complex submodules deliberately access those three
 # names via attribute lookup on this package (``_pkg.audit_event``,
 # ``_pkg.get_ml``, etc.) so a single ``patch(...)`` redirects every
-# call across the three submodules in one shot. ``from ... import``
-# in each submodule would create per-submodule bindings that the
-# patch wouldn't reach.
+# call across the submodules in one shot. ``from ... import`` in
+# each submodule would create per-submodule bindings that the patch
+# wouldn't reach.
 from deriva_mcp_core.telemetry import audit_event
 from deriva_ml.dataset.dataset import Dataset
-from deriva_ml.dataset.split import split_dataset as _split_dataset
 
 from deriva_ml_mcp.ml_context import get_ml
 
@@ -87,7 +86,6 @@ __all__ = [
     "_get_dataset_spec_impl",
     "_list_dataset_members_summary_impl",
     "_list_datasets_impl",
-    "_split_dataset",
     "_summarize_dataset",
 ]
 
