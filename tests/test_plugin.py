@@ -32,6 +32,11 @@ _DATASET_TOOLS = frozenset(
         # v3.3: cheap metadata-only pre-flight validators (see deriva-ml ADR-0002).
         "deriva_ml_validate_dataset_specs",
         "deriva_ml_validate_execution_configuration",
+        # v3.5: AST-based whole-file validator + catalog-driven bootstrap
+        # (the read-side of the config <-> catalog reconciliation; the
+        # write-side stays in skill prose).
+        "deriva_ml_validate_config_file",
+        "deriva_ml_bootstrap_config",
         # Mutation tools
         "deriva_ml_create_dataset",
         "deriva_ml_delete_dataset",

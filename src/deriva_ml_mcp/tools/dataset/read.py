@@ -1009,6 +1009,185 @@ def register(ctx: PluginContext) -> None:
                 audit=False,
             )
 
+    @ctx.tool(mutates=False)
+    async def deriva_ml_validate_config_file(
+        hostname: str,
+        catalog_id: str,
+        file_path: str | None = None,
+        file_contents: str | None = None,
+    ) -> str:
+        """Validate every spec constructor in a hydra-zen config file against the catalog.
+
+        Parses the file via AST (no execution) and validates each
+        ``DatasetSpecConfig`` / ``AssetSpecConfig`` / ``Workflow`` /
+        ``DerivaMLConfig`` call. AST-only -- the file is never
+        executed -- so the surface is safe to point at arbitrary
+        user code in ``src/configs/``.
+
+        Use case: a one-shot pre-flight gate before running an
+        experiment, OR after a release lands, to confirm every RID
+        in the config file still resolves and pins a released
+        version.
+
+        Either ``file_path`` (a path visible to the MCP server) or
+        ``file_contents`` (the file as a string) must be provided.
+        Passing ``file_contents`` is the recommended path for agent
+        callers that have the file open already -- the MCP server's
+        filesystem view may not match the user's.
+
+        Args:
+            file_path: Absolute path to the config file on the MCP
+                server's filesystem. Mutually exclusive with
+                ``file_contents``.
+            file_contents: The file as a string. Mutually exclusive
+                with ``file_path``. When supplied, the validator writes
+                the contents to a temp file under the deriva-ml
+                cache dir for AST parsing.
+
+        Returns:
+            JSON string of a ``ConfigValidationReport``:
+            ``{"file_count", "entry_count", "all_valid", "results":
+            [...], "parse_errors": [...]}``. Each result carries the
+            parsed entry (file, line, kind, rid, version), a valid
+            flag, a reasons list, and helpful detail like
+            ``available_versions`` for ``version_not_found``.
+
+        Raises:
+            RuntimeError: Wrapped as ``{"error": ...}`` for missing
+                both ``file_path`` and ``file_contents``, or for I/O
+                errors writing the temp file when ``file_contents``
+                is used.
+
+        Example:
+            ``{"file_count": 1, "entry_count": 4, "all_valid": false,
+            "results": [{"entry": {"file": "src/configs/datasets.py",
+            "line": 14, "entry_kind": "DatasetSpecConfig", "rid":
+            "2-B4C8", "version": "9.9.9", ...}, "valid": false,
+            "reasons": ["version_not_found"], "available_versions":
+            ["0.4.0", "0.3.0"]}, ...], "parse_errors": []}``.
+        """
+        if file_path is None and file_contents is None:
+            return _error_envelope(
+                ValueError("Either file_path or file_contents must be provided"),
+                operation="validate_config_file",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+        try:
+            with deriva_call():
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                # When file_contents is supplied, write it to a temp
+                # file so the AST walker (which takes a path) can
+                # consume it. The temp file is cleaned up on scope
+                # exit.
+                if file_contents is not None:
+                    import os
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".py", mode="w", delete=False
+                    ) as tmp:
+                        tmp.write(file_contents)
+                        tmp_path = tmp.name
+                    try:
+                        payload = await asyncio.to_thread(
+                            ml.validate_config_file, tmp_path
+                        )
+                    finally:
+                        try:
+                            os.unlink(tmp_path)
+                        except OSError:
+                            pass
+                else:
+                    payload = await asyncio.to_thread(
+                        ml.validate_config_file, file_path
+                    )
+            return payload.model_dump_json(by_alias=True)
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="validate_config_file",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+    @ctx.tool(mutates=False)
+    async def deriva_ml_bootstrap_config(
+        hostname: str,
+        catalog_id: str,
+        kinds: list[str] | None = None,
+        dataset_type_filter: list[str] | None = None,
+    ) -> str:
+        """Suggest config entries by reading the catalog.
+
+        Walks the catalog and produces structured per-kind suggestions
+        for a fresh project's ``src/configs/``. Pure read; does NOT
+        write files. Each suggestion includes a ready-to-paste
+        ``spec_string`` (a ``DatasetSpecConfig(...)`` / etc. line) and
+        a ``rationale`` the calling skill shows the user when
+        offering the entry.
+
+        Three use cases:
+
+        - **Fresh project.** Empty ``configs/`` -- get a base set of
+          suggestions to seed every group.
+        - **Catalog clone.** Repoint configs at a new catalog id;
+          bootstrap regenerates the spec_strings against the new RIDs.
+        - **Incremental update.** ``kinds=["datasets"]`` to refresh
+          just the datasets group after a release without touching
+          assets / workflow.
+
+        Args:
+            kinds: Which config groups to suggest entries for.
+                Default (None) means all four: ``deriva_ml``,
+                ``datasets``, ``assets``, ``workflow``. Skipping
+                ``experiments`` / ``multiruns`` / ``model_config`` is
+                intentional -- those are project code, not catalog
+                state.
+            dataset_type_filter: When suggesting datasets, restrict
+                to these ``Dataset_Type`` terms. Default (None) uses
+                ``["Training", "Testing", "Validation", "Complete",
+                "Labeled"]``. Pass ``[]`` (empty list) to include
+                every dataset_type.
+
+        Returns:
+            JSON string of a ``BootstrapReport``:
+            ``{"catalog": {...}, "suggestions": [...], "skipped":
+            [...]}``. Each suggestion carries ``{kind, config_name,
+            rid, version?, spec_string, description?, rationale}``.
+            Each skipped entry carries ``{kind, rid, reason}``.
+
+        Example:
+            ``{"catalog": {"hostname": "data.example.org",
+            "catalog_id": "1"}, "suggestions": [{"kind": "datasets",
+            "config_name": "cifar_10_training", "rid": "2-B4C8",
+            "version": "0.4.0", "spec_string":
+            "DatasetSpecConfig(rid=\\\"2-B4C8\\\", version=\\\"0.4.0\\\")",
+            "description": "CIFAR-10 training images", "rationale":
+            "Dataset type Training; latest released version 0.4.0."}],
+            "skipped": []}``.
+        """
+        try:
+            with deriva_call():
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(
+                    partial(
+                        ml.bootstrap_config,
+                        kinds=kinds,
+                        dataset_type_filter=dataset_type_filter,
+                    )
+                )
+            return payload.model_dump_json(by_alias=True)
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="bootstrap_config",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
 
 def _bag_info_impl(
     ml: Any,
