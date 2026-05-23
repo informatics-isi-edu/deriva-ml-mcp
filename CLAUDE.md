@@ -548,6 +548,35 @@ plus uv.lock churn at every merge made it more friction than it was worth.
 `worktrees/` remains in `.gitignore` so a one-off `git worktree add` (e.g. for
 parallel review of a different branch) still won't leak into commits.
 
+### Versioning convention (post-2026-05-23 consolidation)
+
+The plugin is pre-release. Tags follow **`v0.x.y` semver** anchored
+at `v0.5.0` (the post-audit-cycle consolidation point — May 2026).
+Patch (`v0.x.y+1`) for fixes / doc updates / behavior-preserving
+refactors; minor (`v0.x+1.0`) for new tools / new resources / wire
+shape additions; major (`v0.x.0` → `v1.0.0`) is reserved for the
+eventual "we have downstream users" stability promise.
+
+Pre-`v0.5.0` history: there used to be `v0.1.0`, `v1.0.0`...`v3.4.1`,
+`v4.0.0`...`v5.0.1` tags. All deleted in the 2026-05-23 cleanup
+because the plugin had no downstream consumers and the
+multi-major-version history misrepresented the project's actual
+maturity. Older doc references to those tags (in `coverage.md`,
+the audit doc, prompt-content version-history notes, etc.) are
+preserved as a **narrative chronology** — they read as "this
+change landed in development phase X" rather than as live tag
+pointers. Recover via commit hashes if you need the historical
+diff; `git log --oneline` works the same.
+
+`bump-version` defaults to deriving the next tag from the highest
+existing tag, so a `uv run bump-version patch` from current state
+lands at `v0.5.1` cleanly. No manual `[tool.bumpversion]
+current_version` editing needed.
+
+The CHANGELOG (when we have one — not yet) and any future
+deprecation notes should reference `v0.5.0` as the architectural
+baseline rather than the deleted pre-consolidation tags.
+
 ## Running Under Docker (deriva-docker)
 
 The plugin is loaded into the `deriva-mcp-test` service of a `deriva-docker`
