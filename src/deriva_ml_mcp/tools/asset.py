@@ -33,15 +33,16 @@ read+update-by-RID surfaces:
   resource and tool stay byte-identical via the shared
   ``_get_asset_detail_impl`` helper.
 - ``update_asset`` follows the curation pattern shared with
-  ``update_dataset`` / ``update_workflow`` / ``update_execution``: a
-  single per-entity update tool whose kwargs are all optional and at
-  least one of which must be non-None. ``asset_types`` is set-style
-  (compute the diff against current types and call add/remove on
-  each); ``description`` is a free-text overwrite written through
-  pathBuilder (the deriva-ml ``Asset`` class does NOT expose a
-  catalog-write setter for ``description`` -- only ``Workflow`` and
-  ``ExecutionRecord`` do, so we write the catalog row directly here
-  via the asset table's pathBuilder).
+  ``update_dataset`` / ``update_workflow``: a single per-entity
+  update tool whose kwargs are all optional and at least one of
+  which must be non-None. ``asset_types`` is set-style (compute the
+  diff against current types and call add/remove on each);
+  ``description`` is a free-text overwrite. As of deriva-ml v1.38.0,
+  ``Asset.description`` is a write-through ``@property/@setter``
+  (assignment performs the catalog write AND the in-memory mirror),
+  so ``update_asset`` delegates to the setter directly. ``update_execution``
+  is intentionally absent -- execution lifecycle is owned by the
+  caller's local Python per the stateless rule (CLAUDE.md).
 """
 
 from __future__ import annotations
@@ -66,7 +67,6 @@ from deriva_ml_mcp._helpers import (
     _error_envelope,
     _paginate,
     _read_rid,
-    _set_row_description,
 )
 from deriva_ml_mcp._response_models import (
     AssetDetail,
@@ -207,26 +207,12 @@ def _get_asset_detail_impl(ml: Any, asset_rid: str) -> AssetDetail:
     )
 
 
-def _write_asset_description(ml: Any, asset: Any, description: str) -> None:
-    """Write a new Description value to an asset row in the catalog.
-
-    Thin wrapper around the shared ``_set_row_description`` helper:
-    resolves the asset's ``Table`` object from its ``asset_table``
-    name, delegates the catalog write, then mirrors the value into
-    the in-memory ``asset.description`` attribute.
-
-    Args:
-        ml: A connected ``deriva_ml.DerivaML`` instance.
-        asset: The Asset object to update (used for its ``asset_rid``,
-            ``asset_table``, and as the in-memory mirror target).
-        description: The new description value to write.
-    """
-    asset_table_obj = ml.model.name_to_table(asset.asset_table)
-    _set_row_description(ml, asset_table_obj, asset.asset_rid, description)
-    # Mirror the value into the in-memory Asset object only after the
-    # catalog write returns successfully -- a write that raises must
-    # not poison the in-memory copy.
-    asset.description = description
+# NOTE: _write_asset_description (and its shared dependency
+# _set_row_description in _helpers.py) were removed in v4.0.x when
+# deriva-ml v1.38.0 introduced write-through Asset.description /
+# Dataset.description setters. The pathBuilder workaround they
+# provided is no longer needed; assignment performs the catalog
+# write directly. See git history for the prior implementation.
 
 
 def register(ctx: PluginContext) -> None:
@@ -257,6 +243,13 @@ def register(ctx: PluginContext) -> None:
 
         See ``deriva_ml_getting_started`` (PAGINATION CONTRACT) for the two-step pagination flow.
 
+        ``asset_types`` field note: execution-linked assets carry an
+        auto-assigned ``Input_File`` or ``Output_File`` tag in
+        ``asset_types`` alongside any caller-supplied content tags
+        (per the deriva-ml ``Asset_Role`` contract; see
+        ``deriva_ml_concepts``). Filter with subset/any-of semantics,
+        not exact-set equality, when matching on content tags.
+
         Args:
             asset_table: Name of the asset table to list (e.g.
                 ``"Image"``, ``"Trained_Model"``).
@@ -280,8 +273,8 @@ def register(ctx: PluginContext) -> None:
         Example:
             ``{"assets": [{"rid": "1-AAAA", "filename": "scan.png",
             "length": 12345, "md5": "abc", "asset_table": "Image",
-            "asset_types": ["Training_Data"]}], "count": 1,
-            "truncated": false, "next_after_rid": null}``.
+            "asset_types": ["Training_Data", "Output_File"]}],
+            "count": 1, "truncated": false, "next_after_rid": null}``.
         """
         try:
             with deriva_call():
@@ -349,6 +342,13 @@ def register(ctx: PluginContext) -> None:
         exposes it). Same shape as the
         ``deriva://catalog/{h}/{c}/ml/asset/{rid}`` resource -- the two
         share an internal helper so the payloads cannot drift.
+
+        ``asset_types`` field note: execution-linked assets carry an
+        auto-assigned ``Input_File`` or ``Output_File`` tag alongside
+        any caller-supplied content tags (per the deriva-ml
+        ``Asset_Role`` contract; see ``deriva_ml_concepts``). The
+        ``executions`` list separately surfaces the ``Input`` /
+        ``Output`` role as a field on each execution link.
 
         Executions semantics (issue #41). The ``executions`` list is
         best-effort: an error inside the executions lookup does not
@@ -426,10 +426,10 @@ def register(ctx: PluginContext) -> None:
         catalog round-trip per term).
 
         For ``description``: free-form text overwrite of the asset
-        row's ``Description`` column, written through pathBuilder
-        (deriva-ml's ``Asset`` class doesn't expose a catalog-write
-        setter for description -- only ``Workflow`` and
-        ``ExecutionRecord`` do).
+        row's ``Description`` column. As of deriva-ml v1.38.0, the
+        ``Asset.description`` setter is write-through (assigning the
+        property performs the catalog write and the in-memory mirror
+        in one call); this tool delegates to that setter.
 
         Args:
             asset_rid: The RID of the asset to update.
@@ -490,7 +490,17 @@ def register(ctx: PluginContext) -> None:
                     updated_fields.append("asset_types")
 
                 if description is not None:
-                    await asyncio.to_thread(_write_asset_description, ml, asset, description)
+                    # deriva-ml v1.38.0+ exposes a write-through setter
+                    # on Asset.description (assigning the property
+                    # performs the catalog write AND the in-memory
+                    # mirror). Pre-v1.38 the plugin had a
+                    # _write_asset_description / _set_row_description
+                    # pathBuilder workaround here; both were retired in
+                    # v4.0.x. The setter is sync I/O -- thread it.
+                    def _set_asset_description() -> None:
+                        asset.description = description
+
+                    await asyncio.to_thread(_set_asset_description)
                     updated_fields.append("description")
 
             audit_event(

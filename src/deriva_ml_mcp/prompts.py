@@ -186,6 +186,42 @@ DERIVA-ML DOMAIN OBJECTS, NOT AS RAW TABLES.
              local Python via the user's environment (``ml.download_asset``,
              ``exe.asset_file_path()``).
 
+THE ASSET_ROLE CONTRACT
+-----------------------
+Every execution-linked asset carries TWO pieces of role metadata
+that deriva-ml assigns automatically -- never the caller:
+
+  1. An ``Asset_Role`` of ``Input`` or ``Output`` on its
+     ``{Asset}_Execution`` association row. ``Input`` is assigned
+     to assets materialized at execution start (consumed by the
+     run); ``Output`` is assigned to assets uploaded via the
+     execution's commit path.
+  2. A directional ``Input_File`` or ``Output_File`` tag added to
+     the asset's ``Asset_Type`` list alongside any caller-supplied
+     content tags (e.g. ``Model_File``, ``Training_Image``).
+
+Implications for MCP consumers:
+
+  - When filtering ``deriva_ml_list_assets`` results by
+    ``asset_types``, expect ``Input_File`` / ``Output_File`` to
+    appear in every execution-linked asset's type list. Filtering
+    on the exact set ``["Model_File"]`` will miss anything that's
+    also been wired into an execution -- filter on subset / any-of
+    semantics instead.
+  - Use ``deriva_ml_get_lineage`` to walk asset provenance; the
+    ``Input``/``Output`` distinction surfaces there as edge
+    direction, not as a separate field to query.
+  - ``deriva_ml_update_asset(asset_types=...)`` is set-style. If
+    you pass a list that drops ``Input_File`` / ``Output_File``,
+    the diff will try to REMOVE the role tag -- which breaks
+    downstream provenance queries. Always read the current types
+    first and preserve the directional tags when updating.
+
+Source of truth: deriva-ml CLAUDE.md "Asset_Role contract" section
+and the worked example in ``docs/user-guide/executions.md`` (under
+"How execution-asset roles work"); both RAG-indexed via
+``ml-docs``.
+
 THE PROVENANCE PRINCIPLE
 ------------------------
 Every artifact (Dataset, Feature value, output Asset) MUST be linked to

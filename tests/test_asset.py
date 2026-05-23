@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -319,21 +319,22 @@ async def test_lookup_asset_failure_returns_error_envelope(asset_ctx, capturing_
 # ---------------------------------------------------------------------------
 
 
-def _wire_pathbuilder_for_description(
-    mock_ml, asset_table_name: str = "Image", schema_name: str = "demo-schema"
-) -> MagicMock:
-    """Configure mock_ml so the description pathBuilder write call records."""
-    asset_table_obj = MagicMock()
-    asset_table_obj.name = asset_table_name
-    asset_table_obj.schema.name = schema_name
-    mock_ml.model.name_to_table.return_value = asset_table_obj
-    update_mock = MagicMock()
-    asset_path = MagicMock()
-    asset_path.update = update_mock
-    schema_obj = MagicMock()
-    schema_obj.tables = {asset_table_name: asset_path}
-    mock_ml.pathBuilder.return_value.schemas = {schema_name: schema_obj}
-    return update_mock
+def _wire_description_setter_mock(asset) -> PropertyMock:
+    """Replace the asset's plain ``description`` attribute with a PropertyMock.
+
+    v4.0.x: the plugin now uses deriva-ml v1.38.0's write-through
+    ``Asset.description`` setter instead of the legacy pathBuilder
+    workaround. Tests need PropertyMock to detect that the setter
+    fires (plain attribute assignment on a MagicMock would be silent).
+
+    PropertyMock is attached to the TYPE, not the instance, so the
+    caller must ``del type(asset).description`` after the test to keep
+    the descriptor from leaking to sibling tests sharing a MagicMock
+    class.
+    """
+    description_prop = PropertyMock(return_value="initial")
+    type(asset).description = description_prop
+    return description_prop
 
 
 async def test_update_asset_types_set_diff_adds_and_removes(asset_ctx, capturing_mcp, mock_ml):
@@ -380,57 +381,61 @@ async def test_update_asset_types_no_diff_skips_calls(asset_ctx, capturing_mcp, 
 
 
 async def test_update_asset_description_only(asset_ctx, capturing_mcp, mock_ml):
-    """description-only edit writes the row via pathBuilder; types untouched."""
+    """description-only edit invokes the v1.38.0 write-through setter; types untouched."""
     asset = _make_asset_mock(
         asset_rid="1-AAAA", asset_table="Image", asset_types=["X"], description="old"
     )
     mock_ml.lookup_asset.return_value = asset
-    update_mock = _wire_pathbuilder_for_description(mock_ml)
+    description_prop = _wire_description_setter_mock(asset)
 
-    with _patch_asset_audit() as mock_audit:
-        out = json.loads(
-            await capturing_mcp.tools["deriva_ml_update_asset"](
-                hostname="h",
-                catalog_id="1",
-                asset_rid="1-AAAA",
-                description="new desc",
+    try:
+        with _patch_asset_audit() as mock_audit:
+            out = json.loads(
+                await capturing_mcp.tools["deriva_ml_update_asset"](
+                    hostname="h",
+                    catalog_id="1",
+                    asset_rid="1-AAAA",
+                    description="new desc",
+                )
             )
-        )
-    assert out["status"] == "updated"
-    assert out["updated_fields"] == ["description"]
-    # The pathBuilder write happened with the right shape.
-    update_mock.assert_called_once_with([{"RID": "1-AAAA", "Description": "new desc"}])
-    # In-memory mirror updated.
-    assert asset.description == "new desc"
-    # Type APIs were not touched.
-    asset.add_asset_type.assert_not_called()
-    asset.remove_asset_type.assert_not_called()
-    success = _success_calls(mock_audit, "deriva_ml_update_asset")
-    assert success
-    assert success[0].kwargs["updated_fields"] == ["description"]
+        assert out["status"] == "updated"
+        assert out["updated_fields"] == ["description"]
+        # The v1.38.0 write-through setter was invoked with the new value.
+        description_prop.assert_any_call("new desc")
+        # Type APIs were not touched.
+        asset.add_asset_type.assert_not_called()
+        asset.remove_asset_type.assert_not_called()
+        success = _success_calls(mock_audit, "deriva_ml_update_asset")
+        assert success
+        assert success[0].kwargs["updated_fields"] == ["description"]
+    finally:
+        del type(asset).description
 
 
 async def test_update_asset_types_and_description_together(asset_ctx, capturing_mcp, mock_ml):
     """Passing both kwargs edits both; updated_fields lists both."""
     asset = _make_asset_mock(asset_rid="1-AAAA", asset_types=["A"])
     mock_ml.lookup_asset.return_value = asset
-    update_mock = _wire_pathbuilder_for_description(mock_ml)
+    description_prop = _wire_description_setter_mock(asset)
 
-    with patch("deriva_ml_mcp.tools.asset.audit_event"):
-        out = json.loads(
-            await capturing_mcp.tools["deriva_ml_update_asset"](
-                hostname="h",
-                catalog_id="1",
-                asset_rid="1-AAAA",
-                asset_types=["A", "B"],
-                description="brand new",
+    try:
+        with patch("deriva_ml_mcp.tools.asset.audit_event"):
+            out = json.loads(
+                await capturing_mcp.tools["deriva_ml_update_asset"](
+                    hostname="h",
+                    catalog_id="1",
+                    asset_rid="1-AAAA",
+                    asset_types=["A", "B"],
+                    description="brand new",
+                )
             )
-        )
-    assert out["status"] == "updated"
-    assert sorted(out["updated_fields"]) == ["asset_types", "description"]
-    # Diff-add ran (B is new); description write also ran.
-    asset.add_asset_type.assert_called_once_with("B")
-    update_mock.assert_called_once_with([{"RID": "1-AAAA", "Description": "brand new"}])
+        assert out["status"] == "updated"
+        assert sorted(out["updated_fields"]) == ["asset_types", "description"]
+        # Diff-add ran (B is new); description setter also fired.
+        asset.add_asset_type.assert_called_once_with("B")
+        description_prop.assert_any_call("brand new")
+    finally:
+        del type(asset).description
 
 
 async def test_update_asset_validation_both_none(asset_ctx, capturing_mcp, mock_ml):

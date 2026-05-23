@@ -479,20 +479,23 @@ async def test_update_dataset_partial_remove_failure_surfaces_progress(
 
 
 async def test_update_dataset_description_only(dataset_ctx, capturing_mcp, mock_ml):
-    """description-only update writes via pathBuilder; types untouched."""
+    """description-only update writes via the deriva-ml v1.38.0 setter; types untouched.
+
+    v4.0.x: the pathBuilder workaround (_set_row_description) was retired
+    when deriva-ml introduced the write-through Dataset.description
+    setter. The test now uses PropertyMock to verify the setter fires
+    instead of mocking pathBuilder.
+    """
+    from unittest.mock import PropertyMock
+
     ds = _make_dataset_mock("1-AAAA", dataset_types=["Training"], current_version="2.0.0")
     mock_ml.lookup_dataset.return_value = ds
-    # The implementation reads ml._dataset_table for the schema/name pair
-    # and then writes through pb.schemas[X].tables[Y].update(...). Mock
-    # those out so the patched pathBuilder records the update call.
-    table_mock = MagicMock()
-    table_mock.schema.name = "deriva-ml"
-    table_mock.name = "Dataset"
-    mock_ml._dataset_table = table_mock
-    update_mock = MagicMock()
-    mock_ml.pathBuilder.return_value.schemas = {
-        "deriva-ml": MagicMock(tables={"Dataset": MagicMock(update=update_mock)})
-    }
+    # Replace the plain attribute with a PropertyMock so we can detect
+    # setter invocation. PropertyMock is attached to the TYPE, not the
+    # instance, so build a fresh type that we mutate without touching
+    # MagicMock's class globally.
+    description_prop = PropertyMock(return_value="initial")
+    type(ds).description = description_prop
 
     with _patch_audit() as mock_audit:
         out = json.loads(
@@ -509,32 +512,33 @@ async def test_update_dataset_description_only(dataset_ctx, capturing_mcp, mock_
     assert out["dataset_types"] is None
     assert out["added"] is None
     assert out["removed"] is None
-    # pathBuilder write happened with the right shape.
-    update_mock.assert_called_once_with([{"RID": "1-AAAA", "Description": "new desc"}])
-    # In-memory mirror updated too.
-    assert ds.description == "new desc"
+    # PropertyMock records every set; the setter was called with the new value.
+    description_prop.assert_any_call("new desc")
     # No type-mutation API was touched.
     ds.add_dataset_types.assert_not_called()
     ds.remove_dataset_type.assert_not_called()
     success = _success_calls(mock_audit, "deriva_ml_update_dataset")
     assert success
     assert success[0].kwargs["updated_fields"] == ["description"]
+    # Clean up the class-level PropertyMock so it doesn't leak to siblings.
+    del type(ds).description
 
 
 async def test_update_dataset_types_and_description_in_one_call(
     dataset_ctx, capturing_mcp, mock_ml
 ):
-    """Passing both fields edits both; updated_fields lists both."""
+    """Passing both fields edits both; updated_fields lists both.
+
+    Description-only branch uses the v1.38.0 write-through setter
+    (verified via PropertyMock); the types branch uses add_dataset_types
+    as before.
+    """
+    from unittest.mock import PropertyMock
+
     ds = _make_dataset_mock("1-AAAA", dataset_types=["Training"], current_version="1.0.0")
     mock_ml.lookup_dataset.return_value = ds
-    table_mock = MagicMock()
-    table_mock.schema.name = "deriva-ml"
-    table_mock.name = "Dataset"
-    mock_ml._dataset_table = table_mock
-    update_mock = MagicMock()
-    mock_ml.pathBuilder.return_value.schemas = {
-        "deriva-ml": MagicMock(tables={"Dataset": MagicMock(update=update_mock)})
-    }
+    description_prop = PropertyMock(return_value="initial")
+    type(ds).description = description_prop
 
     with patch("deriva_ml_mcp.tools.dataset.audit_event"):
         out = json.loads(
@@ -548,9 +552,10 @@ async def test_update_dataset_types_and_description_in_one_call(
         )
     assert out["status"] == "updated"
     assert sorted(out["updated_fields"]) == ["dataset_types", "description"]
-    # Diff add ran for the new term; description write also ran.
+    # Diff add ran for the new term; description setter also fired.
     ds.add_dataset_types.assert_called_once_with(["Validation"])
-    update_mock.assert_called_once_with([{"RID": "1-AAAA", "Description": "combined edit"}])
+    description_prop.assert_any_call("combined edit")
+    del type(ds).description
 
 
 # ---------------------------------------------------------------------------

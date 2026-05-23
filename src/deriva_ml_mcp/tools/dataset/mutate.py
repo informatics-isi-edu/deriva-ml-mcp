@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 # ``make_patch_audit("dataset")`` in ``tests/_helpers.py`` (the
 # canonical factory) for the dual-patch context manager.
 import deriva_ml_mcp.tools.dataset as _pkg  # noqa: E402  (intentional cycle)
-from deriva_ml_mcp._helpers import _error_envelope, _set_row_description
+from deriva_ml_mcp._helpers import _error_envelope
 from deriva_ml_mcp._response_models import (
     AddDatasetElementTypeResponse,
     AddDatasetMembersResponse,
@@ -472,10 +472,10 @@ def register(ctx: PluginContext) -> None:
         that aren't in the new list). Adds happen before removes.
 
         For ``description``: free-form text overwrite of the dataset
-        row's ``Description`` column, written through pathBuilder
-        (deriva-ml's ``Dataset`` class doesn't expose a catalog-write
-        setter for description -- only ``Workflow`` and
-        ``ExecutionRecord`` do).
+        row's ``Description`` column. As of deriva-ml v1.38.0, the
+        ``Dataset.description`` setter is write-through (assigning the
+        property performs the catalog write and the in-memory mirror
+        in one call); this tool delegates to that setter.
 
         v1.2 breaking rename. This tool used to be
         ``deriva_ml_update_dataset_types`` with separate ``add`` /
@@ -555,18 +555,16 @@ def register(ctx: PluginContext) -> None:
                     updated_fields.append("dataset_types")
 
                 if description is not None:
-                    # The deriva-ml Dataset class stores description as a
-                    # plain instance attribute (no catalog-write setter);
-                    # delegate the catalog write to the shared
-                    # _set_row_description helper, then mirror the value
-                    # into the in-memory Dataset object only after the
-                    # write returns successfully. The helper call is the
-                    # sync catalog write -- thread it; the in-memory
-                    # mirror assignment afterwards is plain Python.
-                    await asyncio.to_thread(
-                        _set_row_description, ml, ml._dataset_table, dataset_rid, description
-                    )
-                    ds.description = description
+                    # deriva-ml v1.38.0+ exposes a write-through setter:
+                    # assigning ds.description performs the catalog write
+                    # AND the in-memory mirror in one call. Pre-v1.38 the
+                    # plugin had a _set_row_description pathBuilder
+                    # workaround here; that helper was retired in v4.0.x.
+                    # The setter is sync I/O -- thread it.
+                    def _set_dataset_description() -> None:
+                        ds.description = description
+
+                    await asyncio.to_thread(_set_dataset_description)
                     updated_fields.append("description")
 
                 new_version = str(ds.current_version) if ds.current_version is not None else None
