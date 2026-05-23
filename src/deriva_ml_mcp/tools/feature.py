@@ -1,8 +1,13 @@
 """Feature domain tools for deriva-ml-mcp.
 
 Read tools: ``deriva_ml_list_features``, ``deriva_ml_get_feature``, ``deriva_ml_list_feature_values``.
-Mutation tools: ``deriva_ml_create_feature``, ``deriva_ml_delete_feature``,
-``deriva_ml_add_feature_values``.
+Mutation tools: ``deriva_ml_create_feature``, ``deriva_ml_delete_feature``.
+
+v4.0.0 removed ``deriva_ml_add_feature_values`` -- writing feature
+VALUES requires the per-process SQLite manifest store that's owned by
+the local Python execution context (see CLAUDE.md "Stateless /
+bounded-resource rule"). Feature DEFINITIONS (schema creation /
+deletion) stay on MCP because they're pure catalog-state operations.
 
 Every tool wraps DERIVA I/O in ``with deriva_call():`` and routes errors
 through ``_error_envelope`` (mutation tools also emit success/failure
@@ -23,7 +28,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from deriva_mcp_core import deriva_call
 from deriva_mcp_core.telemetry import audit_event
 from deriva_ml import DerivaMLMaterializeLimitExceeded
-from deriva_ml.execution.execution import ExecutionStatus
 from deriva_ml.feature import FeatureRecord
 
 # Note on testing audit_event: see `make_patch_audit("feature")` in
@@ -40,7 +44,6 @@ from deriva_ml_mcp._helpers import (
     _paginate,
 )
 from deriva_ml_mcp._response_models import (
-    AddFeatureValuesResponse,
     CreateFeatureResponse,
     DeleteFeatureResponse,
     FeatureListResponse,
@@ -662,150 +665,13 @@ def register(ctx: PluginContext) -> None:
                 feature_name=feature_name,
             )
 
-    @ctx.tool(mutates=True)
-    async def deriva_ml_add_feature_values(
-        hostname: str,
-        catalog_id: str,
-        table: str,
-        feature_name: str,
-        execution_rid: str,
-        entries: list[dict[str, Any]],
-    ) -> str:
-        """Insert label / score / asset values for a batch of target records.
-
-        Each entry dict contains the target table's column key (e.g.
-        ``"Image": "1-AAAA"``) plus the feature's term/asset/value
-        columns. The execution attributes provenance to a specific
-        execution -- use the execution domain tools to create one if
-        needed.
-
-        Hybrid-mode dispatch (Q1). The ``Execution`` lifecycle gates
-        what wrapping is needed:
-
-        - ``Created`` -> open ``with execution.execute():`` to advance
-          ``Created -> Running`` (and ``Running -> Stopped`` on exit).
-          Suits one-shot scripts that just want to flush some values.
-          The auto-execute closes the loop on exit; you do NOT need a
-          separate ``deriva_ml_commit_execution`` call.
-        - ``Running`` -> the LLM has explicitly called ``deriva_ml_start_execution``
-          and is mid-pipeline. Skip the context manager (a second
-          ``Created -> Running`` transition would crash) and call
-          ``add_features`` directly. **You MUST follow with
-          ``deriva_ml_commit_execution`` to make the values visible.**
-          Values written during a Running execution are STAGED -- they
-          only become queryable once commit drains them.
-        - Other states (``Stopped`` / terminal) -> arg-validation error.
-          ``add_features`` on a stopped execution has no defined behaviour.
-
-        Pick one path and stick with it: either let
-        ``deriva_ml_add_feature_values`` drive the whole lifecycle (Created
-        path; auto-commits) OR drive it yourself
-        (``deriva_ml_start_execution`` -> N x ``deriva_ml_add_feature_values``
-        -> ``deriva_ml_commit_execution``). Mixing the two patterns within
-        a single execution is a common source of "I added the feature
-        value but the catalog doesn't show it" failures.
-
-        Args:
-            table: Target table the feature is defined on.
-            feature_name: Name of the feature to write values for.
-            execution_rid: RID of the parent execution.
-            entries: Non-empty list of per-target value dicts. Each dict
-                is built into a ``FeatureRecord`` via the feature's
-                Pydantic model class.
-
-        Returns:
-            JSON string ``{"status": "added", "feature_name",
-            "execution_rid", "count": <added>}``.
-
-        Raises:
-            ValueError: Wrapped via ``_error_envelope`` if ``entries`` is
-                empty.
-            RuntimeError: Wrapped, propagated from
-                ``deriva_ml.feature.Feature.feature_record_class()``
-                construction or ``Execution.add_features``.
-
-        Example:
-            ``{"status": "added", "feature_name": "Quality",
-            "execution_rid": "EXEC-1", "count": 2}``.
-        """
-        if not entries:
-            # Include attempted_count for response-shape parity with the
-            # other failure paths (per-record build failure and upstream
-            # failure both surface attempted_count via _error_envelope's
-            # response_fields). Lets callers read the field unconditionally.
-            return json.dumps({"error": "entries must be a non-empty list.", "attempted_count": 0})
-
-        # Track which entry index failed so the LLM can pinpoint the
-        # offending row in the bulk request.
-        failed_index: int | None = None
-        try:
-            with deriva_call():
-                # Run the synchronous deriva-ml calls in a thread pool so
-                # the event loop stays responsive. ``feature_record_class``
-                # is pure-Python class construction (no I/O), so it stays
-                # on the event loop, as do the Pydantic record builds.
-                # See deriva-mcp-core plugin-authoring-guide.md §"Synchronous
-                # work in threads".
-                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
-                feature = await asyncio.to_thread(ml.lookup_feature, table, feature_name)
-                feature_class = feature.feature_record_class()
-
-                records = []
-                for i, entry in enumerate(entries):
-                    failed_index = i
-                    records.append(feature_class(**entry))
-                failed_index = None
-
-                execution = await asyncio.to_thread(ml.resume_execution, execution_rid)
-                # Hybrid dispatch (Q1). See docstring for the rationale.
-                current = execution.status
-                if current == ExecutionStatus.Created:
-                    # ``execution.execute()`` is a sync context manager
-                    # whose __enter__/__exit__ touch the catalog, and
-                    # ``add_features`` is sync I/O. Run the whole bracket
-                    # in a single worker thread.
-                    def _execute_and_add() -> int:
-                        with execution.execute():
-                            return execution.add_features(records)
-
-                    added = await asyncio.to_thread(_execute_and_add)
-                elif current == ExecutionStatus.Running:
-                    # Already inside the long-running pipeline. The
-                    # eventual commit_execution closes the lifecycle.
-                    added = await asyncio.to_thread(execution.add_features, records)
-                else:
-                    state_name = current.value if isinstance(current, ExecutionStatus) else current
-                    raise ValueError(
-                        f"cannot add feature values to execution in state {state_name}; "
-                        "only Created (auto-wraps) or Running (assumes start_execution called) "
-                        "are valid"
-                    )
-            audit_event(
-                "deriva_ml_add_feature_values",
-                hostname=hostname,
-                catalog_id=catalog_id,
-                target_table=table,
-                feature_name=feature_name,
-                execution_rid=execution_rid,
-                added_count=added,
-            )
-            return AddFeatureValuesResponse(
-                status="added",
-                feature_name=feature_name,
-                execution_rid=execution_rid,
-                count=added,
-            ).model_dump_json(by_alias=True)
-        except Exception as exc:
-            response_fields: dict[str, Any] = {"attempted_count": len(entries)}
-            if failed_index is not None:
-                response_fields["failed_entry_index"] = failed_index
-            return _error_envelope(
-                exc,
-                operation="add_feature_values",
-                hostname=hostname,
-                catalog_id=catalog_id,
-                target_table=table,
-                feature_name=feature_name,
-                execution_rid=execution_rid,
-                response_fields=response_fields,
-            )
+    # NOTE: deriva_ml_add_feature_values was removed in v4.0.0 per the
+    # stateless / bounded-resource rule (CLAUDE.md,
+    # docs/audit-2026-05-23.md). Feature staging writes to a per-process
+    # SQLite manifest store; a server-side stage cannot pair with a
+    # user-side commit, so the entire execution lifecycle (create /
+    # start / commit / abort / update / add_feature_values /
+    # create_execution_dataset / add_nested_execution) is now owned by
+    # the caller's local Python. Recover from git history if you need
+    # the prior implementation; the audit doc has the architectural
+    # rationale.

@@ -53,15 +53,16 @@ def register(ctx: PluginContext) -> None:
     fire any framework lifecycle hook -- tracked upstream as
     deriva-mcp-core#3).
 
-    v1.2 added the asset domain (4 tools + 2 resources, all
-    catalog-state operations -- file I/O remains in the
-    deriva-skills ``work-with-assets`` skill) plus curation symmetry:
-    every typed entity (Dataset, Workflow, Asset, Execution) now has
-    one ``deriva_ml_update_<entity>(rid, *fields)`` tool that mutates
-    only the kwargs provided. The pre-v1.2
-    ``deriva_ml_update_dataset_types`` tool was renamed (and widened)
-    to ``deriva_ml_update_dataset``; ``deriva_ml_update_execution``
-    is net-new.
+    v1.2 added the asset domain (catalog-state operations -- file
+    I/O lives in the deriva-skills ``work-with-assets`` skill) plus
+    curation symmetry: every catalog-mutable typed entity (Dataset,
+    Workflow, Asset) has one ``deriva_ml_update_<entity>(rid,
+    *fields)`` tool that mutates only the kwargs provided.
+    v4.0.0 removed the execution-mutation surface entirely per the
+    stateless rule -- executions originate in the caller's local
+    Python (see docs/audit-2026-05-23.md). The pre-v1.2
+    ``deriva_ml_update_dataset_types`` tool was renamed (and
+    widened) to ``deriva_ml_update_dataset``.
 
     Args:
         ctx: PluginContext supplied by deriva-mcp-core at startup.

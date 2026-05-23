@@ -1035,129 +1035,14 @@ class DeleteFeatureResponse(BaseModel):
     table: str
 
 
-class AddFeatureValuesResponse(BaseModel):
-    """Response from ``deriva_ml_add_feature_values``."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["added"]
-    feature_name: str
-    execution_rid: str
-    count: int
-
-
-class CommitExecutionReport(BaseModel):
-    """Per-call upload report nested inside ``CommitExecutionResponse``.
-
-    Mirrors the dict produced by ``_summarize_upload_dict`` in
-    ``tools/execution.py`` (which is internal -- consumers see only
-    the Pydantic shape on the wire).
-
-    ``per_table`` maps each asset table name to the count of files
-    uploaded for that table on this commit. ``execution_rids`` is a
-    one-element list (the execution being committed); the list shape
-    is preserved for forward-compat with multi-execution uploads.
-    ``errors`` is capped at the top 10 lines by the helper -- the
-    full list stays in the server logs. ``errors_truncated`` signals
-    that the cap was hit.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    execution_rids: list[str]
-    total_uploaded: int
-    total_failed: int
-    per_table: dict[str, int]
-    errors: list[str]
-    errors_truncated: bool
-
-
-class CreateExecutionResponse(BaseModel):
-    """Response from ``deriva_ml_create_execution``."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["created"]
-    execution_rid: str
-    workflow_rid: str
-    dataset_count: int
-    asset_count: int
-    dry_run: bool
-
-
-class StartExecutionResponse(BaseModel):
-    """Response from ``deriva_ml_start_execution``.
-
-    ``status="running"`` on a real start, ``status="already_running"``
-    on the idempotent no-op when the execution was already in Running
-    state. v3.0: replaced the optional ``note`` field with a
-    discriminator status value.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["running", "already_running"]
-    execution_rid: str
-
-
-class CommitExecutionResponse(BaseModel):
-    """Response from ``deriva_ml_commit_execution``."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["uploaded"]
-    execution_rid: str
-    report: CommitExecutionReport
-
-
-class UpdateExecutionResponse(BaseModel):
-    """Response from ``deriva_ml_update_execution``."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["updated"]
-    execution_rid: str
-    updated_fields: list[str]
-
-
-class AbortExecutionResponse(BaseModel):
-    """Response from ``deriva_ml_abort_execution``.
-
-    ``status="aborted"`` on a real abort, ``status="already_aborted"``
-    on the idempotent no-op. v3.0: replaced the optional ``note``
-    field with a discriminator status value. ``reason`` is always
-    present (``null`` when no reason was given OR when the call was a
-    no-op).
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["aborted", "already_aborted"]
-    execution_rid: str
-    reason: str | None = None
-
-
-class CreateExecutionDatasetResponse(BaseModel):
-    """Response from ``deriva_ml_create_execution_dataset``."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["created"]
-    dataset_rid: str
-    execution_rid: str
-    dataset_types: list[str] | None = None
-    description: str
-
-
-class AddNestedExecutionResponse(BaseModel):
-    """Response from ``deriva_ml_add_nested_execution``."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["added"]
-    parent_rid: str
-    child_rid: str
-    sequence: int
+# NOTE: the nine execution-mutation / feature-staging response models
+# (AddFeatureValuesResponse, CommitExecutionReport, CreateExecutionResponse,
+# StartExecutionResponse, CommitExecutionResponse, UpdateExecutionResponse,
+# AbortExecutionResponse, CreateExecutionDatasetResponse,
+# AddNestedExecutionResponse) were removed in v4.0.0 when the execution
+# lifecycle moved out of the MCP surface per the stateless rule
+# (CLAUDE.md, docs/audit-2026-05-23.md). The corresponding tools and
+# their response shapes are now owned by the caller's local Python.
 
 
 class _DatasetVersionBumpMixin(BaseModel):

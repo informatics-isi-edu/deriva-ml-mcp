@@ -4,7 +4,7 @@ These are MCP prompts (registered via ``@ctx.prompt(...)``), not Python
 docstrings. FastMCP surfaces them through the MCP ``prompts/list`` and
 ``prompts/get`` endpoints so an LLM client can pull them up by name at
 the start of a conversation -- they are the cold-start anchor for the
-plugin's 45 tools and 11 resources.
+plugin's 44 tools and 18 resources.
 
 The four prompts complement the four built-in core prompts shipped by
 ``deriva-mcp-core`` (``query_guide``, ``entity_guide``,
@@ -23,18 +23,16 @@ Prompts registered here:
                                      catalog_id) rule, pagination, error
                                      envelope, tool domains, discovery
 
-(Two earlier prompts were removed in v3.x and their content moved to
-the proper homes:
-
-  - ``deriva_ml_workflow_dedup`` -> the ``deriva_ml_create_workflow``
-    and ``deriva_ml_find_workflow_by_url`` tool docstrings. The LLM-trap
-    warning belongs on the trap.
-  - ``deriva_ml_execution_lifecycle`` -> the four lifecycle tool
-    docstrings (``deriva_ml_start_execution``,
-    ``deriva_ml_commit_execution``, ``deriva_ml_abort_execution``,
-    ``deriva_ml_add_feature_values``) for the per-tool warnings, and
-    the ``user-guide/executions.md`` doc in the deriva-ml repo
-    (already RAG-indexed) for the cross-cutting state-machine depth.)
+(Two earlier prompts were removed in v3.x: ``deriva_ml_workflow_dedup``
+whose content moved to the ``deriva_ml_create_workflow`` and
+``deriva_ml_find_workflow_by_url`` tool docstrings, and
+``deriva_ml_execution_lifecycle`` whose content -- the execution state
+machine -- moved to the ``user-guide/executions.md`` doc in the
+deriva-ml repo (RAG-indexed). v4.0.0 then removed the eight
+execution-lifecycle TOOLS themselves: per the stateless rule, executions
+originate in the caller's local Python environment, not in the MCP
+server. The lifecycle docs at the deriva-ml-skills ``execution-lifecycle``
+skill remain the authoritative how-to.)
 
 All prompts are static strings (no f-strings, no tool calls, no catalog
 access required to render). Plain ASCII only (workspace convention).
@@ -148,23 +146,34 @@ DERIVA-ML DOMAIN OBJECTS, NOT AS RAW TABLES.
   Execution  One run of a Workflow against specific input Datasets,
              producing output Datasets / Features / Assets. Executions
              have a status (``Execution_Status_Type``), inputs / outputs
-             links, and a state machine that the lifecycle tools advance
-             through. Use ``deriva_ml_create_execution``,
-             ``deriva_ml_start_execution``, ``deriva_ml_commit_execution``,
-             ``deriva_ml_abort_execution``, ``deriva_ml_update_execution``.
-             Each lifecycle tool's docstring documents the per-tool
-             state-machine constraints; the cross-cutting state-machine
-             depth lives in the ``user-guide/executions.md`` doc on the
-             deriva-ml repo (RAG-indexed; ``rag_search`` for "execution
-             state machine" surfaces it).
+             links, and a state machine that advances Created -> Running
+             -> Stopped -> Uploaded. **Executions originate in your
+             local Python environment, not in the MCP server.** The
+             MCP surface for executions is observational only: query
+             with ``deriva_ml_list_executions`` /
+             ``deriva_ml_get_execution`` /
+             ``deriva_ml_find_workflow_executions`` /
+             ``deriva_ml_get_lineage`` after the run lands. The full
+             lifecycle (create / start / commit / abort / update /
+             add_feature_values / create_execution_dataset /
+             add_nested_execution) lives in user-local Python via the
+             DerivaML ``with Execution(...) as exe:`` context manager.
+             Cross-cutting state-machine depth lives in the
+             ``user-guide/executions.md`` doc on the deriva-ml repo
+             (RAG-indexed; ``rag_search`` for "execution state machine"
+             surfaces it).
 
   Feature    A typed value attached to a row of some target table (e.g.
              a per-image classification label produced by a run, or a
              scalar metric like ``f1_score`` per execution). Features
              link the value back to the producing Execution for
-             provenance. Use ``deriva_ml_create_feature``,
-             ``deriva_ml_add_feature_values``,
-             ``deriva_ml_list_feature_values``.
+             provenance. The DEFINITION of a feature (its schema) is
+             created via ``deriva_ml_create_feature``; the VALUES are
+             written from user-local Python during an execution (via
+             ``exe.add_features(...)``), not through the MCP wire,
+             because feature staging writes to a per-process SQLite
+             manifest that only the originating process can commit.
+             Query values with ``deriva_ml_list_feature_values``.
 
   Asset      A file uploaded to hatrac and recorded in the catalog with
              an ``Asset_Type`` and provenance link to its producing
@@ -182,17 +191,23 @@ THE PROVENANCE PRINCIPLE
 Every artifact (Dataset, Feature value, output Asset) MUST be linked to
 the Execution that produced it. This is why:
 
-  - You create an Execution BEFORE writing outputs, not after.
-  - You ``deriva_ml_start_execution`` to advance the state machine
-    BEFORE writing outputs (the alternative is the auto-wrap path of
-    ``deriva_ml_add_feature_values``; see the lifecycle prompt).
-  - You ``deriva_ml_commit_execution`` AFTER writing outputs, so the
-    staged values become visible to downstream queries.
-  - ``deriva_ml_update_execution`` deliberately does NOT accept a
-    ``status=`` argument -- the state machine is enforced by the
-    lifecycle tools, NOT by free-form status edits. Manual status
-    flips would let an LLM put the catalog into a state where the
-    upload-outputs side effect of commit never ran.
+  - You create an Execution BEFORE writing outputs, not after. From
+    user-local Python: ``with ml.create_execution(workflow=..., ...) as
+    exe:`` opens the Created -> Running transition.
+  - You write outputs INSIDE the context manager:
+    ``exe.add_features(records)`` to stage feature values,
+    ``exe.upload_asset(...)`` for asset bytes.
+  - The context manager closes the lifecycle on exit: Running ->
+    Stopped -> Uploaded. The staged values become visible to
+    downstream queries (including the MCP ``deriva_ml_list_*`` /
+    ``deriva_ml_get_*`` read tools) only after the upload completes.
+  - The state machine is enforced by the local DerivaML library; the
+    MCP server cannot mutate Execution status. A would-be "manual
+    status flip" via raw entity CRUD on the underlying Deriva tables
+    would let an LLM put the catalog into a state where the
+    upload-outputs side effect never ran -- which is exactly why
+    write access to execution rows is intentionally absent from the
+    MCP surface.
 
 The provenance principle is what makes ML runs reproducible across
 users, sessions, and time. Bypassing it (e.g. via raw entity CRUD on
@@ -412,21 +427,21 @@ Now that you have the conceptual frame, read these in this order:
      ``deriva://deriva-ml/getting-started`` for clients that walk
      resources instead of prompts.
 
-  2. The lifecycle tool docstrings (``deriva_ml_start_execution``,
-     ``deriva_ml_commit_execution``, ``deriva_ml_abort_execution``,
-     ``deriva_ml_add_feature_values``)  -- before doing any execution
-     work. Each tool's docstring carries the per-tool state-machine
-     constraints (acceptance sets, terminal states, the staged-vs-
-     flushed semantics that make a missing commit invisible).
+  2. The deriva-ml ``user-guide/executions.md`` doc (RAG-indexed,
+     fetched via ``rag_search(query="execution state machine",
+     doc_type="ml-docs")``) -- before doing any execution work in your
+     local Python. This is the cross-cutting state-machine reference;
+     it covers the Created -> Running -> Stopped -> Uploaded
+     transitions, the staged-vs-flushed semantics, and the
+     ``with Execution(...) as exe:`` context-manager idiom that
+     anchors the lifecycle. The MCP plugin has no execution-mutation
+     tools as of v4.0.0; the local Python pattern is the only path.
 
-  (Two earlier prompts were removed in v3.x: ``deriva_ml_workflow_dedup``
-  whose content moved to the ``deriva_ml_create_workflow`` and
-  ``deriva_ml_find_workflow_by_url`` docstrings, and
-  ``deriva_ml_execution_lifecycle`` whose content moved to the four
-  lifecycle tools' docstrings plus the RAG-indexed
-  ``user-guide/executions.md`` doc on the deriva-ml repo. Per-tool
-  warnings belong on the trap; cross-cutting depth belongs in
-  searchable docs.)
+  (Earlier prompts removed: ``deriva_ml_workflow_dedup`` (v3.x) ->
+  ``deriva_ml_create_workflow`` and ``deriva_ml_find_workflow_by_url``
+  docstrings; ``deriva_ml_execution_lifecycle`` (v3.x) -> the
+  ``user-guide/executions.md`` doc. The execution-lifecycle TOOLS
+  themselves were removed in v4.0.0 per the stateless rule.)
 """
 
 
@@ -545,7 +560,7 @@ you're driving the library directly from a notebook or skill.
 
 THE FIVE ML DOMAINS
 -------------------
-The 45 tools are organized into five domain modules. Pick the domain
+The 44 tools are organized into five domain modules. Pick the domain
 first, then the verb. All actual tool names are prefixed
 ``deriva_ml_<verb>`` (e.g. the ``create`` verb under ``dataset`` is
 the ``deriva_ml_create_dataset`` tool). The bare verbs below name the
@@ -558,21 +573,33 @@ for the wire name.
                   update / increment_version / cache /
                   denormalize / split / get_dataset_spec / bag_info.
 
-    feature    -- 6 tools. Per-row labels, scores, and asset attachments
+    feature    -- 5 tools. Per-row labels, scores, and asset attachments
                   attached to a target table. Verbs: list / get /
-                  list_feature_values / create / delete /
-                  add_feature_values.
+                  list_feature_values / create / delete.
+                  Writing feature VALUES (add_feature_values) is a
+                  user-local Python operation -- see the execution
+                  domain note below.
 
     workflow   -- 5 tools. Registered runnable artefacts (script + Git
                   URL + checksum + workflow_type). Verbs: list / get /
                   find_workflow_by_url / create / update.
 
-    execution  -- 12 tools. A single run of a workflow against datasets
-                  and assets. Carries the lifecycle state machine.
-                  Verbs: list / get / find_workflow_executions /
-                  list_execution_children / list_execution_parents /
-                  create / start / commit / update / abort /
-                  create_execution_dataset / add_nested_execution.
+    execution  -- 6 tools (read-only). A single run of a workflow
+                  against datasets and assets. The MCP surface for
+                  executions is observational only: list / get /
+                  find_workflow_executions / list_execution_children /
+                  list_execution_parents / get_lineage. The full
+                  lifecycle (create / start / commit / abort / update /
+                  add_feature_values / create_execution_dataset /
+                  add_nested_execution) is owned by the caller's local
+                  Python and lives in skills that generate user-side
+                  code. Executions originate in your environment, not
+                  the MCP server -- the workflow code, the feature-
+                  staging SQLite manifest, the asset bytes, and the
+                  ``with Execution(...) as exe:`` context-manager
+                  semantics all live there. See the deriva-ml-skills
+                  ``execution-lifecycle`` skill for the local-Python
+                  pattern.
 
     asset      -- 3 tools. File-backed catalog rows (images, model
                   weights, etc.) -- catalog-state operations only.
@@ -737,10 +764,13 @@ The picker pattern works for these categories. Freshness varies:
     Indexed by this plugin per-user-per-RID. Fresh on first
     connect AND surgically refreshed on every mutation: each
     deriva_ml_create_* / deriva_ml_update_* / deriva_ml_delete_*
-    / deriva_ml_commit_execution / etc. tool refreshes just the
-    affected source(s) before returning. So a freshly created or
-    modified row is searchable via rag_search on the very next
-    call from the same user.
+    MCP tool refreshes just the affected source(s) before
+    returning. Note that EXECUTION row creation/mutation does NOT
+    happen through MCP (executions originate in user-local Python
+    per the stateless rule) -- newly-created execution rows
+    surface into RAG via the cross-user refresh path (next
+    first-connect) or via an explicit
+    ``deriva_ml_resync_indexes(target="execution:<rid>")`` call.
 
     Cross-user freshness is best-effort. User A's mutation does
     NOT refresh user B's per-user sources -- B sees A's change only
@@ -759,30 +789,46 @@ The picker pattern works for these categories. Freshness varies:
     refresh your per-user sources -- or pass target="<table>:<rid>"
     to refresh just one source surgically.
 
-MUTATION: WORKFLOW -> EXECUTION -> OUTPUTS
-------------------------------------------
-The canonical mutation chain is:
+MUTATION: WORKFLOW (MCP) -> EXECUTION (LOCAL PYTHON) -> OUTPUTS
+---------------------------------------------------------------
+The canonical chain crosses the MCP <-> local-Python boundary:
 
-    1. ``deriva_ml_create_workflow(...)`` (or reuse an existing one -- it dedups
-       internally on URL+checksum; see that tool's docstring for the
-       idempotency contract).
-    2. ``deriva_ml_create_execution(workflow_rid=...)`` to register a new run.
-    3. ``deriva_ml_start_execution(...)`` to advance Created -> Running.
-    4. Write outputs (``deriva_ml_add_feature_values``, ``deriva_ml_create_execution_dataset``,
-       etc.) -- they all attribute provenance to the running execution.
-    5. ``deriva_ml_commit_execution(...)`` to drain staged outputs and transition
-       to Uploaded.
+    On MCP:
+    1. ``deriva_ml_create_workflow(...)`` -- registers the workflow
+       (it dedups internally on URL+checksum; see that tool's
+       docstring for the idempotency contract).
+
+    In your local Python:
+    2. ``with ml.create_execution(workflow=wf_rid, ...) as exe:``
+       opens the execution context (Created -> Running on enter,
+       Stopped -> Uploaded on exit, Abort on exception).
+    3. Inside the context: ``exe.add_features(records)`` to stage
+       feature values, ``exe.upload_asset(...)`` for asset bytes,
+       ``exe.create_dataset(...)`` for output datasets.
+    4. The context manager exit drains all staged outputs and
+       commits the upload. No separate "commit" tool call needed.
+
+    Back on MCP:
+    5. Query the freshly-landed catalog state via the read tools:
+       ``deriva_ml_get_execution(execution_rid)``,
+       ``deriva_ml_list_feature_values(...)``, etc.
+
+Why the split: executions inherit per-process state (workflow code in
+your git checkout, feature-staging SQLite manifest, asset bytes on
+your disk, ``with`` context-manager semantics). An MCP server cannot
+participate in that state -- so execution-mutation tools were removed
+in v4.0.0. The MCP surface for executions is observational only.
 
 ALWAYS create artefacts inside an execution context. Bare insertions
 (via core's ``insert_records`` etc.) bypass provenance tracking and
-should only be used when no domain-specific tool exists.
+should only be used when no domain-specific path exists.
 
-For the lifecycle state machine details, see each lifecycle tool's
-docstring (``deriva_ml_start_execution``, ``deriva_ml_commit_execution``,
-``deriva_ml_abort_execution``, ``deriva_ml_add_feature_values``) and
-``rag_search`` for "execution state machine" -- the
+For the lifecycle state machine details, ``rag_search(query=...,
+doc_type="ml-docs")`` for "execution state machine" -- the
 ``user-guide/executions.md`` doc in the deriva-ml repo carries the
-cross-cutting state-machine reference at depth.
+cross-cutting state-machine reference at depth. The deriva-ml-skills
+``execution-lifecycle`` skill carries the user-facing how-to (the
+Python pattern to paste into your editor / notebook).
 
 ASSETS: METADATA HERE, FILE I/O IN THE SKILL
 --------------------------------------------
@@ -813,27 +859,30 @@ via deriva-ml's ``execution.asset_file_path()`` for upload, and
 
 The MCP <-> skill round trip looks like this:
 
-    1. Inside an execution, the user wants to register a new file as an
-       asset. Use the ``work-with-assets`` skill -- it produces a small
-       Python snippet calling ``execution.asset_file_path(...)``,
-       writing the file, and tying it to the running execution.
-    2. The user runs the snippet locally; the file is staged and the
-       asset row is created.
-    3. Come back here for ``deriva_ml_commit_execution`` (uploads the
-       staged file) and any ``deriva_ml_lookup_asset`` /
-       ``deriva_ml_update_asset`` follow-ups.
+    1. Inside an execution running in user-local Python (see the
+       MUTATION section above), the user wants to register a new
+       file as an asset. Use the ``work-with-assets`` skill -- it
+       produces a small Python snippet calling
+       ``execution.asset_file_path(...)``, writing the file, and
+       tying it to the running execution.
+    2. The user runs the snippet locally; the file is staged and
+       the asset row is created. The local ``with Execution(...)``
+       context manager handles the upload + commit on exit -- no
+       MCP commit call needed (none exists in v4.0.0+).
+    3. Come back to MCP for ``deriva_ml_lookup_asset`` /
+       ``deriva_ml_update_asset`` follow-ups, or
+       ``deriva_ml_list_assets`` to confirm the new row landed.
 
 CURATION PATTERN: ONE update_<entity> PER TYPED ENTITY
 ------------------------------------------------------
-Every typed entity (Dataset, Workflow, Asset, Execution) has exactly
-one ``deriva_ml_update_<entity>(rid, *fields)`` tool. Pass only the
-kwargs you want to change; leave others as ``None``. At least one
-field must be non-None or the tool returns ``{"error": ...}``.
+Every catalog-mutable typed entity has exactly one
+``deriva_ml_update_<entity>(rid, *fields)`` tool. Pass only the kwargs
+you want to change; leave others as ``None``. At least one field must
+be non-None or the tool returns ``{"error": ...}``.
 
     deriva_ml_update_dataset    (dataset_types? + description?)
     deriva_ml_update_workflow   (workflow_type? + description?)
     deriva_ml_update_asset      (asset_types? + description?)
-    deriva_ml_update_execution  (description?)  -- description-only
 
 For the type-list fields (``dataset_types``, ``workflow_type``,
 ``asset_types``): SET-STYLE. Pass the desired final list. The tool
@@ -845,13 +894,14 @@ alone.
 For ``description``: free-form text overwrite of the catalog row's
 ``Description`` column.
 
-Execution is the asymmetric one. There is no ``Execution_Type``
-vocabulary, so no type-list field appears. ``Status`` edits remain
-forbidden -- they are state-machine territory driven by
-``deriva_ml_start_execution`` / ``deriva_ml_commit_execution`` /
-``deriva_ml_abort_execution``, NOT freely editable. Free-form status
-writes were rejected in v1.0 (they let an LLM drive the lifecycle
-into invalid states).
+There is NO ``deriva_ml_update_execution`` tool. As of v4.0.0,
+execution rows are only mutated from the caller's local Python
+context manager (where description, status, and all other fields are
+set via the ``Execution`` API). The reasons are identical to the
+ones in the MUTATION section: per-process state ownership, the
+``with`` lifecycle, the SQLite manifest. Description-only edits via
+MCP would also have invited "free-form status flip" requests that
+the state-machine design forbids.
 
 v1.2 breaking rename. The pre-v1.2 ``deriva_ml_update_dataset_types``
 tool (with ``add`` / ``remove`` kwargs) was renamed to
@@ -860,8 +910,8 @@ and ``description``. There is no compat shim; update any references.
 
 THE MENU
 --------
-Quick orientation: 45 tools across 5 domains (dataset, feature, workflow,
-execution, asset) + 11 read-only resources under the
+Quick orientation: 44 tools across 5 domains (dataset, feature, workflow,
+execution, asset) + 18 read-only resources under the
 ``deriva://catalog/{h}/{c}/ml/...`` URI prefix + 1 GitHub doc source
 indexed for RAG (``deriva-ml-docs``) + 3 per-user RAG indexes that
 ingest Dataset / Workflow / Execution rows on first connect to a

@@ -59,10 +59,14 @@ _FEATURE_TOOLS = frozenset(
         "deriva_ml_list_features",
         "deriva_ml_get_feature",
         "deriva_ml_list_feature_values",
-        # Mutation tools
+        # Mutation tools (catalog-state only -- feature definition).
+        # deriva_ml_add_feature_values was removed in v4.0.0 because
+        # feature staging writes to a per-process SQLite manifest; the
+        # full execution lifecycle (including feature value writes)
+        # moved to user-local Python per the stateless rule. See
+        # docs/audit-2026-05-23.md.
         "deriva_ml_create_feature",
         "deriva_ml_delete_feature",
-        "deriva_ml_add_feature_values",
     }
 )
 
@@ -80,7 +84,12 @@ _WORKFLOW_TOOLS = frozenset(
 
 _EXECUTION_TOOLS = frozenset(
     {
-        # Read-only tools
+        # v4.0.0: read-only domain. The execution lifecycle (create /
+        # start / commit / abort / update / add_feature_values /
+        # create_execution_dataset / add_nested_execution) moved to
+        # user-local Python per the stateless rule -- executions
+        # originate in the caller's environment, not the MCP server.
+        # See docs/audit-2026-05-23.md for the architectural rationale.
         "deriva_ml_list_executions",
         "deriva_ml_get_execution",
         "deriva_ml_find_workflow_executions",
@@ -88,15 +97,6 @@ _EXECUTION_TOOLS = frozenset(
         "deriva_ml_list_execution_parents",
         # v3.3: provenance traversal (data-flow walk; see deriva-ml ADR-0001).
         "deriva_ml_get_lineage",
-        # Mutation tools
-        "deriva_ml_create_execution",
-        "deriva_ml_start_execution",
-        "deriva_ml_commit_execution",
-        # v1.2: net-new curation tool (description-only).
-        "deriva_ml_update_execution",
-        "deriva_ml_abort_execution",
-        "deriva_ml_create_execution_dataset",
-        "deriva_ml_add_nested_execution",
     }
 )
 

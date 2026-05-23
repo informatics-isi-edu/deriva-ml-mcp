@@ -1,34 +1,47 @@
 """Execution domain tools for deriva-ml-mcp.
 
-Why this is a package, not a single file: the prior single
-``tools/execution.py`` had grown to 12 tools / 1363 lines, past the
-inline-grep threshold the same engineer-persona review flagged for
-``tools/dataset.py`` (issue #4). The split mirrors the read / mutate
-grouping that was already visible in the source's declaration order:
+**Read-only domain.** As of v4.0.0, this package registers only
+read-side tools. The execution lifecycle (``create``, ``start``,
+``commit``, ``abort``, ``update``, ``add_feature_values``,
+``create_execution_dataset``, ``add_nested_execution``) is owned by
+the caller's local Python environment and lives in skills that
+generate user-side code -- mirroring the ``work-with-assets`` skill
+pattern in ``deriva-skills``.
 
-- ``read.py``: 5 read-only tools (``deriva_ml_list_executions``,
-  ``deriva_ml_get_execution``, ``deriva_ml_find_workflow_executions``,
-  ``deriva_ml_list_execution_children``, ``deriva_ml_list_execution_parents``)
-  plus the three shared execution helpers (``_summarize_execution``,
-  ``_list_executions_impl``, ``_get_execution_detail_impl``) that this
-  package re-exports for ``resources/ml.py`` and ``resources/rag.py``.
-- ``mutate.py``: 7 mutating tools (``deriva_ml_create_execution``,
-  ``deriva_ml_start_execution``, ``deriva_ml_commit_execution``,
-  ``deriva_ml_update_execution``, ``deriva_ml_abort_execution``,
-  ``deriva_ml_create_execution_dataset``, ``deriva_ml_add_nested_execution``)
-  plus the state-machine constants and the ``_summarize_upload_dict``
-  helper they consume.
+Per the stateless / bounded-resource rule (CLAUDE.md), executions
+originate in the user's environment because:
 
-Public surface (preserved from the pre-split single-file shape):
+1. The workflow code lives in the user's git checkout; the MCP server
+   has no access to it.
+2. Feature staging writes to a per-process SQLite manifest store; a
+   server-side stage couldn't pair with a user-side commit.
+3. Asset uploads need local file bytes; bytes can't reasonably travel
+   over the MCP wire.
+4. The DerivaML intended pattern is ``with Execution(...) as exe:``;
+   the context manager owns cleanup + abort-on-exception semantics,
+   and MCP can't participate in that because the context lives in
+   the caller's process.
 
-- ``register(ctx)`` -- aggregator; dispatches to the two submodules'
-  own ``register`` functions. ``plugin.py`` calls this.
+The result is a clean architectural cut: **execution lifecycle =
+local Python; MCP = catalog observation only.** This package therefore
+exposes only read tools so an LLM can query, debug, compare, and
+walk lineage across executions the user has produced.
+
+Why this is still a package, not a single file: the package shape
+predates the v4.0.0 contraction and the per-domain pattern is
+preserved across other domains (``tools/dataset/`` is multi-file).
+Keeping the package shape leaves room for future read-side tools to
+land without forcing a re-split.
+
+Public surface:
+
+- ``register(ctx)`` -- aggregator; dispatches to ``read.register(ctx)``.
+  ``plugin.py`` calls this.
 - ``audit_event`` -- re-exported from ``deriva_mcp_core.telemetry`` so
   ``patch("deriva_ml_mcp.tools.execution.audit_event")`` continues to
-  redirect every success-path emission across read / mutate in one
-  shot. The submodules access this via attribute lookup on the
-  package (``_pkg.audit_event``) rather than ``from ... import`` so
-  the package binding IS the canonical patch site.
+  redirect emissions through the canonical patch site (even though no
+  read tools emit audit events today, the re-export stays for tests
+  and for any future read-tool side-effect that wants to audit).
 - ``get_ml`` -- same patch-target rationale; the
   ``deriva_ml_mcp.tools.execution.get_ml`` patch in ``test_execution.py``
   must keep redirecting through this re-export.
@@ -36,6 +49,10 @@ Public surface (preserved from the pre-split single-file shape):
   ``from deriva_ml_mcp.tools.execution import _list_executions_impl, ...``
   (used by ``resources/ml.py`` and ``resources/rag.py``) keeps
   resolving identically.
+
+History: ``mutate.py`` was deleted in the v4.0.0 cut. Recover from
+git history if you need to see the prior shape; the audit doc at
+``docs/audit-2026-05-23.md`` records the architectural rationale.
 """
 
 from __future__ import annotations
@@ -84,14 +101,17 @@ __all__ = [
 def register(ctx: PluginContext) -> None:
     """Register all execution domain tools with the plugin context.
 
-    Mirrors the ``tools/dataset/__init__.py`` aggregator pattern:
-    submodule imports are deferred to inside ``register`` because
-    ``mutate.py`` imports ``deriva_ml_mcp.tools.execution`` at module
-    load time (to access ``_pkg.audit_event`` / ``_pkg.get_ml``);
-    doing the submodule imports up here would create an import-time
-    cycle. The deferred form lets ``__init__.py`` finish populating
-    its module attributes (notably ``audit_event`` and ``get_ml``)
-    before any submodule reaches back through the package object.
+    v4.0.0+ registers only ``read.register(ctx)``. The mutate side was
+    deleted because execution lifecycle belongs in the user's local
+    environment per the stateless / bounded-resource rule (CLAUDE.md
+    + docs/audit-2026-05-23.md).
+
+    Submodule import is deferred to inside ``register`` because
+    ``read.py`` accesses ``_pkg.audit_event`` / ``_pkg.get_ml`` via
+    attribute lookup on this package; doing the submodule import up
+    here would create an import-time cycle. The deferred form lets
+    ``__init__.py`` finish populating its module attributes before
+    ``read.py`` reaches back through the package object.
 
     Args:
         ctx: PluginContext supplied by deriva-mcp-core at startup.
@@ -104,8 +124,6 @@ def register(ctx: PluginContext) -> None:
         >>> # ctx provided by the framework
         >>> register(ctx)  # doctest: +SKIP
     """
-    from deriva_ml_mcp.tools.execution import mutate as _mutate
     from deriva_ml_mcp.tools.execution import read as _read
 
     _read.register(ctx)
-    _mutate.register(ctx)

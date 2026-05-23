@@ -7,6 +7,32 @@ during implementation; reviewed at every phase boundary.
 See [the design spec](superpowers/specs/2026-04-24-deriva-ml-mcp-design.md#4-coverage-report-docscoveragemd)
 for column meanings, disposition definitions, and maintenance rules.
 
+## v4.0.0 changelog
+
+The following plugin tools were REMOVED in v4.0.0 per the stateless /
+bounded-resource rule (see `CLAUDE.md` and `docs/audit-2026-05-23.md`).
+The execution lifecycle is now owned by the caller's local Python
+environment; executions originate there, not in the MCP server.
+
+| Removed tool | Why |
+|---|---|
+| `deriva_ml_create_execution` | Executions must originate from the user's environment (workflow code lives in the user's git checkout; the MCP server has no access). |
+| `deriva_ml_start_execution` | Status flip orphaned from the local `with Execution(...) as exe:` context manager. |
+| `deriva_ml_commit_execution` | Drains the per-process SQLite manifest store; uploads asset bytes from the server's local staging dir. Both are state-bound to the originating process. |
+| `deriva_ml_abort_execution` | Status flip orphaned from the local context manager. |
+| `deriva_ml_update_execution` | Catalog-pure but removed for consistency: execution rows are mutated from the local context manager only. |
+| `deriva_ml_add_feature_values` | Stages records to `Execution._manifest_store`, a per-process SQLite registry; a server-side stage cannot pair with a user-side commit. |
+| `deriva_ml_create_execution_dataset` | Output-dataset creation is part of execution authorship; belongs in the local context manager. |
+| `deriva_ml_add_nested_execution` | Execution-graph authorship belongs to the author (the local context manager). |
+
+Read-side execution tools remain on the MCP surface:
+`deriva_ml_list_executions`, `deriva_ml_get_execution`,
+`deriva_ml_find_workflow_executions`, `deriva_ml_list_execution_children`,
+`deriva_ml_list_execution_parents`, `deriva_ml_get_lineage`. Plus the
+three execution-related resources
+(`/ml/executions`, `/ml/execution/{rid}`, `/ml/lineage/{rid}`). These
+are all stateless catalog reads.
+
 ## Tools
 
 | old_name | old_module | disposition | new_name | new_module | signature_change | notes |
