@@ -18,9 +18,11 @@ source's declaration order:
   for ``resources/ml.py`` and ``resources/rag.py``.
 - ``mutate.py``: 7 simple-mutation tools (each a thin wrapper around
   one DerivaML method, an audit emission, and a JSON envelope).
-- ``complex.py``: 2 substantial tools (``deriva_ml_cache_dataset``,
-  ``deriva_ml_denormalize_dataset``) whose bodies deserve their own
-  file space.
+- ``complex.py``: ``deriva_ml_denormalize_dataset`` (the biggest
+  tool in the dataset domain). v5.0.0 retired
+  ``deriva_ml_cache_dataset`` per the stateless rule -- bag
+  materialization is now a user-local Python operation. See
+  ``docs/audit-2026-05-23.md``.
 
 See deriva-ml-mcp issue #4 for the full backlog context.
 

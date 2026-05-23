@@ -47,8 +47,10 @@ _DATASET_TOOLS = frozenset(
         "deriva_ml_update_dataset",
         "deriva_ml_add_dataset_element_type",
         "deriva_ml_release",
-        # Complex / local-FS tools
-        "deriva_ml_cache_dataset",
+        # Complex tools. v5.0.0 retired deriva_ml_cache_dataset per the
+        # stateless rule (bag materialization is a user-local Python
+        # operation; see docs/audit-2026-05-23.md). denormalize_dataset
+        # kept because its OUTPUT is stateless bounded rows.
         "deriva_ml_denormalize_dataset",
     }
 )

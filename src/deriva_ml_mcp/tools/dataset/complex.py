@@ -1,16 +1,32 @@
 """Complex dataset tools.
 
-This submodule houses the two substantial dataset tools that warrant
-their own breathing room:
+This submodule houses the substantial dataset tools that warrant
+their own breathing room. As of v5.0.0 there is one:
 
-- ``deriva_ml_cache_dataset`` (~90 lines): warm the local DerivaML
-  bag cache (``mutates=True`` because it touches the local filesystem,
-  but no catalog state is changed).
 - ``deriva_ml_denormalize_dataset`` (~220 lines, the biggest tool in
   the dataset domain): the catalog-shape vs dataset-described describe
   branch with a paged row preview and the bounded-materialization
   guard (the ``preflight_required`` short-circuit when estimated rows
   vastly exceed the requested limit).
+
+v5.0.0 retired ``deriva_ml_cache_dataset`` per the stateless rule
+(see ``CLAUDE.md``, ``docs/audit-2026-05-23.md``, and the design
+note ``docs/superpowers/notes/2026-05-23-cache-denormalize-deprecation-design.md``).
+The tool materialized a bag to the MCP server's local disk, where
+the bytes were inaccessible to remote callers; the ``bag_directory``
+field in the response described a server-side path that meant
+nothing to the user. Bag materialization is now a user-local Python
+operation: callers run ``ml.cache_dataset(spec)`` in their own
+environment. The ``bag-preview`` resource and ``bag_info`` tool
+remain for cost-sizing before download.
+
+``deriva_ml_denormalize_dataset`` kept its place because the
+OUTPUT it serves -- inline denormalized rows bounded by the 10x
+preflight guard -- is exactly the kind of bounded, stateless data
+MCP exists to serve. It still uses ``cache_dataset`` internally
+(the bag has to be local for the FK walk), but that's an
+implementation detail; the rows the caller sees do not depend on
+server-side state.
 
 Audit event lookup goes through ``_pkg.audit_event(...)`` (attribute
 lookup on the parent package) for the same one-patch-site reason as
@@ -26,7 +42,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from deriva_mcp_core import deriva_call
-from deriva_ml.dataset.aux_classes import DatasetSpec
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +58,6 @@ from deriva_ml_mcp._helpers import (
     _row_rid_for,
 )
 from deriva_ml_mcp._response_models import (
-    CacheDatasetBagInfo,
-    CacheDatasetResponse,
     PreflightCountResponse,
 )
 
@@ -53,7 +66,11 @@ if TYPE_CHECKING:
 
 
 def register(ctx: PluginContext) -> None:
-    """Register the three complex dataset tools with the plugin context.
+    """Register the complex dataset tools with the plugin context.
+
+    v5.0.0: one tool (``deriva_ml_denormalize_dataset``). The
+    ``deriva_ml_cache_dataset`` tool was removed per the stateless rule
+    (see this module's docstring + ``docs/audit-2026-05-23.md``).
 
     Args:
         ctx: PluginContext supplied by deriva-mcp-core at startup.
@@ -66,94 +83,6 @@ def register(ctx: PluginContext) -> None:
         >>> # ctx provided by the framework
         >>> register(ctx)  # doctest: +SKIP
     """
-
-    @ctx.tool(mutates=True)
-    async def deriva_ml_cache_dataset(
-        hostname: str,
-        catalog_id: str,
-        dataset_rid: str,
-        version: str | None = None,
-        materialize: bool = True,
-        exclude_tables: list[str] | None = None,
-    ) -> str:
-        """Warm the local cache for a dataset bag before running an experiment.
-
-        Downloads the bag's metadata (and assets, if ``materialize=True``)
-        to the local DerivaML cache. Subsequent calls hit the cache without
-        re-downloading. ``mutates=True`` because it touches the local
-        filesystem — but no catalog state is mutated.
-
-        Args:
-            dataset_rid: RID of the dataset to cache.
-            version: Specific version (semver string). If None, looks up the
-                dataset's current_version automatically.
-            materialize: If True (default), download asset files. If False,
-                only fetch the bag metadata.
-            exclude_tables: Tables to omit from the bag (e.g. large blob
-                tables you don't need).
-
-        Returns:
-            JSON string ``{"status": "cached", "dataset_rid",
-            "version", "materialize", "bag_info": {...upstream
-            DerivaML keys...}}``. v3.0 changes: status renamed from
-            ``"success"`` to ``"cached"``; bag-info keys nested under
-            ``bag_info`` instead of spread top-level.
-
-        Raises:
-            RuntimeError: Wrapped, propagated from
-                ``deriva_ml.DerivaML.cache_dataset``.
-
-        Example:
-            ``{"status": "cached", "dataset_rid": "1-AAAA", "version":
-            "1.0.0", "materialize": true, "bag_info": {"cache_status":
-            "cached_materialized", "cache_path": "/path/to/bag", ...}}``.
-        """
-        try:
-            with deriva_call():
-                # Run the synchronous deriva-ml calls in a thread pool so
-                # the event loop stays responsive — cache_dataset can do
-                # multi-minute network + filesystem work. See
-                # deriva-mcp-core plugin-authoring-guide.md
-                # §"Synchronous work in threads".
-                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
-                if version is None:
-                    ds = await asyncio.to_thread(ml.lookup_dataset, dataset_rid)
-                    used_version = (
-                        str(ds.current_version) if ds.current_version is not None else None
-                    )
-                else:
-                    used_version = version
-                spec = DatasetSpec(
-                    rid=dataset_rid,
-                    version=used_version,
-                    exclude_tables=set(exclude_tables) if exclude_tables else None,
-                )
-                info = await asyncio.to_thread(ml.cache_dataset, spec, materialize=materialize)
-            _pkg.audit_event(
-                "deriva_ml_cache_dataset",
-                hostname=hostname,
-                catalog_id=catalog_id,
-                dataset_rid=dataset_rid,
-                version=used_version,
-                materialize=materialize,
-                exclude_tables=exclude_tables or [],
-            )
-            return CacheDatasetResponse(
-                status="cached",
-                dataset_rid=dataset_rid,
-                version=used_version,
-                materialize=materialize,
-                bag_info=CacheDatasetBagInfo(**info),
-            ).model_dump_json(by_alias=True)
-        except Exception as exc:
-            return _error_envelope(
-                exc,
-                operation="cache_dataset",
-                hostname=hostname,
-                catalog_id=catalog_id,
-                dataset_rid=dataset_rid,
-                materialize=materialize,
-            )
 
     @ctx.tool(mutates=False)
     async def deriva_ml_denormalize_dataset(

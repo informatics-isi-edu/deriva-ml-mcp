@@ -467,9 +467,13 @@ def register(ctx: PluginContext) -> None:
         that expects to see its own. Callers who want their local cache
         state should check it locally via ``ml.cache_status(...)``.
 
-        Use to decide whether to download a bag (``deriva_ml_cache_dataset``):
-        the per-table row counts and asset byte totals are enough to
-        decide cost without materializing the bag.
+        Use to decide whether to download a bag locally (via
+        ``ml.cache_dataset(spec)`` in user-local Python -- the MCP
+        wire tool ``deriva_ml_cache_dataset`` was retired in v5.0.0
+        per the stateless rule; bag materialization belongs in the
+        caller's environment). The per-table row counts and asset
+        byte totals are enough to decide cost without materializing
+        the bag anywhere.
 
         Closes a documented-but-missing URI flagged in the 2026-05-13
         e2e findings (referenced by the debug-bag-contents skill).

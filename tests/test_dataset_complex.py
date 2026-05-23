@@ -18,8 +18,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tests._dataset_helpers import _make_dataset_mock, _patch_audit
-from tests._helpers import _success_calls
+from tests._dataset_helpers import _make_dataset_mock
 
 
 @pytest.fixture()
@@ -36,122 +35,13 @@ def dataset_ctx(ctx, mock_ml):
         dataset_module.register(ctx)
         yield ctx
 
+# NOTE: cache_dataset tests were removed in v5.0.0 along with the
+# deriva_ml_cache_dataset tool. The denormalize_dataset tests below
+# transitively exercise cache_dataset via the library call inside
+# get_denormalized_as_dict, but the wire-level tool is gone.
+# See docs/audit-2026-05-23.md and the design note at
+# docs/superpowers/notes/2026-05-23-cache-denormalize-deprecation-design.md.
 
-# ---------------------------------------------------------------------------
-# cache_dataset
-# ---------------------------------------------------------------------------
-
-
-def _bag_info_payload() -> dict:
-    """Return a bag_info-shaped dict for cache_dataset returns."""
-    return {
-        "tables": {"Image": {"row_count": 10, "is_asset": True, "asset_bytes": 1024}},
-        "total_rows": 10,
-        "total_asset_bytes": 1024,
-        "total_asset_size": "1 KB",
-        "cache_status": "cached_materialized",
-        "cache_path": "/tmp/cache/1-AAAA",
-    }
-
-
-async def test_cache_dataset_explicit_version(dataset_ctx, capturing_mcp, mock_ml):
-    """version supplied explicitly: lookup_dataset is NOT called for fallback."""
-    mock_ml.cache_dataset.return_value = _bag_info_payload()
-    with _patch_audit() as mock_audit:
-        out = json.loads(
-            await capturing_mcp.tools["deriva_ml_cache_dataset"](
-                hostname="h",
-                catalog_id="1",
-                dataset_rid="1-AAAA",
-                version="1.2.3",
-            )
-        )
-    assert out["status"] == "cached"
-    assert out["dataset_rid"] == "1-AAAA"
-    assert out["version"] == "1.2.3"
-    assert out["materialize"] is True
-    assert out["bag_info"]["cache_status"] == "cached_materialized"
-    assert out["bag_info"]["cache_path"] == "/tmp/cache/1-AAAA"
-
-    # spec carried the explicit version through.
-    (spec_arg,) = mock_ml.cache_dataset.call_args.args
-    assert spec_arg.rid == "1-AAAA"
-    assert str(spec_arg.version) == "1.2.3"
-    assert spec_arg.exclude_tables is None
-    assert mock_ml.cache_dataset.call_args.kwargs["materialize"] is True
-
-    # Fallback path NOT exercised.
-    mock_ml.lookup_dataset.assert_not_called()
-
-    success = _success_calls(mock_audit, "deriva_ml_cache_dataset")
-    assert success
-    assert success[0].kwargs["dataset_rid"] == "1-AAAA"
-    assert success[0].kwargs["version"] == "1.2.3"
-    assert success[0].kwargs["materialize"] is True
-
-
-async def test_cache_dataset_falls_back_to_current_version(dataset_ctx, capturing_mcp, mock_ml):
-    """version=None pulls current_version off the looked-up dataset."""
-    ds = _make_dataset_mock("1-AAAA", current_version="2.0.0")
-    mock_ml.lookup_dataset.return_value = ds
-    mock_ml.cache_dataset.return_value = _bag_info_payload()
-    with _patch_audit() as mock_audit:
-        out = json.loads(
-            await capturing_mcp.tools["deriva_ml_cache_dataset"](
-                hostname="h",
-                catalog_id="1",
-                dataset_rid="1-AAAA",
-                materialize=False,
-            )
-        )
-    assert out["version"] == "2.0.0"
-    assert out["materialize"] is False
-    (spec_arg,) = mock_ml.cache_dataset.call_args.args
-    assert str(spec_arg.version) == "2.0.0"
-    assert mock_ml.cache_dataset.call_args.kwargs["materialize"] is False
-
-    success = _success_calls(mock_audit, "deriva_ml_cache_dataset")
-    assert success[0].kwargs["version"] == "2.0.0"
-    assert success[0].kwargs["materialize"] is False
-
-
-async def test_cache_dataset_exclude_tables_converted_to_set(dataset_ctx, capturing_mcp, mock_ml):
-    """exclude_tables converts list -> set for DatasetSpec, AND propagates
-    into the success audit so operators can see which tables were skipped
-    (M-8 fix from Batch 3 review)."""
-    mock_ml.cache_dataset.return_value = _bag_info_payload()
-    with _patch_audit() as mock_audit:
-        await capturing_mcp.tools["deriva_ml_cache_dataset"](
-            hostname="h",
-            catalog_id="1",
-            dataset_rid="1-AAAA",
-            version="1.0.0",
-            exclude_tables=["Big_Asset", "Other"],
-        )
-    (spec_arg,) = mock_ml.cache_dataset.call_args.args
-    assert spec_arg.exclude_tables == {"Big_Asset", "Other"}
-    # Audit captures the excluded tables for operator visibility.
-    success = _success_calls(mock_audit, "deriva_ml_cache_dataset")
-    assert success
-    assert success[0].kwargs["exclude_tables"] == ["Big_Asset", "Other"]
-
-
-async def test_cache_dataset_error_path(dataset_ctx, capturing_mcp, mock_ml):
-    mock_ml.cache_dataset.side_effect = RuntimeError("download failed")
-    with _patch_audit() as mock_audit:
-        out = json.loads(
-            await capturing_mcp.tools["deriva_ml_cache_dataset"](
-                hostname="h",
-                catalog_id="1",
-                dataset_rid="1-AAAA",
-                version="1.0.0",
-            )
-        )
-    assert out == {"error": "download failed"}
-    failed = _success_calls(mock_audit, "deriva_ml_cache_dataset_failed")
-    assert failed
-    assert failed[0].kwargs["dataset_rid"] == "1-AAAA"
-    assert failed[0].kwargs["materialize"] is True
 
 
 # ---------------------------------------------------------------------------

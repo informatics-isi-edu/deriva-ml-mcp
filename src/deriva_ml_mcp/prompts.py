@@ -4,7 +4,7 @@ These are MCP prompts (registered via ``@ctx.prompt(...)``), not Python
 docstrings. FastMCP surfaces them through the MCP ``prompts/list`` and
 ``prompts/get`` endpoints so an LLM client can pull them up by name at
 the start of a conversation -- they are the cold-start anchor for the
-plugin's 44 tools and 18 resources.
+plugin's 43 tools and 18 resources.
 
 The four prompts complement the four built-in core prompts shipped by
 ``deriva-mcp-core`` (``query_guide``, ``entity_guide``,
@@ -131,8 +131,13 @@ DERIVA-ML DOMAIN OBJECTS, NOT AS RAW TABLES.
              (``<last_release>.post1.devN``); ``deriva_ml_release`` is
              the only operation that produces a released version.
              Use ``deriva_ml_create_dataset``,
-             ``deriva_ml_add_dataset_members``, ``deriva_ml_release``,
-             ``deriva_ml_cache_dataset``.
+             ``deriva_ml_add_dataset_members``, ``deriva_ml_release``.
+             For local bag materialization, run ``ml.cache_dataset(spec)``
+             in your own Python -- the MCP server has no per-user
+             filesystem (v5.0.0 stateless rule). Use the
+             ``deriva://catalog/.../ml/dataset/{rid}/bag-preview``
+             resource (or ``deriva_ml_bag_info`` tool) to size a bag
+             before deciding to download it locally.
 
   Workflow   A versioned reference to the code (URL + git commit hash)
              that knows how to do a thing. A Workflow is content-
@@ -596,7 +601,7 @@ you're driving the library directly from a notebook or skill.
 
 THE FIVE ML DOMAINS
 -------------------
-The 44 tools are organized into five domain modules. Pick the domain
+The 43 tools are organized into five domain modules. Pick the domain
 first, then the verb. All actual tool names are prefixed
 ``deriva_ml_<verb>`` (e.g. the ``create`` verb under ``dataset`` is
 the ``deriva_ml_create_dataset`` tool). The bare verbs below name the
@@ -674,7 +679,8 @@ The full read-only resource family:
     deriva://catalog/{h}/{c}/ml/dataset/{rid}/spec     -- DatasetSpecConfig snippet for hydra-zen configs
     deriva://catalog/{h}/{c}/ml/dataset/{rid}/bag-preview
                                                  -- bag size + table counts BEFORE downloading
-                                                    (use to size a download before cache_dataset)
+                                                    (use to size a bag before deciding to
+                                                    run ml.cache_dataset(spec) locally)
     deriva://catalog/{h}/{c}/ml/workflows        -- all workflows
     deriva://catalog/{h}/{c}/ml/workflow/{rid}   -- one workflow
     deriva://catalog/{h}/{c}/ml/executions       -- all executions
@@ -946,7 +952,7 @@ and ``description``. There is no compat shim; update any references.
 
 THE MENU
 --------
-Quick orientation: 44 tools across 5 domains (dataset, feature, workflow,
+Quick orientation: 43 tools across 5 domains (dataset, feature, workflow,
 execution, asset) + 18 read-only resources under the
 ``deriva://catalog/{h}/{c}/ml/...`` URI prefix + 1 GitHub doc source
 indexed for RAG (``deriva-ml-docs``) + 3 per-user RAG indexes that

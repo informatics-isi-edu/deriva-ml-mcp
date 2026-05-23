@@ -7,10 +7,11 @@ This submodule houses the 7 simple-mutation dataset tools:
 and ``deriva_ml_release``.
 
 These are the "one operation, one catalog mutation" tools -- each is
-short, body fits in a screen, no multi-step orchestration. The three
-substantial tools (``cache_dataset`` / ``denormalize_dataset`` /
-``split_dataset``) live in ``complex.py`` to give their longer bodies
-breathing room.
+short, body fits in a screen, no multi-step orchestration. The
+substantial ``deriva_ml_denormalize_dataset`` lives in ``complex.py``
+to give its longer body breathing room. (``cache_dataset`` retired
+in v5.0.0 per the stateless rule; ``split_dataset`` retired earlier
+because it required a live ``Execution`` context.)
 
 Every tool wraps DERIVA I/O in ``with deriva_call():``, emits
 ``audit_event(...)`` on success, and routes failures through

@@ -1173,45 +1173,11 @@ class AddDatasetElementTypeResponse(BaseModel):
     association_table: str
 
 
-class CacheDatasetBagInfo(BaseModel):
-    """Upstream bag-info dict from ``DerivaML.cache_dataset``.
-
-    v3.0: this content is now NESTED under ``CacheDatasetResponse.bag_info``
-    instead of spread top-level. Future DerivaML changes to bag-info
-    can land here without colliding with the v3.0 plugin contract.
-
-    ``extra="allow"`` because we don't own this shape -- DerivaML can
-    add fields. Keys we know about today are typed; unknowns ride
-    along. ``tables`` maps each table name to a per-table descriptor
-    (``{row_count, is_asset, asset_bytes, ...}``) -- the inner dict's
-    schema is upstream's, so it's typed loosely as ``dict[str, Any]``.
-    """
-
-    model_config = ConfigDict(extra="allow")
-
-    tables: dict[str, dict[str, Any]] | None = None
-    total_rows: int | None = None
-    total_asset_bytes: int | None = None
-    total_asset_size: str | None = None
-    cache_status: str | None = None
-    cache_path: str | None = None
-
-
-class CacheDatasetResponse(BaseModel):
-    """Response from ``deriva_ml_cache_dataset``.
-
-    v3.0: bag-info keys are nested under ``bag_info`` (was spread
-    top-level in v2.x). Migration: ``payload["cache_path"]`` -->
-    ``payload["bag_info"]["cache_path"]``. Status renamed from
-    ``"success"`` to ``"cached"``.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["cached"]
-    dataset_rid: str
-    version: str
-    materialize: bool
-    bag_info: CacheDatasetBagInfo
+# NOTE: CacheDatasetBagInfo and CacheDatasetResponse were removed
+# in v5.0.0 when the deriva_ml_cache_dataset tool was retired per the
+# stateless rule (see CLAUDE.md, docs/audit-2026-05-23.md, and
+# docs/superpowers/notes/2026-05-23-cache-denormalize-deprecation-design.md).
+# Bag materialization is now a user-local Python operation; the
+# response models are no longer needed.
 
 
