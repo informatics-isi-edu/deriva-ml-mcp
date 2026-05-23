@@ -1013,8 +1013,7 @@ def register(ctx: PluginContext) -> None:
     async def deriva_ml_validate_config_file(
         hostname: str,
         catalog_id: str,
-        file_path: str | None = None,
-        file_contents: str | None = None,
+        file_contents: str,
     ) -> str:
         """Validate every spec constructor in a hydra-zen config file against the catalog.
 
@@ -1029,20 +1028,17 @@ def register(ctx: PluginContext) -> None:
         in the config file still resolves and pins a released
         version.
 
-        Either ``file_path`` (a path visible to the MCP server) or
-        ``file_contents`` (the file as a string) must be provided.
-        Passing ``file_contents`` is the recommended path for agent
-        callers that have the file open already -- the MCP server's
-        filesystem view may not match the user's.
+        v4.0.0: the ``file_path=`` parameter was removed. The MCP
+        server's filesystem view does not match the caller's, so a
+        path read on the server side was always going to be wrong for
+        any deployment other than single-machine localhost. Pass the
+        file contents as a string instead; the server writes a temp
+        file for the AST walker and cleans up on exit.
 
         Args:
-            file_path: Absolute path to the config file on the MCP
-                server's filesystem. Mutually exclusive with
-                ``file_contents``.
-            file_contents: The file as a string. Mutually exclusive
-                with ``file_path``. When supplied, the validator writes
-                the contents to a temp file under the deriva-ml
-                cache dir for AST parsing.
+            file_contents: The file as a string. The validator writes
+                the contents to a temp file (cleaned up immediately)
+                so the AST walker (which takes a path) can consume it.
 
         Returns:
             JSON string of a ``ConfigValidationReport``:
@@ -1053,10 +1049,8 @@ def register(ctx: PluginContext) -> None:
             ``available_versions`` for ``version_not_found``.
 
         Raises:
-            RuntimeError: Wrapped as ``{"error": ...}`` for missing
-                both ``file_path`` and ``file_contents``, or for I/O
-                errors writing the temp file when ``file_contents``
-                is used.
+            RuntimeError: Wrapped as ``{"error": ...}`` for I/O errors
+                writing the temp file.
 
         Example:
             ``{"file_count": 1, "entry_count": 4, "all_valid": false,
@@ -1066,42 +1060,28 @@ def register(ctx: PluginContext) -> None:
             "reasons": ["version_not_found"], "available_versions":
             ["0.4.0", "0.3.0"]}, ...], "parse_errors": []}``.
         """
-        if file_path is None and file_contents is None:
-            return _error_envelope(
-                ValueError("Either file_path or file_contents must be provided"),
-                operation="validate_config_file",
-                hostname=hostname,
-                catalog_id=catalog_id,
-                audit=False,
-            )
         try:
             with deriva_call():
                 ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
-                # When file_contents is supplied, write it to a temp
-                # file so the AST walker (which takes a path) can
-                # consume it. The temp file is cleaned up on scope
-                # exit.
-                if file_contents is not None:
-                    import os
-                    import tempfile
-                    with tempfile.NamedTemporaryFile(
-                        suffix=".py", mode="w", delete=False
-                    ) as tmp:
-                        tmp.write(file_contents)
-                        tmp_path = tmp.name
-                    try:
-                        payload = await asyncio.to_thread(
-                            ml.validate_config_file, tmp_path
-                        )
-                    finally:
-                        try:
-                            os.unlink(tmp_path)
-                        except OSError:
-                            pass
-                else:
+                # Write file_contents to a temp file so the AST walker
+                # (which takes a path) can consume it. The temp file is
+                # cleaned up immediately after parsing.
+                import os
+                import tempfile
+                with tempfile.NamedTemporaryFile(
+                    suffix=".py", mode="w", delete=False
+                ) as tmp:
+                    tmp.write(file_contents)
+                    tmp_path = tmp.name
+                try:
                     payload = await asyncio.to_thread(
-                        ml.validate_config_file, file_path
+                        ml.validate_config_file, tmp_path
                     )
+                finally:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(

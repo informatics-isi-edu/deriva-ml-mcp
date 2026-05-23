@@ -450,19 +450,26 @@ def register(ctx: PluginContext) -> None:
     async def ml_dataset_bag_preview(hostname: str, catalog_id: str, dataset_rid: str) -> str:
         """Bag-content preview for one dataset (current version, no exclusions).
 
-        Same payload as ``deriva_ml_bag_info`` -- the resource and tool
-        share an internal helper (``_bag_info_impl``) so the two cannot
-        drift. The resource form omits the ``version`` and
-        ``exclude_tables`` parameters: it always inspects the dataset's
-        current version with no table exclusions, and includes a
-        ``warning`` field recommending an explicit version pin for
-        reproducibility before any actual download. Callers needing to
-        pin a specific version or skip large blob tables use the tool.
+        Shares the ``_bag_info_impl`` helper with ``deriva_ml_bag_info``
+        for the catalog-derived row counts, asset byte totals, and per-
+        table breakdown -- the load-bearing "what's in this bag, what
+        will it cost to download" data. The resource form omits the
+        ``version`` and ``exclude_tables`` parameters (always current
+        version, no exclusions) and includes a ``warning`` recommending
+        an explicit version pin for reproducibility. Use the tool
+        (``deriva_ml_bag_info``) when you need to pin a version or skip
+        large blob tables.
+
+        v4.0.0: the ``cache_status`` and ``cache_path`` fields are
+        stripped from the resource response. Those fields describe the
+        MCP SERVER's local cache, not the caller's -- a resource read
+        cannot legitimately surface server-side cache state to a client
+        that expects to see its own. Callers who want their local cache
+        state should check it locally via ``ml.cache_status(...)``.
 
         Use to decide whether to download a bag (``deriva_ml_cache_dataset``):
-        the response carries per-table row counts, asset byte totals, and
-        the current cache status -- enough to decide cost without
-        materializing the bag.
+        the per-table row counts and asset byte totals are enough to
+        decide cost without materializing the bag.
 
         Closes a documented-but-missing URI flagged in the 2026-05-13
         e2e findings (referenced by the debug-bag-contents skill).
@@ -471,6 +478,15 @@ def register(ctx: PluginContext) -> None:
             with deriva_call():
                 ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
                 info = await asyncio.to_thread(_bag_info_impl, ml, dataset_rid, None)
+            # Strip server-side cache state per the stateless rule.
+            # The helper populates these for the tool path (where the
+            # caller IS the server, single-machine dev); the resource
+            # path serves remote clients whose cache state lives
+            # elsewhere. Drop unconditionally; the keys may or may not
+            # be present in the underlying ml.bag_info dict depending
+            # on the deriva-ml version.
+            info.pop("cache_status", None)
+            info.pop("cache_path", None)
             import json as _json
 
             return _json.dumps(info, default=str)

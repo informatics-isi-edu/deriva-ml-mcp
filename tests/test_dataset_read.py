@@ -740,61 +740,22 @@ async def test_validate_execution_configuration_error_path(
 # Both methods are thin wrappers around deriva-ml >= 1.38.0 methods
 # that return Pydantic models. The wrapper's only job is to call into
 # deriva-ml and serialize the response; the AST walking + catalog
-# round-trips live in the library. Tests confirm the wiring, argument
-# propagation, file_contents temp-file handling, and the error path.
+# round-trips live in the library.
+#
+# v4.0.0: the ``file_path=`` parameter was removed from
+# ``deriva_ml_validate_config_file`` per the stateless rule (the MCP
+# server's filesystem view does not match the caller's). Only
+# ``file_contents=`` is accepted; the wrapper writes a temp file
+# (cleaned up immediately) for the AST walker to consume.
 # ---------------------------------------------------------------------------
-
-
-async def test_validate_config_file_with_file_path(
-    dataset_ctx, capturing_mcp, mock_ml
-) -> None:
-    """When ``file_path`` is provided, the underlying ml method is
-    called with that path verbatim."""
-    from deriva_ml.config.validation import (
-        ConfigEntry,
-        ConfigEntryResult,
-        ConfigValidationReport,
-    )
-
-    payload = ConfigValidationReport(
-        file_count=1,
-        entry_count=1,
-        all_valid=True,
-        results=[
-            ConfigEntryResult(
-                entry=ConfigEntry(
-                    file="src/configs/datasets.py",
-                    line=10,
-                    col=4,
-                    entry_kind="DatasetSpecConfig",
-                    rid="1-AAAA",
-                    version="0.1.0",
-                ),
-                valid=True,
-                resolved_name="Training set",
-            ),
-        ],
-    )
-    mock_ml.validate_config_file.return_value = payload
-
-    result = await capturing_mcp.tools["deriva_ml_validate_config_file"](
-        hostname="h",
-        catalog_id="1",
-        file_path="src/configs/datasets.py",
-    )
-    out = json.loads(result)
-    assert out["all_valid"] is True
-    assert out["entry_count"] == 1
-    assert out["results"][0]["entry"]["rid"] == "1-AAAA"
-    mock_ml.validate_config_file.assert_called_once_with("src/configs/datasets.py")
 
 
 async def test_validate_config_file_with_file_contents(
     dataset_ctx, capturing_mcp, mock_ml
 ) -> None:
-    """When ``file_contents`` is provided, the wrapper writes to a
+    """``file_contents`` is the sole accepted input: wrapper writes a
     temp file and calls the ml method with the temp path. The path
-    passed to ml ends with ``.py``."""
+    passed to ml ends with ``.py`` and the temp file is cleaned up."""
     from deriva_ml.config.validation import ConfigValidationReport
 
     mock_ml.validate_config_file.return_value = ConfigValidationReport(
@@ -816,20 +777,9 @@ async def test_validate_config_file_with_file_contents(
     assert mock_ml.validate_config_file.called
     called_path = mock_ml.validate_config_file.call_args.args[0]
     assert called_path.endswith(".py")
-
-
-async def test_validate_config_file_neither_arg_errors(
-    dataset_ctx, capturing_mcp, mock_ml
-) -> None:
-    """Calling with neither ``file_path`` nor ``file_contents``
-    surfaces an error envelope without making any catalog calls."""
-    result = await capturing_mcp.tools["deriva_ml_validate_config_file"](
-        hostname="h", catalog_id="1"
-    )
-    out = json.loads(result)
-    assert "error" in out
-    assert "file_path" in out["error"] or "file_contents" in out["error"]
-    mock_ml.validate_config_file.assert_not_called()
+    # Temp file is cleaned up immediately after parsing.
+    import os
+    assert not os.path.exists(called_path)
 
 
 async def test_validate_config_file_error_path(
@@ -837,7 +787,7 @@ async def test_validate_config_file_error_path(
 ) -> None:
     mock_ml.validate_config_file.side_effect = RuntimeError("AST blew up")
     result = await capturing_mcp.tools["deriva_ml_validate_config_file"](
-        hostname="h", catalog_id="1", file_path="x.py"
+        hostname="h", catalog_id="1", file_contents="# empty"
     )
     out = json.loads(result)
     assert out == {"error": "AST blew up"}

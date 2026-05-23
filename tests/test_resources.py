@@ -407,7 +407,14 @@ async def test_ml_dataset_bag_preview_uses_current_version(resource_ctx, capturi
     """Resource form omits ``version`` -- always inspects current version
     with a warning recommending an explicit pin. The shared
     ``_bag_info_impl`` helper is what the tool uses too, so a drift in
-    response shape would break both."""
+    response shape (excluding the stateless-rule-stripped fields) would
+    break both.
+
+    v4.0.0: the resource strips ``cache_status`` / ``cache_path`` from
+    the response because those describe the MCP server's local cache,
+    not the caller's (stateless rule, docs/audit-2026-05-23.md). The
+    tool path still surfaces them.
+    """
     ds = MagicMock()
     ds.current_version = "1.2.0"
     mock_ml.lookup_dataset.return_value = ds
@@ -428,7 +435,9 @@ async def test_ml_dataset_bag_preview_uses_current_version(resource_ctx, capturi
     assert out["dataset_rid"] == "1-DSAA"
     assert out["version"] == "1.2.0"
     assert out["total_rows"] == 100
-    assert out["cache_status"] == "not_cached"
+    # Server-side cache state stripped per the stateless rule.
+    assert "cache_status" not in out
+    assert "cache_path" not in out
     # Resource always uses current version, so warning is always set.
     assert out["warning"] is not None
     assert "version not specified" in out["warning"]
