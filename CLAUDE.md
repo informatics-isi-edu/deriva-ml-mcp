@@ -142,6 +142,64 @@ Inherited from `deriva-mcp-core`'s plugin authoring guide
   proceed" even though no user action occurred). See
   Development Gotchas → "Sync calls in async tools" for history.
 
+## Stateless / bounded-resource rule for MCP operations
+
+**MCP operations must be stateless on the server side and consume bounded
+resources per call.** Operations that require significant data localization,
+server-side persistent storage, or managed state (per-user SQLite registries,
+``~/.deriva-ml/`` caches, local git checkout dependencies, materializing
+unbounded data per call) must NOT be exposed as MCP tools or resources. They
+belong in skill-driven Python that the user runs locally.
+
+**Rationale.** The MCP server runs in a Docker container with no per-user
+persistent workspace and may serve many clients simultaneously. Any operation
+that needs the caller's local filesystem doesn't work in this environment;
+any operation that materializes unbounded data per call breaks the
+bounded-resource contract. Tools that violate the rule appear to "work" in
+single-machine development (where the MCP server happens to be the user's
+machine) but break the moment the deployment is multi-tenant.
+
+**Concrete guidance for new tools.**
+
+1. **No reads from `ml.workspace.*` or `_manifest_store`** — these are the
+   per-user SQLite registries; what they hold is bound to whichever process
+   created it, not the calling client.
+2. **No writes to local disk** — no `Path.write_bytes()`, no
+   `bag.materialize()`, no `download_*()`. File I/O belongs in a skill
+   like ``work-with-assets`` that generates Python the user runs locally.
+3. **No git introspection** — no `_get_python_script()`, no
+   `Workflow._github_url()` (that path is the bug fixed in commit
+   ``976875e``). The caller computes the Git URL, checksum, and version
+   locally and passes them in.
+4. **No `file_path=` parameters that the server reads from disk.** Take
+   ``file_contents=`` (a string) instead, write to a temp file the server
+   manages, and clean up in ``finally``.
+5. **Bounded responses.** Every potentially-unbounded read MUST cap at
+   ``_MAX_LIMIT`` (1000 rows by default) and surface ``truncated`` so the
+   client knows to switch to the cursor-paginated tool form. The
+   PAGINATION CONTRACT in ``deriva_ml_getting_started`` is the wire
+   guarantee that backs this.
+6. **No state surfaced from the server's own cache** — fields like
+   ``cache_status`` / ``cache_path`` describe the server's local cache,
+   not the user's. They mislead a client that expects to see its own
+   state and should be stripped from any response surfaced via MCP.
+
+**Good models.** ``deriva_ml_list_*`` (cursor-paginated, ``_MAX_LIMIT``
+bounded, no filesystem); ``deriva_ml_validate_dataset_specs`` (pure
+metadata round-trips); ``deriva_ml_list_feature_values`` (caps via
+``max_results`` + propagates ``DerivaMLMaterializeLimitExceeded``);
+the ``Asset`` module's explicit carve-out at ``tools/asset.py:14-20``
+("file I/O lives in a skill, not the MCP surface").
+
+**Known violations** are catalogued in
+``docs/audit-2026-05-23.md`` § "Stateless / bounded-resource rule"
+along with the design notes for moving each to a skill. The biggest
+cluster is the staged-execution lifecycle
+(``add_feature_values`` + ``commit_execution``) which inherits
+per-server SQLite manifest state from deriva-ml's
+``Execution._manifest_store``; deprecating that pair and moving it
+to a ``work-with-executions`` skill is the load-bearing fix.
+
 ## Tool / Resource Dual-Mode Policy
 
 For every read-only ML domain object (dataset, workflow, execution, feature),
