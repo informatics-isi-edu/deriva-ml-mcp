@@ -1,6 +1,6 @@
 """Execution domain tools for deriva-ml-mcp.
 
-**Read-only domain.** As of v4.0.0, this package registers only
+**Read-only domain.** As of v0.5.0, this package registers only
 read-side tools. The execution lifecycle (``create``, ``start``,
 ``commit``, ``abort``, ``update``, ``add_feature_values``,
 ``create_execution_dataset``, ``add_nested_execution``) is owned by
@@ -28,7 +28,7 @@ exposes only read tools so an LLM can query, debug, compare, and
 walk lineage across executions the user has produced.
 
 Why this is still a package, not a single file: the package shape
-predates the v4.0.0 contraction and the per-domain pattern is
+predates the v0.5.0 contraction and the per-domain pattern is
 preserved across other domains (``tools/dataset/`` is multi-file).
 Keeping the package shape leaves room for future read-side tools to
 land without forcing a re-split.
@@ -50,7 +50,7 @@ Public surface:
   (used by ``resources/ml.py`` and ``resources/rag.py``) keeps
   resolving identically.
 
-History: ``mutate.py`` was deleted in the v4.0.0 cut. Recover from
+History: ``mutate.py`` was deleted in the v0.5.0 cut. Recover from
 git history if you need to see the prior shape; the audit doc at
 ``docs/audit-2026-05-23.md`` records the architectural rationale.
 """
@@ -101,7 +101,7 @@ __all__ = [
 def register(ctx: PluginContext) -> None:
     """Register all execution domain tools with the plugin context.
 
-    v4.0.0+ registers only ``read.register(ctx)``. The mutate side was
+    v0.5.0+ registers only ``read.register(ctx)``. The mutate side was
     deleted because execution lifecycle belongs in the user's local
     environment per the stateless / bounded-resource rule (CLAUDE.md
     + docs/audit-2026-05-23.md).

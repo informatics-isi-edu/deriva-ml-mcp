@@ -47,7 +47,7 @@ _DATASET_TOOLS = frozenset(
         "deriva_ml_update_dataset",
         "deriva_ml_add_dataset_element_type",
         "deriva_ml_release",
-        # Complex tools. v5.0.0 retired deriva_ml_cache_dataset per the
+        # Complex tools. v0.5.0 retired deriva_ml_cache_dataset per the
         # stateless rule (bag materialization is a user-local Python
         # operation; see docs/audit-2026-05-23.md). denormalize_dataset
         # kept because its OUTPUT is stateless bounded rows.
@@ -62,7 +62,7 @@ _FEATURE_TOOLS = frozenset(
         "deriva_ml_get_feature",
         "deriva_ml_list_feature_values",
         # Mutation tools (catalog-state only -- feature definition).
-        # deriva_ml_add_feature_values was removed in v4.0.0 because
+        # deriva_ml_add_feature_values was removed in v0.5.0 because
         # feature staging writes to a per-process SQLite manifest; the
         # full execution lifecycle (including feature value writes)
         # moved to user-local Python per the stateless rule. See
@@ -86,7 +86,7 @@ _WORKFLOW_TOOLS = frozenset(
 
 _EXECUTION_TOOLS = frozenset(
     {
-        # v4.0.0: read-only domain. The execution lifecycle (create /
+        # v0.5.0: read-only domain. The execution lifecycle (create /
         # start / commit / abort / update / add_feature_values /
         # create_execution_dataset / add_nested_execution) moved to
         # user-local Python per the stateless rule -- executions

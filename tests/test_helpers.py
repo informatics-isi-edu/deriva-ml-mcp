@@ -8,7 +8,7 @@ dedicated test file. The small Table-rendering helpers added in v1.1
 with no domain coupling, so they get isolated tests here rather than
 being rolled into the dataset / asset suites.
 
-v4.0.x: the ``_set_row_description`` pathBuilder workaround was
+v0.5.0: the ``_set_row_description`` pathBuilder workaround was
 removed when deriva-ml v1.38.0 introduced write-through
 ``Asset.description`` / ``Dataset.description`` setters. The two unit
 tests that pinned the pathBuilder shape went with it.
@@ -57,7 +57,7 @@ def test_table_to_dict_keys_are_lowercase() -> None:
     assert set(out.keys()) == {"name", "schema"}
 
 
-# _set_row_description tests removed in v4.0.x along with the helper
+# _set_row_description tests removed in v0.5.0 along with the helper
 # (replaced by deriva-ml v1.38.0 write-through description setters).
 
 

@@ -3,7 +3,7 @@
 Read tools: ``deriva_ml_list_features``, ``deriva_ml_get_feature``, ``deriva_ml_list_feature_values``.
 Mutation tools: ``deriva_ml_create_feature``, ``deriva_ml_delete_feature``.
 
-v4.0.0 removed ``deriva_ml_add_feature_values`` -- writing feature
+v0.5.0 removed ``deriva_ml_add_feature_values`` -- writing feature
 VALUES requires the per-process SQLite manifest store that's owned by
 the local Python execution context (see CLAUDE.md "Stateless /
 bounded-resource rule"). Feature DEFINITIONS (schema creation /
@@ -665,7 +665,7 @@ def register(ctx: PluginContext) -> None:
                 feature_name=feature_name,
             )
 
-    # NOTE: deriva_ml_add_feature_values was removed in v4.0.0 per the
+    # NOTE: deriva_ml_add_feature_values was removed in v0.5.0 per the
     # stateless / bounded-resource rule (CLAUDE.md,
     # docs/audit-2026-05-23.md). Feature staging writes to a per-process
     # SQLite manifest store; a server-side stage cannot pair with a

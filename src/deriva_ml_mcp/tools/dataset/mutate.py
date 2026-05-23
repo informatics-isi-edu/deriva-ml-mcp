@@ -10,7 +10,7 @@ These are the "one operation, one catalog mutation" tools -- each is
 short, body fits in a screen, no multi-step orchestration. The
 substantial ``deriva_ml_denormalize_dataset`` lives in ``complex.py``
 to give its longer body breathing room. (``cache_dataset`` retired
-in v5.0.0 per the stateless rule; ``split_dataset`` retired earlier
+in v0.5.0 per the stateless rule; ``split_dataset`` retired earlier
 because it required a live ``Execution`` context.)
 
 Every tool wraps DERIVA I/O in ``with deriva_call():``, emits
@@ -560,7 +560,7 @@ def register(ctx: PluginContext) -> None:
                     # assigning ds.description performs the catalog write
                     # AND the in-memory mirror in one call. Pre-v1.38 the
                     # plugin had a _set_row_description pathBuilder
-                    # workaround here; that helper was retired in v4.0.x.
+                    # workaround here; that helper was retired in v0.5.0.
                     # The setter is sync I/O -- thread it.
                     def _set_dataset_description() -> None:
                         ds.description = description

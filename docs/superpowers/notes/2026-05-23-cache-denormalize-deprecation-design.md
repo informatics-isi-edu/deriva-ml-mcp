@@ -3,7 +3,7 @@
 **Status:** open question. No commits proposed in this doc.
 
 **Origin:** 2026-05-23 audit (`docs/audit-2026-05-23.md`), Lens C
-GRAY case 3b, plus a follow-up reframing after v4.0.0 removed the
+GRAY case 3b, plus a follow-up reframing after v0.5.0 removed the
 8 execution-mutating tools.
 
 **Audience:** decision-maker for the plugin's wire surface.
@@ -12,7 +12,7 @@ GRAY case 3b, plus a follow-up reframing after v4.0.0 removed the
 
 ## TL;DR
 
-By the same principle that drove the v4.0.0 execution-lifecycle
+By the same principle that drove the v0.5.0 execution-lifecycle
 removal, **two more dataset tools fail the stateless rule**:
 
 - `deriva_ml_cache_dataset` — materializes a bag to the **MCP
@@ -21,7 +21,7 @@ removal, **two more dataset tools fail the stateless rule**:
   server-side and returns them inline. Borderline; passes the
   bounded-resource rule today, fails on principle.
 
-The question is whether the v4.0.0 principle should extend to bag
+The question is whether the v0.5.0 principle should extend to bag
 materialization too. **My read: yes for `cache_dataset`; keep
 `denormalize_dataset` with caveats.** Detail below.
 
@@ -129,7 +129,7 @@ it.
 ### Option A — Remove both (full stateless purity)
 
 Pros:
-- Architecturally consistent with v4.0.0
+- Architecturally consistent with v0.5.0
 - Eliminates the last two HARD/SOFT violations
 - One clean story for skills to teach: "bag materialization is
   user-local Python; MCP gives you metadata only"
@@ -137,7 +137,7 @@ Pros:
 Cons:
 - Loses inline denormalization-output convenience
 - More friction for the "show me what's in this bag" LLM workflow
-- Another wire-surface break (would be `v5.0.0`)
+- Another wire-surface break (would be `v0.5.0`)
 
 ### Option B — Remove `cache_dataset` only; keep `denormalize_dataset`
 
@@ -151,7 +151,7 @@ Cons:
   removing the tool but keeping the API call internally is fine
   in code, but the conceptual line gets fuzzy
 - Skills documenting "cache first, then denormalize" become wrong
-- Still a wire-surface break (`v5.0.0`)
+- Still a wire-surface break (`v0.5.0`)
 
 ### Option C — Keep both, document the constraint loudly
 
@@ -183,7 +183,7 @@ with two changes:
    seconds-to-minutes the first time on a given bag (because of
    the internal `cache_dataset` call).
 
-For `cache_dataset` removal, the deprecation path mirrors v4.0.0:
+For `cache_dataset` removal, the deprecation path mirrors v0.5.0:
 
 - Delete the tool from `tools/dataset/complex.py`
 - Drop `deriva_ml_cache_dataset` from `_DATASET_TOOLS` in
@@ -197,7 +197,7 @@ For `cache_dataset` removal, the deprecation path mirrors v4.0.0:
   pattern (`ml.cache_dataset(...)`). Add to the existing skills
   follow-up note in deriva-ml-skills.
 
-Estimated effort: similar in shape to the v4.0.0 commit, but
+Estimated effort: similar in shape to the v0.5.0 commit, but
 much smaller — ~one file delete (or, more precisely, one tool
 extraction), plus the response-model + test cleanup. ~2 hours
 of focused work.
@@ -211,7 +211,7 @@ of focused work.
    `denormalize_dataset`'s response without breaking a skill that
    relies on it. (Quick grep in deriva-ml-skills; unlikely to be
    referenced anywhere downstream of the LLM.)
-3. If A or B: schedule the work as `v5.0.0`. Pair with one more
+3. If A or B: schedule the work as `v0.5.0`. Pair with one more
    pass to confirm no other HARD/SOFT violations sneak in (the
    audit was 2026-05-23; the surface has barely moved since).
 4. If C: update the audit doc and CLAUDE.md to note the exception
@@ -229,7 +229,7 @@ purity gain.
 
 - `docs/audit-2026-05-23.md` § 1.4 (SOFT) and § 1.5 (GRAY)
 - `CLAUDE.md` "Stateless / bounded-resource rule for MCP operations"
-- v4.0.0 commit `2730a6f` (the execution-lifecycle removal that
+- v0.5.0 commit `2730a6f` (the execution-lifecycle removal that
   established the deprecation pattern)
 - `docs/superpowers/notes/2026-05-23-skills-followups-from-mcp-audit.md`
   in `deriva-ml-skills` (will need an addendum if A or B lands)

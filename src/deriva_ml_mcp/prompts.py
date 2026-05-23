@@ -28,7 +28,7 @@ whose content moved to the ``deriva_ml_create_workflow`` and
 ``deriva_ml_find_workflow_by_url`` tool docstrings, and
 ``deriva_ml_execution_lifecycle`` whose content -- the execution state
 machine -- moved to the ``user-guide/executions.md`` doc in the
-deriva-ml repo (RAG-indexed). v4.0.0 then removed the eight
+deriva-ml repo (RAG-indexed). v0.5.0 then removed the eight
 execution-lifecycle TOOLS themselves: per the stateless rule, executions
 originate in the caller's local Python environment, not in the MCP
 server. The lifecycle docs at the deriva-ml-skills ``execution-lifecycle``
@@ -134,7 +134,7 @@ DERIVA-ML DOMAIN OBJECTS, NOT AS RAW TABLES.
              ``deriva_ml_add_dataset_members``, ``deriva_ml_release``.
              For local bag materialization, run ``ml.cache_dataset(spec)``
              in your own Python -- the MCP server has no per-user
-             filesystem (v5.0.0 stateless rule). Use the
+             filesystem (v0.5.0 stateless rule). Use the
              ``deriva://catalog/.../ml/dataset/{rid}/bag-preview``
              resource (or ``deriva_ml_bag_info`` tool) to size a bag
              before deciding to download it locally.
@@ -476,13 +476,13 @@ Now that you have the conceptual frame, read these in this order:
      transitions, the staged-vs-flushed semantics, and the
      ``with Execution(...) as exe:`` context-manager idiom that
      anchors the lifecycle. The MCP plugin has no execution-mutation
-     tools as of v4.0.0; the local Python pattern is the only path.
+     tools as of v0.5.0; the local Python pattern is the only path.
 
   (Earlier prompts removed: ``deriva_ml_workflow_dedup`` (v3.x) ->
   ``deriva_ml_create_workflow`` and ``deriva_ml_find_workflow_by_url``
   docstrings; ``deriva_ml_execution_lifecycle`` (v3.x) -> the
   ``user-guide/executions.md`` doc. The execution-lifecycle TOOLS
-  themselves were removed in v4.0.0 per the stateless rule.)
+  themselves were removed in v0.5.0 per the stateless rule.)
 """
 
 
@@ -859,7 +859,7 @@ Why the split: executions inherit per-process state (workflow code in
 your git checkout, feature-staging SQLite manifest, asset bytes on
 your disk, ``with`` context-manager semantics). An MCP server cannot
 participate in that state -- so execution-mutation tools were removed
-in v4.0.0. The MCP surface for executions is observational only.
+in v0.5.0. The MCP surface for executions is observational only.
 
 ALWAYS create artefacts inside an execution context. Bare insertions
 (via core's ``insert_records`` etc.) bypass provenance tracking and
@@ -910,7 +910,7 @@ The MCP <-> skill round trip looks like this:
     2. The user runs the snippet locally; the file is staged and
        the asset row is created. The local ``with Execution(...)``
        context manager handles the upload + commit on exit -- no
-       MCP commit call needed (none exists in v4.0.0+).
+       MCP commit call needed (none exists in v0.5.0+).
     3. Come back to MCP for ``deriva_ml_lookup_asset`` /
        ``deriva_ml_update_asset`` follow-ups, or
        ``deriva_ml_list_assets`` to confirm the new row landed.
@@ -936,7 +936,7 @@ alone.
 For ``description``: free-form text overwrite of the catalog row's
 ``Description`` column.
 
-There is NO ``deriva_ml_update_execution`` tool. As of v4.0.0,
+There is NO ``deriva_ml_update_execution`` tool. As of v0.5.0,
 execution rows are only mutated from the caller's local Python
 context manager (where description, status, and all other fields are
 set via the ``Execution`` API). The reasons are identical to the

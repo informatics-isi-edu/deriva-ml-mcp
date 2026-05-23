@@ -322,7 +322,7 @@ async def test_lookup_asset_failure_returns_error_envelope(asset_ctx, capturing_
 def _wire_description_setter_mock(asset) -> PropertyMock:
     """Replace the asset's plain ``description`` attribute with a PropertyMock.
 
-    v4.0.x: the plugin now uses deriva-ml v1.38.0's write-through
+    v0.5.0: the plugin now uses deriva-ml v1.38.0's write-through
     ``Asset.description`` setter instead of the legacy pathBuilder
     workaround. Tests need PropertyMock to detect that the setter
     fires (plain attribute assignment on a MagicMock would be silent).

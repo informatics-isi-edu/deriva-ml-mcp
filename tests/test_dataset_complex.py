@@ -35,7 +35,7 @@ def dataset_ctx(ctx, mock_ml):
         dataset_module.register(ctx)
         yield ctx
 
-# NOTE: cache_dataset tests were removed in v5.0.0 along with the
+# NOTE: cache_dataset tests were removed in v0.5.0 along with the
 # deriva_ml_cache_dataset tool. The denormalize_dataset tests below
 # transitively exercise cache_dataset via the library call inside
 # get_denormalized_as_dict, but the wire-level tool is gone.

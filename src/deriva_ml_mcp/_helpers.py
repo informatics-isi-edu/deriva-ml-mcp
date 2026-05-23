@@ -269,7 +269,7 @@ def _table_to_dict(table: Any) -> dict[str, str]:
     return {"name": table.name, "schema": table.schema.name}
 
 
-# NOTE: _set_row_description was removed in v4.0.x. It was a
+# NOTE: _set_row_description was removed in v0.5.0. It was a
 # pathBuilder workaround for Asset.description / Dataset.description
 # lacking write-through setters in deriva-ml pre-1.38.0. v1.38.0
 # introduced both setters, so callers now do ``asset.description = ...``

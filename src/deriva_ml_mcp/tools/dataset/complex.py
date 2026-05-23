@@ -1,7 +1,7 @@
 """Complex dataset tools.
 
 This submodule houses the substantial dataset tools that warrant
-their own breathing room. As of v5.0.0 there is one:
+their own breathing room. As of v0.5.0 there is one:
 
 - ``deriva_ml_denormalize_dataset`` (~220 lines, the biggest tool in
   the dataset domain): the catalog-shape vs dataset-described describe
@@ -9,7 +9,7 @@ their own breathing room. As of v5.0.0 there is one:
   guard (the ``preflight_required`` short-circuit when estimated rows
   vastly exceed the requested limit).
 
-v5.0.0 retired ``deriva_ml_cache_dataset`` per the stateless rule
+v0.5.0 retired ``deriva_ml_cache_dataset`` per the stateless rule
 (see ``CLAUDE.md``, ``docs/audit-2026-05-23.md``, and the design
 note ``docs/superpowers/notes/2026-05-23-cache-denormalize-deprecation-design.md``).
 The tool materialized a bag to the MCP server's local disk, where
@@ -68,7 +68,7 @@ if TYPE_CHECKING:
 def register(ctx: PluginContext) -> None:
     """Register the complex dataset tools with the plugin context.
 
-    v5.0.0: one tool (``deriva_ml_denormalize_dataset``). The
+    v0.5.0: one tool (``deriva_ml_denormalize_dataset``). The
     ``deriva_ml_cache_dataset`` tool was removed per the stateless rule
     (see this module's docstring + ``docs/audit-2026-05-23.md``).
 

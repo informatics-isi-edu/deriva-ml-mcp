@@ -208,7 +208,7 @@ def _get_asset_detail_impl(ml: Any, asset_rid: str) -> AssetDetail:
 
 
 # NOTE: _write_asset_description (and its shared dependency
-# _set_row_description in _helpers.py) were removed in v4.0.x when
+# _set_row_description in _helpers.py) were removed in v0.5.0 when
 # deriva-ml v1.38.0 introduced write-through Asset.description /
 # Dataset.description setters. The pathBuilder workaround they
 # provided is no longer needed; assignment performs the catalog
@@ -496,7 +496,7 @@ def register(ctx: PluginContext) -> None:
                     # mirror). Pre-v1.38 the plugin had a
                     # _write_asset_description / _set_row_description
                     # pathBuilder workaround here; both were retired in
-                    # v4.0.x. The setter is sync I/O -- thread it.
+                    # v0.5.0. The setter is sync I/O -- thread it.
                     def _set_asset_description() -> None:
                         asset.description = description
 

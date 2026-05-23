@@ -58,7 +58,7 @@ def register(ctx: PluginContext) -> None:
     curation symmetry: every catalog-mutable typed entity (Dataset,
     Workflow, Asset) has one ``deriva_ml_update_<entity>(rid,
     *fields)`` tool that mutates only the kwargs provided.
-    v4.0.0 removed the execution-mutation surface entirely per the
+    v0.5.0 removed the execution-mutation surface entirely per the
     stateless rule -- executions originate in the caller's local
     Python (see docs/audit-2026-05-23.md). The pre-v1.2
     ``deriva_ml_update_dataset_types`` tool was renamed (and

@@ -481,7 +481,7 @@ async def test_update_dataset_partial_remove_failure_surfaces_progress(
 async def test_update_dataset_description_only(dataset_ctx, capturing_mcp, mock_ml):
     """description-only update writes via the deriva-ml v1.38.0 setter; types untouched.
 
-    v4.0.x: the pathBuilder workaround (_set_row_description) was retired
+    v0.5.0: the pathBuilder workaround (_set_row_description) was retired
     when deriva-ml introduced the write-through Dataset.description
     setter. The test now uses PropertyMock to verify the setter fires
     instead of mocking pathBuilder.

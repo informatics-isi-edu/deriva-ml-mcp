@@ -7,9 +7,9 @@ during implementation; reviewed at every phase boundary.
 See [the design spec](superpowers/specs/2026-04-24-deriva-ml-mcp-design.md#4-coverage-report-docscoveragemd)
 for column meanings, disposition definitions, and maintenance rules.
 
-## v4.0.0 changelog
+## v0.5.0 changelog
 
-The following plugin tools were REMOVED in v4.0.0 per the stateless /
+The following plugin tools were REMOVED in v0.5.0 per the stateless /
 bounded-resource rule (see `CLAUDE.md` and `docs/audit-2026-05-23.md`).
 The execution lifecycle is now owned by the caller's local Python
 environment; executions originate there, not in the MCP server.

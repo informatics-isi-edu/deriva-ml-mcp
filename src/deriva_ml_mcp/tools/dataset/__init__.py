@@ -19,7 +19,7 @@ source's declaration order:
 - ``mutate.py``: 7 simple-mutation tools (each a thin wrapper around
   one DerivaML method, an audit emission, and a JSON envelope).
 - ``complex.py``: ``deriva_ml_denormalize_dataset`` (the biggest
-  tool in the dataset domain). v5.0.0 retired
+  tool in the dataset domain). v0.5.0 retired
   ``deriva_ml_cache_dataset`` per the stateless rule -- bag
   materialization is now a user-local Python operation. See
   ``docs/audit-2026-05-23.md``.

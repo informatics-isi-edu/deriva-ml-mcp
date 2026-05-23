@@ -1028,7 +1028,7 @@ def register(ctx: PluginContext) -> None:
         in the config file still resolves and pins a released
         version.
 
-        v4.0.0: the ``file_path=`` parameter was removed. The MCP
+        v0.5.0: the ``file_path=`` parameter was removed. The MCP
         server's filesystem view does not match the caller's, so a
         path read on the server side was always going to be wrong for
         any deployment other than single-machine localhost. Pass the

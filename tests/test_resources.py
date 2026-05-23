@@ -410,7 +410,7 @@ async def test_ml_dataset_bag_preview_uses_current_version(resource_ctx, capturi
     response shape (excluding the stateless-rule-stripped fields) would
     break both.
 
-    v4.0.0: the resource strips ``cache_status`` / ``cache_path`` from
+    v0.5.0: the resource strips ``cache_status`` / ``cache_path`` from
     the response because those describe the MCP server's local cache,
     not the caller's (stateless rule, docs/audit-2026-05-23.md). The
     tool path still surfaces them.

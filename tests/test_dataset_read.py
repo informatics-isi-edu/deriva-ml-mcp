@@ -742,7 +742,7 @@ async def test_validate_execution_configuration_error_path(
 # deriva-ml and serialize the response; the AST walking + catalog
 # round-trips live in the library.
 #
-# v4.0.0: the ``file_path=`` parameter was removed from
+# v0.5.0: the ``file_path=`` parameter was removed from
 # ``deriva_ml_validate_config_file`` per the stateless rule (the MCP
 # server's filesystem view does not match the caller's). Only
 # ``file_contents=`` is accepted; the wrapper writes a temp file

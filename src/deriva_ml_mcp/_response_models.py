@@ -1039,7 +1039,7 @@ class DeleteFeatureResponse(BaseModel):
 # (AddFeatureValuesResponse, CommitExecutionReport, CreateExecutionResponse,
 # StartExecutionResponse, CommitExecutionResponse, UpdateExecutionResponse,
 # AbortExecutionResponse, CreateExecutionDatasetResponse,
-# AddNestedExecutionResponse) were removed in v4.0.0 when the execution
+# AddNestedExecutionResponse) were removed in v0.5.0 when the execution
 # lifecycle moved out of the MCP surface per the stateless rule
 # (CLAUDE.md, docs/audit-2026-05-23.md). The corresponding tools and
 # their response shapes are now owned by the caller's local Python.
@@ -1174,7 +1174,7 @@ class AddDatasetElementTypeResponse(BaseModel):
 
 
 # NOTE: CacheDatasetBagInfo and CacheDatasetResponse were removed
-# in v5.0.0 when the deriva_ml_cache_dataset tool was retired per the
+# in v0.5.0 when the deriva_ml_cache_dataset tool was retired per the
 # stateless rule (see CLAUDE.md, docs/audit-2026-05-23.md, and
 # docs/superpowers/notes/2026-05-23-cache-denormalize-deprecation-design.md).
 # Bag materialization is now a user-local Python operation; the

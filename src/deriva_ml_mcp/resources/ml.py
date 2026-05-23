@@ -460,7 +460,7 @@ def register(ctx: PluginContext) -> None:
         (``deriva_ml_bag_info``) when you need to pin a version or skip
         large blob tables.
 
-        v4.0.0: the ``cache_status`` and ``cache_path`` fields are
+        v0.5.0: the ``cache_status`` and ``cache_path`` fields are
         stripped from the resource response. Those fields describe the
         MCP SERVER's local cache, not the caller's -- a resource read
         cannot legitimately surface server-side cache state to a client
@@ -469,7 +469,7 @@ def register(ctx: PluginContext) -> None:
 
         Use to decide whether to download a bag locally (via
         ``ml.cache_dataset(spec)`` in user-local Python -- the MCP
-        wire tool ``deriva_ml_cache_dataset`` was retired in v5.0.0
+        wire tool ``deriva_ml_cache_dataset`` was retired in v0.5.0
         per the stateless rule; bag materialization belongs in the
         caller's environment). The per-table row counts and asset
         byte totals are enough to decide cost without materializing
