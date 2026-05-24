@@ -1,6 +1,7 @@
 """Asset domain tools for deriva-ml-mcp.
 
-Read tools: ``deriva_ml_list_assets``, ``deriva_ml_lookup_asset``.
+Read tools: ``deriva_ml_list_assets``, ``deriva_ml_find_assets``,
+``deriva_ml_lookup_asset``.
 Mutation tools: ``deriva_ml_update_asset``.
 
 Asset table discovery is exposed through the
@@ -324,6 +325,161 @@ def register(ctx: PluginContext) -> None:
             return _error_envelope(
                 exc,
                 operation="list_assets",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+    @ctx.tool(mutates=False)
+    async def deriva_ml_find_assets(
+        hostname: str,
+        catalog_id: str,
+        asset_type: str | None = None,
+        asset_table: str | None = None,
+        limit: int = 100,
+        after_rid: str | None = None,
+        preflight_count: bool = False,
+    ) -> str:
+        """Find assets across one or all asset tables, filtered by asset_type.
+
+        Cross-table query surface for the Python
+        ``DerivaML.find_assets`` method. Use this when you have an
+        identifying piece of info (``asset_type``) but don't know which
+        asset table to look in -- a single call discovers assets by
+        type across every asset table in the catalog, instead of
+        enumerating asset tables and issuing N parallel
+        ``deriva_ml_list_assets`` calls plus client-side filtering.
+
+        At least one of ``asset_type`` or ``asset_table`` must be set.
+        Calling with neither would return every asset in every asset
+        table, which is wasteful: use ``deriva_ml_list_assets`` per
+        table when you want the full contents of one table, or scope
+        this tool with an identifier when you want a focused search.
+
+        See ``deriva_ml_getting_started`` (PAGINATION CONTRACT) for the
+        two-step pagination flow.
+
+        ``asset_types`` field note: execution-linked assets carry an
+        auto-assigned ``Input_File`` or ``Output_File`` tag in
+        ``asset_types`` alongside any caller-supplied content tags
+        (per the deriva-ml ``Asset_Role`` contract; see
+        ``deriva_ml_concepts``). Filter with subset/any-of semantics,
+        not exact-set equality, when matching on content tags.
+
+        Args:
+            asset_type: Optional Asset_Type term name to filter by.
+                Only assets carrying this type are returned. If
+                ``asset_table`` is None this scans every asset table
+                in the catalog.
+            asset_table: Optional asset table name (e.g. ``"Image"``,
+                ``"Trained_Model"``). When set, restricts the search
+                to that one table -- shape-equivalent to
+                ``deriva_ml_list_assets(asset_table=...)`` with the
+                additional ``asset_type`` filter applied.
+            limit: Max assets per page (default 100, max 1000).
+            after_rid: RID of last row from previous page to advance
+                cursor.
+            preflight_count: If True, return only the total count.
+
+        Returns:
+            Page: ``{"assets": [{"rid", "filename", "length", "md5",
+            "asset_table", "asset_types"}, ...], "count", "truncated",
+            "next_after_rid"}``. The ``asset_table`` field on each row
+            identifies which asset table the asset came from -- the
+            information a caller needs to act on cross-table results.
+            Preflight: ``{"total_count", "entities_fetched": False,
+            "action_required"}``.
+
+        Raises:
+            RuntimeError: Wrapped as ``{"error": ...}``, propagated
+                from ``deriva_ml.DerivaML.find_assets`` (e.g. unknown
+                asset table or asset_type term). Validation errors
+                (neither identifier supplied) also return as
+                ``{"error": ...}``.
+
+        Example:
+            ``{"assets": [{"rid": "1-AAAA", "filename": "model.pt",
+            "length": 12345, "md5": "abc", "asset_table":
+            "Trained_Model", "asset_types": ["Model_File"]}, {"rid":
+            "1-BBBB", "filename": "v2.pt", "length": 9876, "md5":
+            "def", "asset_table": "Model_Variant", "asset_types":
+            ["Model_File"]}], "count": 2, "truncated": false,
+            "next_after_rid": null}``.
+        """
+        # Argument validation -- return error directly without audit.
+        if asset_type is None and asset_table is None:
+            return json.dumps(
+                {
+                    "error": (
+                        "at least one of asset_type or asset_table must be provided; "
+                        "to enumerate one asset table without a type filter use "
+                        "deriva_ml_list_assets(asset_table=...)"
+                    )
+                }
+            )
+        try:
+            with deriva_call():
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``ml.find_assets``
+                # returns a generator that materializes over the wire, so
+                # the drain (list/sorted) must happen inside the worker
+                # thread, not on the event loop. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
+                if preflight_count:
+
+                    def _count_found_assets() -> int:
+                        return len(
+                            list(
+                                ml.find_assets(
+                                    asset_table=asset_table,
+                                    asset_type=asset_type,
+                                )
+                            )
+                        )
+
+                    total = await asyncio.to_thread(_count_found_assets)
+                    scope = (
+                        f"asset_type={asset_type!r}"
+                        if asset_type is not None
+                        else f"asset_table={asset_table!r}"
+                    )
+                    return PreflightCountResponse(
+                        total_count=total,
+                        action_required=(
+                            f"Found {total} assets matching {scope}. "
+                            "Choose a limit and call again with "
+                            "preflight_count=False."
+                        ),
+                    ).model_dump_json(by_alias=True)
+
+                def _list_and_sort_found_assets() -> list[Any]:
+                    return sorted(
+                        ml.find_assets(
+                            asset_table=asset_table,
+                            asset_type=asset_type,
+                        ),
+                        key=lambda a: getattr(a, "asset_rid", "") or "",
+                    )
+
+                assets = await asyncio.to_thread(_list_and_sort_found_assets)
+                capped = min(max(limit, 0), _MAX_LIMIT)
+                page, truncated, next_after = _paginate(
+                    assets,
+                    after_rid=after_rid,
+                    limit=capped,
+                    key=partial(_read_rid, rid_key="asset_rid"),
+                )
+            return AssetListResponse(
+                assets=[_summarize_asset(a) for a in page],
+                count=len(page),
+                truncated=truncated,
+                next_after_rid=next_after,
+            ).model_dump_json(by_alias=True)
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="find_assets",
                 hostname=hostname,
                 catalog_id=catalog_id,
                 audit=False,

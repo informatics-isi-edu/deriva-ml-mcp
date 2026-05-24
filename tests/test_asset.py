@@ -133,6 +133,184 @@ async def test_list_assets_failure_returns_error_envelope(asset_ctx, capturing_m
 
 
 # ---------------------------------------------------------------------------
+# find_assets (cross-table query surface)
+#
+# Wraps DerivaML.find_assets(asset_table=None, asset_type=None). At
+# least one identifier is required at the MCP layer -- unfiltered scan
+# of every asset in every table is intentionally not exposed (use
+# deriva_ml_list_assets per table when you want the full contents of
+# one table).
+# ---------------------------------------------------------------------------
+
+
+async def test_find_assets_by_type_returns_matching_rows(asset_ctx, capturing_mcp, mock_ml):
+    """Happy path: asset_type filter passed through; results render
+    via the same _summarize_asset path as list_assets (sorted ascending
+    by RID).
+    """
+    mock_ml.find_assets.return_value = iter(
+        [
+            _make_asset_mock("1-BBBB", asset_table="Trained_Model", asset_types=["Model_File"]),
+            _make_asset_mock("1-AAAA", asset_table="Trained_Model", asset_types=["Model_File"]),
+        ]
+    )
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_assets"](
+            hostname="h", catalog_id="1", asset_type="Model_File"
+        )
+    )
+    assert out["count"] == 2
+    assert [a["rid"] for a in out["assets"]] == ["1-AAAA", "1-BBBB"]
+    assert {a["asset_table"] for a in out["assets"]} == {"Trained_Model"}
+    assert out["truncated"] is False
+    assert out["next_after_rid"] is None
+    mock_ml.find_assets.assert_called_with(asset_table=None, asset_type="Model_File")
+
+
+async def test_find_assets_cross_table_returns_rows_from_multiple_tables(
+    asset_ctx, capturing_mcp, mock_ml
+):
+    """Cross-table semantics: when the same asset_type is present in
+    two different asset tables, find_assets returns rows from both --
+    the per-row asset_table field tells the caller which table each
+    row came from.
+    """
+    mock_ml.find_assets.return_value = iter(
+        [
+            _make_asset_mock("1-AAAA", asset_table="Trained_Model", asset_types=["Model_File"]),
+            _make_asset_mock("1-CCCC", asset_table="Model_Variant", asset_types=["Model_File"]),
+            _make_asset_mock("1-BBBB", asset_table="Trained_Model", asset_types=["Model_File"]),
+        ]
+    )
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_assets"](
+            hostname="h", catalog_id="1", asset_type="Model_File"
+        )
+    )
+    assert out["count"] == 3
+    # Mixed tables surface in the per-row asset_table field.
+    tables_by_rid = {a["rid"]: a["asset_table"] for a in out["assets"]}
+    assert tables_by_rid == {
+        "1-AAAA": "Trained_Model",
+        "1-BBBB": "Trained_Model",
+        "1-CCCC": "Model_Variant",
+    }
+
+
+async def test_find_assets_empty_match_returns_empty_list_not_error(
+    asset_ctx, capturing_mcp, mock_ml
+):
+    """No matches => count=0, empty assets list, no error envelope."""
+    mock_ml.find_assets.return_value = iter([])
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_assets"](
+            hostname="h", catalog_id="1", asset_type="Missing_Type"
+        )
+    )
+    assert out["count"] == 0
+    assert out["assets"] == []
+    assert out["truncated"] is False
+    assert out["next_after_rid"] is None
+    assert "error" not in out
+
+
+async def test_find_assets_scoped_to_one_table(asset_ctx, capturing_mcp, mock_ml):
+    """asset_table without asset_type narrows the scan to one table."""
+    mock_ml.find_assets.return_value = iter(
+        [_make_asset_mock("1-AAAA", asset_table="Image")]
+    )
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_assets"](
+            hostname="h", catalog_id="1", asset_table="Image"
+        )
+    )
+    assert out["count"] == 1
+    assert out["assets"][0]["asset_table"] == "Image"
+    mock_ml.find_assets.assert_called_with(asset_table="Image", asset_type=None)
+
+
+async def test_find_assets_both_scoping_kwargs_are_forwarded(asset_ctx, capturing_mcp, mock_ml):
+    """asset_type + asset_table both honored -- the Python find_assets
+    signature accepts both simultaneously."""
+    mock_ml.find_assets.return_value = iter(
+        [_make_asset_mock("1-AAAA", asset_table="Trained_Model", asset_types=["Model_File"])]
+    )
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_assets"](
+            hostname="h",
+            catalog_id="1",
+            asset_type="Model_File",
+            asset_table="Trained_Model",
+        )
+    )
+    assert out["count"] == 1
+    mock_ml.find_assets.assert_called_with(
+        asset_table="Trained_Model", asset_type="Model_File"
+    )
+
+
+async def test_find_assets_validation_requires_one_identifier(
+    asset_ctx, capturing_mcp, mock_ml
+):
+    """Neither asset_type nor asset_table => validation error envelope,
+    no catalog call. Unfiltered cross-catalog scans are intentionally
+    not exposed."""
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_assets"](
+            hostname="h", catalog_id="1"
+        )
+    )
+    assert "error" in out
+    assert "at least one" in out["error"]
+    mock_ml.find_assets.assert_not_called()
+
+
+async def test_find_assets_pagination_truncates(asset_ctx, capturing_mcp, mock_ml):
+    """Standard cursor pagination: page filled => truncated=True,
+    next_after_rid = last RID of page."""
+    mock_ml.find_assets.return_value = iter(
+        [_make_asset_mock(f"1-{i:04d}", asset_table="Image", asset_types=["X"]) for i in range(5)]
+    )
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_assets"](
+            hostname="h", catalog_id="1", asset_type="X", limit=2
+        )
+    )
+    assert out["count"] == 2
+    assert out["truncated"] is True
+    assert out["next_after_rid"] == "1-0001"
+
+
+async def test_find_assets_preflight_count(asset_ctx, capturing_mcp, mock_ml):
+    """preflight_count returns total without rendering rows."""
+    mock_ml.find_assets.return_value = iter(
+        [_make_asset_mock(f"1-{i:04d}", asset_table="Image", asset_types=["X"]) for i in range(7)]
+    )
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_assets"](
+            hostname="h", catalog_id="1", asset_type="X", preflight_count=True
+        )
+    )
+    assert out["total_count"] == 7
+    assert out["entities_fetched"] is False
+    assert "asset_type" in out["action_required"]
+
+
+async def test_find_assets_failure_returns_error_envelope(asset_ctx, capturing_mcp, mock_ml):
+    """Read-only: a deriva-ml failure surfaces as {"error": ...} with
+    no audit emission."""
+    mock_ml.find_assets.side_effect = RuntimeError("Model_File: term not found")
+    with _patch_asset_audit() as mock_audit:
+        out = json.loads(
+            await capturing_mcp.tools["deriva_ml_find_assets"](
+                hostname="h", catalog_id="1", asset_type="Model_File"
+            )
+        )
+    assert out == {"error": "Model_File: term not found"}
+    assert mock_audit.call_count == 0
+
+
+# ---------------------------------------------------------------------------
 # lookup_asset
 # ---------------------------------------------------------------------------
 

@@ -102,15 +102,19 @@ _EXECUTION_TOOLS = frozenset(
     }
 )
 
-# Asset domain -- 3 tools (2 read + 1 metadata-mutation). File I/O is
+# Asset domain -- 4 tools (3 read + 1 metadata-mutation). File I/O is
 # intentionally NOT covered here; that lives in the deriva-skills
 # `work-with-assets` skill which generates Python the user runs locally.
 # Asset table discovery moved to the ``ml/assets/{schema}`` resource in
 # v3.4; the ``deriva_ml_list_asset_tables`` tool was retired alongside
-# the ``ml/asset-tables`` resource.
+# the ``ml/asset-tables`` resource. ``find_assets`` surfaces the
+# cross-table ``DerivaML.find_assets`` API as a single MCP call --
+# alternative to enumerating asset tables then issuing N
+# ``list_assets`` calls plus client-side filtering.
 _ASSET_TOOLS = frozenset(
     {
         "deriva_ml_list_assets",
+        "deriva_ml_find_assets",
         "deriva_ml_lookup_asset",
         "deriva_ml_update_asset",
     }
