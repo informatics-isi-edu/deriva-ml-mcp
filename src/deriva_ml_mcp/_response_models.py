@@ -670,6 +670,82 @@ class FeatureListResponse(_PaginationFields):
     features: list[FeatureSummary]
 
 
+class FeatureValueRecord(BaseModel):
+    """One feature-value row on a ``deriva_ml_list_feature_values`` page.
+
+    Mirrors the wire shape produced by ``FeatureRecord.model_dump()``
+    in ``deriva-ml`` (see ``deriva_ml.feature.FeatureRecord``). The
+    three stable provenance/identity fields are declared explicitly;
+    the remaining fields are the feature's term / asset / value
+    columns, whose names are dynamic per feature definition and so
+    flow through under ``extra="allow"``.
+
+    Stable fields (always present after deriva-ml's ``model_dump()``):
+
+    - ``RID`` -- RID of the feature-value row in the feature table.
+      Used as the pagination cursor by ``deriva_ml_list_feature_values``.
+    - ``Execution`` -- RID of the execution that wrote this record.
+      Provenance handle; ``None`` for legacy rows that predate
+      execution tracking.
+    - ``Feature_Name`` -- Name of the feature this record belongs to
+      (denormalized from the ``Feature_Name`` vocabulary join for
+      convenience).
+    - ``RCT`` -- Row Creation Time as an ISO 8601 string. Populated by
+      the catalog; used by ``select_newest`` for recency ordering.
+
+    Dynamic fields (vary per feature):
+
+    - The target column (e.g. ``Image``, ``Subject``) is the RID of
+      the target entity the feature attaches to.
+    - Term columns carry vocabulary-term RIDs.
+    - Asset columns carry asset-row RIDs.
+    - Value columns carry the raw column value (typed per the feature
+      definition).
+
+    ``extra="allow"`` is intentional: the alternative would be a
+    Pydantic class per feature definition (impractical at runtime). The
+    contract this model pins is the four stable fields + the fact that
+    a dynamic column set crosses the wire as a flat dict.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    RID: str | None = Field(
+        default=None,
+        description="RID of the feature-value row in the feature table.",
+    )
+    Execution: str | None = Field(
+        default=None,
+        description=(
+            "RID of the execution that wrote this record. ``None`` for "
+            "legacy rows that predate execution tracking."
+        ),
+    )
+    Feature_Name: str | None = Field(
+        default=None,
+        description="Name of the feature this record belongs to.",
+    )
+    RCT: str | None = Field(
+        default=None,
+        description=(
+            "Row Creation Time as an ISO 8601 string. Used by "
+            "``select_newest`` for recency ordering."
+        ),
+    )
+
+
+class FeatureValueListResponse(_PaginationFields):
+    """Paginated list of feature-value rows. Produced by
+    ``deriva_ml_list_feature_values``.
+
+    Each entry is a ``FeatureValueRecord`` -- four stable provenance
+    fields plus the feature's dynamic value / term / asset columns
+    flowing through under ``extra="allow"``.
+    """
+
+    records: list[FeatureValueRecord]
+
+
 # ---------------------------------------------------------------------------
 # Asset response models
 # ---------------------------------------------------------------------------
