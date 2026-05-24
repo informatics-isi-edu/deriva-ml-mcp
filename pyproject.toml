@@ -37,10 +37,12 @@ dependencies = [
     # `Execution.commit_output_assets()` + `DerivaML.commit_pending_executions()`.
     # v1.39.0 was briefly tagged v2.0.0 and re-tagged after the user decided
     # v2.0 should wait for more bake time; the upper bound <2.0 keeps us out
-    # of any future v2.0 release until we re-validate. The `commit_execution`
-    # MCP tool (when it is implemented) MUST drive the v1.39 method names —
-    # see docs/scratch/phase5-execution-analysis.md for the corrected
-    # compose-sequence.
+    # of any future v2.0 release until we re-validate.
+    # Pinned to v1.39+ for ADR-0009's unified `commit_output_assets` /
+    # `commit_pending_executions` surface. The MCP plugin does not expose
+    # execution lifecycle (stateless rule, v0.5.0); this pin protects
+    # against any future code path that depends on the v1.39 method names
+    # in the underlying library.
     "deriva-ml>=1.39,<2.0",
     # Pin deriva-py to the `deriva-ml` branch in the built wheel metadata --
     # not just in [tool.uv] (which is local-only and does not ship). Installers
