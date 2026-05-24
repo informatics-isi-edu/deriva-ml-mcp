@@ -2,6 +2,16 @@
 
 *Audited: 2026-04-27. Auditor: Claude Sonnet 4.6 (independent pass).*
 
+> **Status note (2026-05-24):** This audit was originally drafted
+> against deriva-ml's pre-v1.39 surface. Updated 2026-05-24 to reflect
+> the unified `commit_output_assets` surface that shipped in deriva-ml
+> v1.39.0 (see
+> [ADR-0009](https://github.com/informatics-isi-edu/deriva-ml/blob/main/docs/adr/0009-unified-commit-output-assets.md)).
+> Method names in the coverage tables below are current as of that
+> release: `upload_execution_outputs` / `upload_outputs` /
+> `upload_pending` are gone, replaced by `commit_output_assets` (on
+> `Execution`) and `commit_pending_executions` (on `DerivaML`).
+
 ---
 
 ## Part A: Software Architecture
@@ -170,14 +180,14 @@ Scan results for `mutates=True` tools:
 | `find_executions` | Yes | `deriva_ml_list_executions` + `deriva_ml_find_workflow_executions` | |
 | `lookup_experiment` | Partial | Embedded in `_get_execution_detail_impl` | Not a standalone tool; accessible only via the execution detail resource |
 | `find_experiments` | No | — | Gap: no tool to list experiments independent of executions |
-| `upload_pending` | No | — | Low-level upload path; covered by `commit_execution` |
+| `commit_pending_executions` | No | — | Workspace-wide drain (deriva-ml v1.39+; replaced legacy `upload_pending`). Per-execution work is covered by `commit_execution`, which calls `commit_output_assets()` on the resumed execution. |
 
 **Execution class methods (`execution/execution.py`)**
 
 | Method | Exposed? | Tool name | Notes |
 |---|---|---|---|
 | `execution_start` | Yes | `deriva_ml_start_execution` | |
-| `execution_stop` + `upload_execution_outputs` | Yes | `deriva_ml_commit_execution` | Combined into one lifecycle step |
+| `commit_output_assets` | Yes | `deriva_ml_commit_execution` | One method drives the full lifecycle bracket (Running -> Stopped -> Pending_Upload -> Uploaded, asset descriptions, Upload_Duration, optional folder cleanup). deriva-ml v1.39+ replaced the legacy `execution_stop` + `upload_execution_outputs` two-step with this single call. |
 | `abort` | Yes | `deriva_ml_abort_execution` | |
 | `add_features` | Yes | `deriva_ml_add_feature_values` | Staged via execution |
 | `create_dataset` | Yes | `deriva_ml_create_execution_dataset` | |
@@ -255,7 +265,7 @@ All vocabulary operations (`add_term`, `lookup_term`, `list_vocabulary_terms`, `
 ### Coverage summary
 
 - **DatasetMixin**: ~70% of public methods exposed. Gaps: `download_dataset_bag` (intentional), `cache_denormalized` (intentional), `list_schema_paths` / `list_denormalized_columns` (low LLM value), `Dataset.list_executions` (actual gap — see below).
-- **ExecutionMixin**: ~65% exposed. Intentional omissions: `gc_executions`, `upload_pending`, `pending_summary`. Actual gaps: `find_incomplete_executions`, `find_experiments`.
+- **ExecutionMixin**: ~65% exposed. Intentional omissions: `gc_executions`, `commit_pending_executions` (deriva-ml v1.39+ — workspace-wide drain has no MCP analog; per-execution work goes through `commit_execution`), `pending_summary`. Actual gaps: `find_incomplete_executions`, `find_experiments`.
 - **Execution class**: ~60% of public methods exposed. Intentional: file I/O methods, path accessors.
 - **WorkflowMixin**: ~90% exposed (all meaningful public methods). Only internal `_add_workflow` omitted.
 - **FeatureMixin**: ~80% exposed. Minor gap: `list_workflow_executions` on the Feature object.

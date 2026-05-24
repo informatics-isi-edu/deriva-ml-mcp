@@ -30,8 +30,18 @@ dependencies = [
     # split_dataset(row_per=, via=, ignore_unrelated_anchors=) kwargs
     # added in deriva-ml #174/#176. Raised again to >=1.36.7 to require
     # the typed NoAssociationException / AmbiguousAssociationException
-    # added in deriva-ml #180/#185.
-    "deriva-ml>=1.36.7",
+    # added in deriva-ml #180/#185. Raised again to >=1.39,<2.0 to require
+    # the unified upload surface from deriva-ml ADR-0009 (#224): the legacy
+    # `upload_execution_outputs` / `upload_outputs` / `upload_pending` /
+    # `ExecutionSnapshot.upload_outputs` methods are GONE and replaced by
+    # `Execution.commit_output_assets()` + `DerivaML.commit_pending_executions()`.
+    # v1.39.0 was briefly tagged v2.0.0 and re-tagged after the user decided
+    # v2.0 should wait for more bake time; the upper bound <2.0 keeps us out
+    # of any future v2.0 release until we re-validate. The `commit_execution`
+    # MCP tool (when it is implemented) MUST drive the v1.39 method names —
+    # see docs/scratch/phase5-execution-analysis.md for the corrected
+    # compose-sequence.
+    "deriva-ml>=1.39,<2.0",
     # Pin deriva-py to the `deriva-ml` branch in the built wheel metadata --
     # not just in [tool.uv] (which is local-only and does not ship). Installers
     # other than uv (pip, plain build envs) would otherwise resolve whatever
