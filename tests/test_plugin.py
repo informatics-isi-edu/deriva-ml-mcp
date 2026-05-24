@@ -97,6 +97,8 @@ _EXECUTION_TOOLS = frozenset(
         "deriva_ml_find_workflow_executions",
         "deriva_ml_list_execution_children",
         "deriva_ml_list_execution_parents",
+        # P2 hygiene sweep: experiment-scoped browse (wraps find_experiments).
+        "deriva_ml_find_experiments",
         # v3.3: provenance traversal (data-flow walk; see deriva-ml ADR-0001).
         "deriva_ml_get_lineage",
     }

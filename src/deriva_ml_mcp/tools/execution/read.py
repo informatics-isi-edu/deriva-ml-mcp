@@ -753,6 +753,121 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
+    async def deriva_ml_find_experiments(
+        hostname: str,
+        catalog_id: str,
+        workflow_rid: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        after_rid: str | None = None,
+        preflight_count: bool = False,
+    ) -> str:
+        """Find executions that are Hydra-driven experiments.
+
+        Returns executions that have a Hydra configuration asset
+        (``*-config.yaml`` in ``Execution_Metadata``). Experiment
+        detail (``config_choices``, ``model_config``) is available
+        per-execution via ``deriva_ml_get_execution`` followed by
+        inspecting the ``experiment`` field on the detail payload.
+
+        Returns execution summaries in the same shape as
+        ``deriva_ml_list_executions`` -- the two can be used
+        interchangeably by callers that only need summary fields.
+
+        Args:
+            workflow_rid: If set, restrict to experiments of this workflow
+                (by RID).
+            status: If set, restrict to one ``ExecutionStatus`` value
+                (e.g. ``"Uploaded"``, ``"Stopped"``).
+            limit: Max experiments per page (default 100, max 1000).
+            after_rid: RID of last row from previous page to advance
+                cursor.
+            preflight_count: If True, return only the total count.
+
+        Returns:
+            Page: ``{"executions": [...], "count", "truncated",
+            "next_after_rid"}``. Preflight: ``{"total_count",
+            "entities_fetched": False, "action_required"}``.
+
+        Raises:
+            RuntimeError: Wrapped, propagated from
+                ``deriva_ml.DerivaML.find_experiments`` or
+                ``ExecutionStatus`` parsing.
+
+        Example:
+            ``{"executions": [{"rid": "1-EXEC", "workflow_rid":
+            "1-WF", "status": "Uploaded", ...}], "count": 2,
+            "truncated": false, "next_after_rid": null}``.
+        """
+        try:
+            with deriva_call():
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``ml.find_experiments``
+                # performs catalog I/O to scan Execution_Metadata for
+                # config files. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                status_enum = ExecutionStatus(status) if status else None
+
+                if preflight_count:
+
+                    def _count_experiments() -> int:
+                        return len(
+                            list(ml.find_experiments(workflow_rid=workflow_rid, status=status_enum))
+                        )
+
+                    total = await asyncio.to_thread(_count_experiments)
+                    return PreflightCountResponse(
+                        total_count=total,
+                        action_required=(
+                            f"Found {total} experiments. Choose a limit and call "
+                            "again with preflight_count=False."
+                        ),
+                    ).model_dump_json(by_alias=True)
+
+                def _drain_experiments() -> list[Any]:
+                    # Drain into ExecutionRecord objects without triggering
+                    # the lazy Experiment.hydra_config download (which
+                    # fetches YAML from Hatrac and violates the MCP
+                    # stateless/bounded-resource rule). We resolve each
+                    # experiment to its ExecutionRecord so _summarize_execution
+                    # can build a summary without any file I/O.
+                    return [
+                        ml.lookup_execution(exp.execution_rid)
+                        for exp in ml.find_experiments(
+                            workflow_rid=workflow_rid, status=status_enum
+                        )
+                    ]
+
+                records = await asyncio.to_thread(_drain_experiments)
+
+            records_sorted = sorted(
+                records,
+                key=lambda e: getattr(e, "execution_rid", "") or "",
+            )
+            capped = min(max(limit, 0), _MAX_LIMIT)
+            page, truncated, next_after = _paginate(
+                records_sorted,
+                after_rid=after_rid,
+                limit=capped,
+                key=partial(_read_rid, rid_key="execution_rid"),
+            )
+            return ExecutionListResponse(
+                executions=[_summarize_execution(r) for r in page],
+                count=len(page),
+                truncated=truncated,
+                next_after_rid=next_after,
+            ).model_dump_json(by_alias=True)
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="find_experiments",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+    @ctx.tool(mutates=False)
     async def deriva_ml_get_lineage(
         hostname: str,
         catalog_id: str,
