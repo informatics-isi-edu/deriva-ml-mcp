@@ -198,7 +198,7 @@ async def test_add_dataset_members_with_list(dataset_ctx, capturing_mcp, mock_ml
     assert out["dataset_rid"] == "1-AAAA"
     assert out["new_version"] == "1.1.0"
     ds.add_dataset_members.assert_called_once_with(
-        members=["r1", "r2", "r3"], description="adding three", execution_rid="EXEC-1"
+        members=["r1", "r2", "r3"], validate=True, description="adding three", execution_rid="EXEC-1"
     )
     success = _success_calls(mock_audit, "deriva_ml_add_dataset_members")
     assert success

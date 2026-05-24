@@ -655,22 +655,23 @@ deriva-docker workflow.
 
   **PR #28 (`fix(complex): wrap sync deriva-ml calls in asyncio.to_thread`)**
   fixed this in `tools/dataset/complex.py` for the three known-slow tools
-  (`cache_dataset`, `denormalize_dataset`, `split_dataset`). It did **not**
-  cover the other tool modules (`asset.py`, `feature.py`, `maintenance.py`,
-  `workflow.py`, `dataset/mutate.py`, `dataset/read.py`,
-  `execution/mutate.py`, `execution/read.py`). All of those still need
-  the `asyncio.to_thread` wrapping; until they do, the same symptom
-  recurs intermittently for any of their tools that hit non-trivial
-  catalog work.
+  (`cache_dataset`, `denormalize_dataset`, `split_dataset`). Subsequent
+  passes extended the wrapping to every remaining tool module
+  (`asset.py`, `feature.py`, `maintenance.py`, `workflow.py`,
+  `dataset/mutate.py`, `dataset/read.py`, `execution/read.py`, and
+  `resources/ml.py`). As of the P2 hygiene sweep (2026-05-24), the AST
+  test in `tests/test_async_thread_wrap.py` confirms **all modules are
+  clean** — no unwrapped sync deriva-ml call exists inside any
+  `with deriva_call():` block in any checked module.
 
   **The lesson — for plugin design.** Async-defined tools that call sync
   libraries are a footgun. The rule must be applied uniformly the first
   time, not retrofitted module-by-module. When adding a new tool, the
   template should already include `asyncio.to_thread`; when reviewing a
   PR that adds a tool, the absence of `asyncio.to_thread` around any
-  sync deriva-ml/deriva-py call is a blocking review comment. PR #28's
-  scoping (one module out of nine) is the failure mode this rule guards
-  against.
+  sync deriva-ml/deriva-py call is a blocking review comment.
+  `tests/test_async_thread_wrap.py` enforces the rule structurally so
+  CI catches regressions automatically.
 
 ## Spec & Plan
 

@@ -482,3 +482,68 @@ async def test_get_lineage_error_path_workflow_rid(execution_ctx, capturing_mcp,
     assert mock_audit.call_count == 0
 
 
+# ---------------------------------------------------------------------------
+# find_experiments (P2 hygiene sweep)
+# ---------------------------------------------------------------------------
+
+
+async def test_find_experiments_happy_path(execution_ctx, capturing_mcp, mock_ml):
+    """``deriva_ml_find_experiments`` returns execution summaries for
+    executions that have Hydra config assets.
+
+    The tool calls ``ml.find_experiments()`` (catalog scan for
+    ``*-config.yaml`` in Execution_Metadata), then resolves each
+    ``Experiment.execution_rid`` via ``ml.lookup_execution`` to build
+    the summary. The response shape is the same as
+    ``deriva_ml_list_executions``.
+    """
+    exp_a = MagicMock()
+    exp_a.execution_rid = "1-EXPA"
+    exp_b = MagicMock()
+    exp_b.execution_rid = "1-EXPB"
+
+    mock_ml.find_experiments.return_value = [exp_a, exp_b]
+    mock_ml.lookup_execution.side_effect = lambda rid: _make_execution_record_mock(
+        rid=rid, status=ExecutionStatus.Uploaded
+    )
+
+    result = await capturing_mcp.tools["deriva_ml_find_experiments"](
+        hostname="h", catalog_id="1"
+    )
+    out = json.loads(result)
+
+    assert out["count"] == 2
+    assert out["truncated"] is False
+    rids = [e["rid"] for e in out["executions"]]
+    assert "1-EXPA" in rids
+    assert "1-EXPB" in rids
+    assert all(e["status"] == "Uploaded" for e in out["executions"])
+    mock_ml.find_experiments.assert_called_once_with(workflow_rid=None, status=None)
+
+
+async def test_find_experiments_preflight_count(execution_ctx, capturing_mcp, mock_ml):
+    """``preflight_count=True`` returns ``{"total_count": N, ...}``."""
+    exp = MagicMock()
+    exp.execution_rid = "1-EXPA"
+    mock_ml.find_experiments.return_value = [exp]
+
+    result = await capturing_mcp.tools["deriva_ml_find_experiments"](
+        hostname="h", catalog_id="1", preflight_count=True
+    )
+    out = json.loads(result)
+    assert out["total_count"] == 1
+    assert out["entities_fetched"] is False
+    assert "action_required" in out
+
+
+async def test_find_experiments_error_path(execution_ctx, capturing_mcp, mock_ml):
+    """``ml.find_experiments`` raising wraps as ``{"error": ...}`` without
+    an audit row (read-only tool, silent on failure)."""
+    mock_ml.find_experiments.side_effect = RuntimeError("catalog unreachable")
+    with _patch_execution_audit() as mock_audit:
+        result = await capturing_mcp.tools["deriva_ml_find_experiments"](
+            hostname="h", catalog_id="1"
+        )
+    out = json.loads(result)
+    assert "error" in out
+    assert mock_audit.call_count == 0
