@@ -1,5 +1,7 @@
 # Phase 5 — Execution domain analysis (scratch)
 
+> **STATUS: DEFERRED (2026-05-24).** The `commit_execution` MCP tool proposed in this document is **permanently deferred** in favor of a future `work-with-executions` skill in [deriva-ml-skills](https://github.com/informatics-isi-edu/deriva-ml-skills). Per the v0.5.0 stateless-MCP architectural rule (see [CLAUDE.md](../../CLAUDE.md) and [`docs/superpowers/notes/audit-2026-05-23.md`](../superpowers/notes/audit-2026-05-23.md)), execution lifecycle does not belong on the MCP wire — it composes only at the caller's local Python where the asset manifest + SQLite registry live. This document is preserved as **historical design context** showing what a hypothetical MCP-side commit tool would have needed to do (including the bug-fix call-sequence per ADR-0009 on the deriva-ml side); it is **NOT a roadmap**.
+
 > **Status note (2026-05-24):** This analysis was originally drafted
 > against deriva-ml's pre-v1.39 surface. Updated 2026-05-24 to reflect
 > the unified `commit_output_assets` surface that shipped in deriva-ml
