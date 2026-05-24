@@ -48,6 +48,8 @@ from deriva_ml_mcp._response_models import (
     DeleteFeatureResponse,
     FeatureListResponse,
     FeatureSummary,
+    FeatureValueListResponse,
+    FeatureValueRecord,
     PreflightCountResponse,
 )
 from deriva_ml_mcp.ml_context import get_ml
@@ -481,15 +483,20 @@ def register(ctx: PluginContext) -> None:
                 limit=capped,
                 key=lambda r: getattr(r, "RID", "") or "",
             )
-            return json.dumps(
-                {
-                    "records": [r.model_dump() for r in page],
-                    "count": len(page),
-                    "truncated": truncated,
-                    "next_after_rid": next_after,
-                },
-                default=str,
-            )
+            # Validate each record into FeatureValueRecord. The model
+            # declares the four stable provenance fields (RID, Execution,
+            # Feature_Name, RCT) and allows the feature's dynamic
+            # value / term / asset columns through under extra="allow".
+            # r.model_dump() preserves the same dict shape we previously
+            # emitted via json.dumps; constructing the model just
+            # type-checks the four stable fields and pins the wire
+            # contract for downstream consumers.
+            return FeatureValueListResponse(
+                records=[FeatureValueRecord(**r.model_dump()) for r in page],
+                count=len(page),
+                truncated=truncated,
+                next_after_rid=next_after,
+            ).model_dump_json(by_alias=True)
         except DerivaMLMaterializeLimitExceeded as exc:
             # Translate the deriva-ml exception to a clear error envelope.
             # The exception's __str__ already names the cap and suggests
