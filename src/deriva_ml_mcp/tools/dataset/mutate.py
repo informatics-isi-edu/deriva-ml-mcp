@@ -251,6 +251,7 @@ def register(ctx: PluginContext) -> None:
         members_by_table: dict[str, list[str]] | None = None,
         description: str = "",
         execution_rid: str | None = None,
+        validate: bool = True,
     ) -> str:
         """Add records (or whole datasets) as members of a dataset.
 
@@ -276,6 +277,10 @@ def register(ctx: PluginContext) -> None:
                 row's ``Description`` column. **Replaces** any prior
                 dev-period description rather than appending.
             execution_rid: Optional execution to attribute the change to.
+            validate: If True (default), validates that the member RIDs
+                exist in the catalog before inserting. Pass False to skip
+                validation for bulk inserts where RID existence is
+                already confirmed, trading safety for throughput.
 
         Returns:
             JSON string ``{"status": "added", "added_count",
@@ -323,6 +328,7 @@ def register(ctx: PluginContext) -> None:
                 await asyncio.to_thread(
                     ds.add_dataset_members,
                     members=members,
+                    validate=validate,
                     description=description,
                     execution_rid=execution_rid,
                 )
