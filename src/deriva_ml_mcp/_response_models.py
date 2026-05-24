@@ -340,16 +340,6 @@ class WorkflowSummary(BaseModel):
     description: str | None
 
 
-class WorkflowDetail(WorkflowSummary):
-    """Full Workflow detail. Produced by ``_get_workflow_impl``.
-
-    Currently shape-identical to ``WorkflowSummary`` (Workflows have
-    no extra detail-only fields today). Kept as a separate type so
-    detail-only fields can be added in future without touching the
-    summary shape.
-    """
-
-
 class WorkflowListResponse(_PaginationFields):
     """Paginated list of Workflows. Produced by ``_list_workflows_impl``."""
 

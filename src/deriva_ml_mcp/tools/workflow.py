@@ -45,7 +45,6 @@ from deriva_ml_mcp._response_models import (
     CreateWorkflowResponse,
     PreflightCountResponse,
     UpdateWorkflowResponse,
-    WorkflowDetail,
     WorkflowListResponse,
     WorkflowSummary,
 )
@@ -132,7 +131,7 @@ def _list_workflows_impl(
     )
 
 
-def _get_workflow_impl(ml: Any, workflow_rid: str) -> WorkflowDetail:
+def _get_workflow_impl(ml: Any, workflow_rid: str) -> WorkflowSummary:
     """Read one workflow's full summary.
 
     Args:
@@ -140,12 +139,15 @@ def _get_workflow_impl(ml: Any, workflow_rid: str) -> WorkflowDetail:
         workflow_rid: The RID of the workflow to look up.
 
     Returns:
-        ``WorkflowDetail`` -- see ``deriva_ml_mcp._response_models``.
-        (Currently shape-equivalent to ``WorkflowSummary``.)
+        ``WorkflowSummary`` -- see ``deriva_ml_mcp._response_models``.
+        The ``WorkflowDetail`` wrapper type was retired in the P2
+        hygiene sweep because it was shape-identical to
+        ``WorkflowSummary`` and had no detail-only fields.
+        Resources that previously returned ``WorkflowDetail`` now
+        return ``WorkflowSummary`` directly (same wire shape).
     """
     wf = ml.lookup_workflow(workflow_rid)
-    summary = _summarize_workflow(wf)
-    return WorkflowDetail(**summary.model_dump())
+    return _summarize_workflow(wf)
 
 
 def register(ctx: PluginContext) -> None:
