@@ -584,11 +584,14 @@ reach for:
               ``list_*`` (paginated) or ``get_*`` (single hit)
               depending on the search's arity.
 
-    create_ / update_ / delete_ / add_ / start_ / commit_ / abort_
+    create_ / update_ / delete_ / add_
               Mutating operations. Every one emits an audit row
               (success or ``_failed``). Mutating tools have NO
               resource counterpart -- resources are read-only by
-              MCP convention.
+              MCP convention. (Execution lifecycle verbs such as
+              ``start_`` / ``commit_`` / ``abort_`` are permanently
+              deferred to a future ``work-with-executions`` skill in
+              deriva-ml-skills; no such tools exist in this plugin.)
 
     lookup_*  Specialized RID-or-name resolution (currently only
               ``lookup_asset``). Treat as a sibling of ``get_*``.
