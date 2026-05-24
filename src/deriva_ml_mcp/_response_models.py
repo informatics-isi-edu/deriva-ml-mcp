@@ -670,6 +670,241 @@ class FeatureListResponse(_PaginationFields):
     features: list[FeatureSummary]
 
 
+class FeatureValueRecord(BaseModel):
+    """One feature-value row on a ``deriva_ml_list_feature_values`` page.
+
+    Mirrors the wire shape produced by ``FeatureRecord.model_dump()``
+    in ``deriva-ml`` (see ``deriva_ml.feature.FeatureRecord``). The
+    three stable provenance/identity fields are declared explicitly;
+    the remaining fields are the feature's term / asset / value
+    columns, whose names are dynamic per feature definition and so
+    flow through under ``extra="allow"``.
+
+    Stable fields (always present after deriva-ml's ``model_dump()``):
+
+    - ``RID`` -- RID of the feature-value row in the feature table.
+      Used as the pagination cursor by ``deriva_ml_list_feature_values``.
+    - ``Execution`` -- RID of the execution that wrote this record.
+      Provenance handle; ``None`` for legacy rows that predate
+      execution tracking.
+    - ``Feature_Name`` -- Name of the feature this record belongs to
+      (denormalized from the ``Feature_Name`` vocabulary join for
+      convenience).
+    - ``RCT`` -- Row Creation Time as an ISO 8601 string. Populated by
+      the catalog; used by ``select_newest`` for recency ordering.
+
+    Dynamic fields (vary per feature):
+
+    - The target column (e.g. ``Image``, ``Subject``) is the RID of
+      the target entity the feature attaches to.
+    - Term columns carry vocabulary-term RIDs.
+    - Asset columns carry asset-row RIDs.
+    - Value columns carry the raw column value (typed per the feature
+      definition).
+
+    ``extra="allow"`` is intentional: the alternative would be a
+    Pydantic class per feature definition (impractical at runtime). The
+    contract this model pins is the four stable fields + the fact that
+    a dynamic column set crosses the wire as a flat dict.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    RID: str | None = Field(
+        default=None,
+        description="RID of the feature-value row in the feature table.",
+    )
+    Execution: str | None = Field(
+        default=None,
+        description=(
+            "RID of the execution that wrote this record. ``None`` for "
+            "legacy rows that predate execution tracking."
+        ),
+    )
+    Feature_Name: str | None = Field(
+        default=None,
+        description="Name of the feature this record belongs to.",
+    )
+    RCT: str | None = Field(
+        default=None,
+        description=(
+            "Row Creation Time as an ISO 8601 string. Used by "
+            "``select_newest`` for recency ordering."
+        ),
+    )
+
+
+class FeatureValueListResponse(_PaginationFields):
+    """Paginated list of feature-value rows. Produced by
+    ``deriva_ml_list_feature_values``.
+
+    Each entry is a ``FeatureValueRecord`` -- four stable provenance
+    fields plus the feature's dynamic value / term / asset columns
+    flowing through under ``extra="allow"``.
+    """
+
+    records: list[FeatureValueRecord]
+
+
+# ---------------------------------------------------------------------------
+# Denormalize response models (v0.5.x sweep)
+# ---------------------------------------------------------------------------
+#
+# ``deriva_ml_denormalize_dataset`` has four legitimate response shapes
+# discriminated by the ``mode`` field, mirroring the underlying split
+# between catalog-wide estimation (``ml.estimate_denormalized_size``)
+# and dataset-scoped describe / fetch (``Dataset.describe_denormalized``,
+# ``Dataset.get_denormalized_as_dict``):
+#
+# - ``catalog_shape`` — catalog-wide size estimate; no rows.
+# - ``dataset_shape`` — dataset-scoped describe plan; no rows.
+# - ``dataset_rows`` — dataset-scoped describe + paginated rows.
+# - ``dataset_preflight_required`` — 10x guard short-circuit when the
+#   estimated row count is wildly larger than the requested limit.
+#
+# The ``dataset_preflight`` mode (returned when the caller passes
+# ``preflight_count=True``) reuses ``PreflightCountResponse`` with the
+# extra ``mode`` and ``dataset_rid`` context fields, so it is not
+# modeled separately here.
+#
+# Both ``dataset_shape`` and ``dataset_rows`` embed the 12-key plan
+# returned by ``Denormalizer.describe`` (see
+# ``deriva_ml/local_db/denormalizer.py``). The plan's inner dicts
+# (``estimated_row_count``, ``anchors``, per-table info, ambiguity
+# entries) are typed as ``dict[str, Any]`` because the denormalizer
+# layer documents them as best-effort dry-run output that may carry
+# extra contextual keys (e.g., ``reason`` on ``estimated_row_count``
+# when downstream-anchor cardinality is unknown).
+
+
+class DenormalizeTableStats(BaseModel):
+    """Per-table stats in the catalog-shape response's ``tables`` map.
+
+    Produced by ``ml.estimate_denormalized_size`` for each table in
+    the catalog-wide join. ``asset_bytes`` is 0 for non-asset tables.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    row_count: int
+    is_asset: bool
+    asset_bytes: int
+
+
+class DenormalizeCatalogShapeResponse(BaseModel):
+    """Response shape for the catalog-wide size-estimate branch.
+
+    Produced when ``deriva_ml_denormalize_dataset`` is called without
+    a ``dataset_rid`` -- the tool wraps ``ml.estimate_denormalized_size``
+    and tags the result with ``mode="catalog_shape"`` + the original
+    ``include_tables`` echo.
+
+    ``columns`` is a list of ``(column_name, column_type)`` 2-element
+    lists -- JSON has no tuples, so the wire emits a list. The upstream
+    method returns tuples; the JSON serializer flattens them.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["catalog_shape"]
+    include_tables: list[str]
+    columns: list[list[str]]
+    join_path: list[str]
+    tables: dict[str, DenormalizeTableStats]
+    total_rows: int
+    total_asset_bytes: int
+    total_asset_size: str
+
+
+class _DenormalizeDatasetShapeFields(BaseModel):
+    """Shared fields for the two dataset-scoped describe responses.
+
+    ``dataset_shape`` and ``dataset_rows`` both embed the 12-key plan
+    returned by ``Denormalizer.describe``. The plan keys are declared
+    here so the two response models share them without inheritance
+    overhead at the discriminator level.
+
+    The inner-dict fields (``estimated_row_count``, ``anchors``,
+    ambiguity entries) are typed as ``dict[str, Any]`` rather than
+    sub-models because the denormalizer is explicit that they may
+    carry contextual extra keys (e.g., a ``reason`` field on
+    ``estimated_row_count`` when downstream-anchor cardinality is
+    unknown). Pinning those shapes here would force a contract change
+    every time the denormalizer adds explanatory keys.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_rid: str
+    version: str | None
+    # The 12 keys spread from Denormalizer.describe():
+    row_per: str | None
+    row_per_source: str
+    row_per_candidates: list[str]
+    columns: list[list[str]]
+    include_tables: list[str]
+    via: list[str]
+    join_path: list[str]
+    transparent_intermediates: list[str]
+    ambiguities: list[dict[str, Any]]
+    estimated_row_count: dict[str, Any]
+    anchors: dict[str, Any]
+    source: str
+
+
+class DenormalizeDatasetShapeResponse(_DenormalizeDatasetShapeFields):
+    """Response shape for the dataset-scoped describe-only branch.
+
+    Returned when ``deriva_ml_denormalize_dataset`` is called with a
+    ``dataset_rid`` and ``limit=0`` (default). Carries the full 12-key
+    describe plan + the dataset RID and (optional) version. No rows.
+    """
+
+    mode: Literal["dataset_shape"]
+
+
+class DenormalizeDatasetPageResponse(_DenormalizeDatasetShapeFields):
+    """Response shape for the dataset-scoped describe + rows branch.
+
+    Returned when ``deriva_ml_denormalize_dataset`` is called with a
+    ``dataset_rid`` and ``limit > 0`` and the estimated row count
+    passes the 10x guard. Carries the full 12-key describe plan, the
+    dataset RID and (optional) version, AND a paginated row page.
+
+    The ``rows`` field is intentionally ``list[dict[str, Any]]``: each
+    row is a denormalized join across user-defined tables, so the
+    column schema is user-defined and cannot be modeled at the
+    response-shape layer. The ``columns`` field on the describe plan
+    documents the schema for any given call.
+    """
+
+    mode: Literal["dataset_rows"]
+    rows: list[dict[str, Any]]
+    returned_count: int
+    truncated: bool
+    next_after_rid: str | None
+
+
+class DenormalizePreflightRequiredResponse(BaseModel):
+    """10x-guard short-circuit response.
+
+    Returned when ``deriva_ml_denormalize_dataset`` would refuse to
+    drain the generator because the estimated row count exceeds 10x
+    the requested limit. The caller is routed back through
+    ``preflight_count=True`` to confirm the cost before retrying with
+    a larger limit (or accepting the OOM risk).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["dataset_preflight_required"]
+    dataset_rid: str
+    estimated_row_count: int
+    requested_limit: int
+    entities_fetched: bool = False
+    action_required: str
+
+
 # ---------------------------------------------------------------------------
 # Asset response models
 # ---------------------------------------------------------------------------

@@ -58,6 +58,11 @@ from deriva_ml_mcp._helpers import (
     _row_rid_for,
 )
 from deriva_ml_mcp._response_models import (
+    DenormalizeCatalogShapeResponse,
+    DenormalizeDatasetPageResponse,
+    DenormalizeDatasetShapeResponse,
+    DenormalizePreflightRequiredResponse,
+    DenormalizeTableStats,
     PreflightCountResponse,
 )
 
@@ -172,14 +177,23 @@ def register(ctx: PluginContext) -> None:
                     estimate = await asyncio.to_thread(
                         ml.estimate_denormalized_size, include_tables
                     )
-                return json.dumps(
-                    {
-                        "mode": "catalog_shape",
-                        "include_tables": include_tables,
-                        **estimate,
+                # Coerce upstream column tuples to lists for JSON
+                # compatibility and validate per-table stats through the
+                # typed sub-model. The wire shape stays identical to
+                # the previous json.dumps(..., default=str) emission.
+                return DenormalizeCatalogShapeResponse(
+                    mode="catalog_shape",
+                    include_tables=list(include_tables),
+                    columns=[list(c) for c in estimate["columns"]],
+                    join_path=list(estimate["join_path"]),
+                    tables={
+                        name: DenormalizeTableStats(**stats)
+                        for name, stats in estimate["tables"].items()
                     },
-                    default=str,
-                )
+                    total_rows=estimate["total_rows"],
+                    total_asset_bytes=estimate["total_asset_bytes"],
+                    total_asset_size=estimate["total_asset_size"],
+                ).model_dump_json(by_alias=True)
 
             # Dataset mode.
             capped = min(max(limit, 0), _MAX_LIMIT)
@@ -214,23 +228,20 @@ def register(ctx: PluginContext) -> None:
                 if capped > 0 and not preflight_count:
                     estimated = desc.get("estimated_row_count", {}).get("total")
                     if estimated is not None and estimated > 10 * capped:
-                        return json.dumps(
-                            {
-                                "mode": "dataset_preflight_required",
-                                "dataset_rid": dataset_rid,
-                                "estimated_row_count": estimated,
-                                "requested_limit": capped,
-                                "entities_fetched": False,
-                                "action_required": (
-                                    f"Estimated {estimated} rows is more than "
-                                    f"10x the requested limit ({capped}). "
-                                    "Call again with preflight_count=True to "
-                                    "confirm the count, then choose a larger "
-                                    "limit or accept the cost before retrying."
-                                ),
-                            },
-                            default=str,
-                        )
+                        return DenormalizePreflightRequiredResponse(
+                            mode="dataset_preflight_required",
+                            dataset_rid=dataset_rid,
+                            estimated_row_count=estimated,
+                            requested_limit=capped,
+                            entities_fetched=False,
+                            action_required=(
+                                f"Estimated {estimated} rows is more than "
+                                f"10x the requested limit ({capped}). "
+                                "Call again with preflight_count=True to "
+                                "confirm the count, then choose a larger "
+                                "limit or accept the cost before retrying."
+                            ),
+                        ).model_dump_json(by_alias=True)
 
                     # itertools.islice puts a hard upper bound on
                     # generator materialization; we read at most
@@ -284,16 +295,32 @@ def register(ctx: PluginContext) -> None:
                     dataset_rid=dataset_rid,
                 ).model_dump_json(by_alias=True)
 
+            # Build the 12-key plan kwargs shared by both dataset-scoped
+            # response shapes. Describe returns column specs as tuples;
+            # JSON has no tuple type, so coerce to lists for the wire
+            # contract (Pydantic models declare list[list[str]] columns).
+            plan_kwargs = {
+                "dataset_rid": dataset_rid,
+                "version": version,
+                "row_per": desc.get("row_per"),
+                "row_per_source": desc["row_per_source"],
+                "row_per_candidates": list(desc.get("row_per_candidates", [])),
+                "columns": [list(c) for c in desc.get("columns", [])],
+                "include_tables": list(desc.get("include_tables", [])),
+                "via": list(desc.get("via", [])),
+                "join_path": list(desc.get("join_path", [])),
+                "transparent_intermediates": list(desc.get("transparent_intermediates", [])),
+                "ambiguities": list(desc.get("ambiguities", [])),
+                "estimated_row_count": dict(desc.get("estimated_row_count", {})),
+                "anchors": dict(desc.get("anchors", {})),
+                "source": desc.get("source", "local"),
+            }
+
             if rows is None:
-                return json.dumps(
-                    {
-                        "mode": "dataset_shape",
-                        "dataset_rid": dataset_rid,
-                        "version": version,
-                        **desc,
-                    },
-                    default=str,
-                )
+                return DenormalizeDatasetShapeResponse(
+                    mode="dataset_shape",
+                    **plan_kwargs,
+                ).model_dump_json(by_alias=True)
 
             # Sort + paginate rows by their RID-bearing column.
             row_rid = _row_rid_for(row_per_effective)
@@ -301,19 +328,14 @@ def register(ctx: PluginContext) -> None:
             page, truncated, next_after = _paginate(
                 sorted_rows, after_rid=after_rid, limit=capped, key=row_rid
             )
-            return json.dumps(
-                {
-                    "mode": "dataset_rows",
-                    "dataset_rid": dataset_rid,
-                    "version": version,
-                    **desc,
-                    "rows": page,
-                    "returned_count": len(page),
-                    "truncated": truncated,
-                    "next_after_rid": next_after,
-                },
-                default=str,
-            )
+            return DenormalizeDatasetPageResponse(
+                mode="dataset_rows",
+                rows=page,
+                returned_count=len(page),
+                truncated=truncated,
+                next_after_rid=next_after,
+                **plan_kwargs,
+            ).model_dump_json(by_alias=True)
         except Exception as exc:
             # Read-only tool: log+return without an audit row (I-2 fix).
             return _error_envelope(
