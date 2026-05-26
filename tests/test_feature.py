@@ -394,6 +394,214 @@ async def test_list_feature_values_default_max_results_passed(feature_ctx, captu
     assert mock_ml.feature_values.call_args.kwargs.get("materialize_limit") == 50_000
 
 
+async def test_list_feature_values_records_carry_rid(feature_ctx, capturing_mcp, mock_ml):
+    """Each returned record carries a non-null ``RID``.
+
+    Regression for the curator/02 finding from the 2026-05-26 e2e run
+    (``deriva-ml-model-template-e2e/findings/curator/02-feature-values-
+    next-after-rid-empty-string.md``): prior to the deriva-ml fix that
+    added ``RID`` to ``FeatureRecord``, every returned record had
+    ``RID: null`` because the projection dropped the system column.
+    This test pins that records arrive with a non-null RID.
+    """
+    recs = [_make_record_mock(f"1-{i:04d}", Image_Class="cat") for i in range(3)]
+    mock_ml.feature_values.return_value = iter(recs)
+
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_list_feature_values"](
+            hostname="h", catalog_id="1", table="Image", feature_name="Quality"
+        )
+    )
+    assert out["count"] == 3
+    for record in out["records"]:
+        assert record["RID"] is not None, f"record is missing RID: {record}"
+        assert isinstance(record["RID"], str)
+
+
+async def test_list_feature_values_cursor_advances(feature_ctx, capturing_mcp, mock_ml):
+    """Pagination cursor advances — page 1 and page 2 are disjoint.
+
+    Regression for the curator/02 finding from the 2026-05-26 e2e run
+    (``deriva-ml-model-template-e2e/findings/curator/02-feature-values-
+    next-after-rid-empty-string.md``): before the fix, ``next_after_rid``
+    came back as ``""`` because the records had no ``RID`` attribute, so
+    the cursor never advanced and the caller looped on page 1 forever.
+    This test pins the contract: when ``truncated`` is True the
+    ``next_after_rid`` is a real RID, and passing it as ``after_rid``
+    on the next call returns the next page disjoint from the first.
+    """
+    # 10 records, page size 4 -> 3 pages of (4, 4, 2).
+    all_recs = [_make_record_mock(f"1-{i:04d}") for i in range(10)]
+    mock_ml.feature_values.return_value = iter(all_recs)
+
+    page1 = json.loads(
+        await capturing_mcp.tools["deriva_ml_list_feature_values"](
+            hostname="h", catalog_id="1", table="Image", feature_name="Quality", limit=4
+        )
+    )
+    assert page1["count"] == 4
+    assert page1["truncated"] is True
+    assert page1["next_after_rid"] is not None
+    assert page1["next_after_rid"] != ""
+    assert page1["next_after_rid"] == page1["records"][-1]["RID"]
+
+    # Reset the iterator for the second call (the mock returns a fresh iter).
+    mock_ml.feature_values.return_value = iter(all_recs)
+    page2 = json.loads(
+        await capturing_mcp.tools["deriva_ml_list_feature_values"](
+            hostname="h",
+            catalog_id="1",
+            table="Image",
+            feature_name="Quality",
+            limit=4,
+            after_rid=page1["next_after_rid"],
+        )
+    )
+    assert page2["count"] == 4
+    page1_rids = {r["RID"] for r in page1["records"]}
+    page2_rids = {r["RID"] for r in page2["records"]}
+    assert page1_rids.isdisjoint(page2_rids), (
+        f"page 1 and page 2 overlap: {page1_rids & page2_rids}"
+    )
+
+
+async def test_list_feature_values_next_after_rid_is_none_when_not_truncated(
+    feature_ctx, capturing_mcp, mock_ml
+):
+    """``next_after_rid`` is ``None`` (not ``""``) when the page is not truncated.
+
+    Companion to ``test_list_feature_values_cursor_advances`` -- pins the
+    other half of the curator/02 finding: when there's no next page, the
+    cursor field must be JSON ``null`` so callers can use the standard
+    "while next_after_rid is not None" pagination idiom.
+    """
+    recs = [_make_record_mock(f"1-{i:04d}") for i in range(3)]
+    mock_ml.feature_values.return_value = iter(recs)
+
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_list_feature_values"](
+            hostname="h", catalog_id="1", table="Image", feature_name="Quality", limit=100
+        )
+    )
+    assert out["count"] == 3
+    assert out["truncated"] is False
+    assert out["next_after_rid"] is None
+
+
+async def test_list_feature_values_enriches_records_when_upstream_missing_rid(
+    feature_ctx, capturing_mcp, mock_ml
+):
+    """Records arriving with ``RID=None`` are enriched via a second pathBuilder query.
+
+    Reproduces the curator/02 finding scenario directly: the upstream
+    ``ml.feature_values()`` returns records with ``RID=None`` because
+    deriva-ml's ``FeatureRecord`` projection drops the system column.
+    The MCP layer notices, queries the feature table again to map
+    ``(Execution, target_rid, RCT) -> RID``, and attaches the row's
+    RID to each record before pagination.
+    """
+
+    # Build records that look like what upstream ml.feature_values()
+    # produces today: RID=None on the mock, the (Execution, Image, RCT)
+    # triple exposed via attribute access for the enrichment lookup.
+    def _no_rid_record(execution: str, image: str, rct: str) -> MagicMock:
+        rec = MagicMock()
+        rec.RID = None
+        rec.Execution = execution
+        rec.Image = image
+        rec.RCT = rct
+        rec.model_dump.return_value = {
+            "RID": None,
+            "Feature_Name": "Image_Classification",
+            "Execution": execution,
+            "Image": image,
+            "RCT": rct,
+            "Image_Class": "cat",
+        }
+        return rec
+
+    upstream_recs = [
+        _no_rid_record("EXEC-1", "IMG-1", "2026-01-01T00:00:01Z"),
+        _no_rid_record("EXEC-1", "IMG-2", "2026-01-01T00:00:02Z"),
+    ]
+    mock_ml.feature_values.return_value = iter(upstream_recs)
+
+    # Stand up the pathBuilder shape the enricher walks: ml.pathBuilder()
+    # -> .schemas[<schema>].tables[<feature_table>].entities().fetch()
+    # returns dicts with RID + Execution + Image + RCT.
+    feature_obj = _make_feature_mock(
+        feature_name="Image_Classification",
+        target_table_name="Image",
+        feature_table_name="Execution_Image_Image_Classification",
+    )
+    feature_obj.feature_table.schema = MagicMock()
+    feature_obj.feature_table.schema.name = "deriva-ml"
+    mock_ml.lookup_feature.return_value = feature_obj
+
+    raw_rows = [
+        {
+            "RID": "FV-1",
+            "Execution": "EXEC-1",
+            "Image": "IMG-1",
+            "RCT": "2026-01-01T00:00:01Z",
+        },
+        {
+            "RID": "FV-2",
+            "Execution": "EXEC-1",
+            "Image": "IMG-2",
+            "RCT": "2026-01-01T00:00:02Z",
+        },
+    ]
+    pb = MagicMock()
+    pb.schemas.__getitem__.return_value.tables.__getitem__.return_value.entities.return_value.fetch.return_value = iter(
+        raw_rows
+    )
+    mock_ml.pathBuilder.return_value = pb
+
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_list_feature_values"](
+            hostname="h",
+            catalog_id="1",
+            table="Image",
+            feature_name="Image_Classification",
+        )
+    )
+    assert out["count"] == 2
+    rids_returned = {r["RID"] for r in out["records"]}
+    assert rids_returned == {"FV-1", "FV-2"}, (
+        f"expected enrichment to attach FV-1/FV-2, got {rids_returned}"
+    )
+    # Cursor field is None when not truncated.
+    assert out["truncated"] is False
+    assert out["next_after_rid"] is None
+
+
+async def test_list_feature_values_drops_records_without_rid(feature_ctx, capturing_mcp, mock_ml):
+    """Records arriving without a ``RID`` attribute are dropped.
+
+    Defensive: in old deriva-ml versions (pre-1.40) ``FeatureRecord``
+    didn't carry ``RID``. The MCP tool now refuses to surface such
+    records to the wire because the caller cannot correlate them with
+    the catalog and the cursor would degenerate to ``""``. Once every
+    pinned deriva-ml is fixed this branch becomes unreachable -- the
+    test stays as a guardrail.
+    """
+    good = _make_record_mock("1-AAAA")
+    # A record whose RID attribute is None — the upstream bug shape.
+    bad = MagicMock()
+    bad.RID = None
+    bad.model_dump.return_value = {"RID": None, "Feature_Name": "Quality"}
+    mock_ml.feature_values.return_value = iter([good, bad])
+
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_list_feature_values"](
+            hostname="h", catalog_id="1", table="Image", feature_name="Quality"
+        )
+    )
+    assert out["count"] == 1
+    assert out["records"][0]["RID"] == "1-AAAA"
+
+
 async def test_list_feature_values_max_results_translates_to_error_envelope(
     feature_ctx, capturing_mcp, mock_ml
 ):
@@ -539,5 +747,3 @@ async def test_delete_feature_failure_emits_failed_audit(feature_ctx, capturing_
     failed = _success_calls(mock_audit, "deriva_ml_delete_feature_failed")
     assert failed
     assert failed[0].kwargs["error_type"] == "RuntimeError"
-
-

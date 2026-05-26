@@ -123,6 +123,92 @@ def _list_features_impl(
     )
 
 
+def _enrich_records_with_rid(
+    ml: Any,
+    records: list[Any],
+    table: str,
+    feature_name: str,
+) -> list[Any]:
+    """Attach each record's row ``RID`` from the feature table.
+
+    Workaround for the projection in
+    ``deriva_ml.core.mixins.feature.FeatureMixin.feature_values`` (line
+    ~514): the upstream projects raw rows onto the dynamic record class
+    built from ``feature_columns + asset_columns + value_columns``,
+    which excludes system columns (``RID``, ``RMB``, ``RMT``, etc.).
+    For the pagination cursor and to let callers correlate rows back
+    to the catalog, the MCP layer needs ``RID`` on every record. See
+    ``deriva-ml-model-template-e2e/findings/curator/02-feature-values-
+    next-after-rid-empty-string.md`` for the discovery and downstream
+    impact.
+
+    Strategy: do a second light-weight pathBuilder query against the
+    feature table for ``(RID, Execution, target_col, RCT)`` tuples,
+    build an ``(Execution, target_rid, RCT) -> RID`` map, and attach
+    ``.RID`` to each input record. Each tuple is unique by
+    construction (one row per execution + one target + one
+    creation-time), so the map is well-defined; in the rare case of
+    a collision the first-seen RID wins.
+
+    Args:
+        ml: A connected ``DerivaML`` instance.
+        records: Records returned by ``ml.feature_values()`` /
+            ``ds.feature_values()`` -- mutated in place to set
+            ``.RID`` on each entry (records whose ``(Execution,
+            target_rid, RCT)`` triple isn't found in the second
+            query remain ``RID=None`` and are dropped by the caller).
+        table: Target table name -- needed to resolve the target FK
+            column.
+        feature_name: Name of the feature being queried.
+
+    Returns:
+        The same ``records`` list, with each surviving record's RID
+        populated via ``object.__setattr__`` (pydantic model instances
+        allow attribute-set under ``model_config['extra']``-agnostic
+        rules; we use ``setattr`` for portability across the dynamic
+        record class shapes used by ``feature_values()``).
+
+    Note:
+        Forward-compatible with the upstream fix: once ``FeatureRecord``
+        carries its own ``RID`` field (and ``feature_values()`` projects
+        it through), the caller skips this enrichment entirely -- it
+        only runs when ``records[0].RID is None``.
+    """
+    if not records:
+        return records
+
+    feat = ml.lookup_feature(table, feature_name)
+    target_col = feat.target_table.name
+    pb = ml.pathBuilder()
+    feature_path = pb.schemas[feat.feature_table.schema.name].tables[feat.feature_table.name]
+    # Fetch the full raw rows; we only need (RID, Execution, target_col,
+    # RCT) but the path builder's projection surface varies across
+    # deriva-py versions, and the cost difference is negligible for the
+    # feature-table sizes the MCP tool serves (bounded by max_results).
+    rid_map: dict[tuple[str | None, str | None, str | None], str] = {}
+    for raw in feature_path.entities().fetch():
+        key = (raw.get("Execution"), raw.get(target_col), raw.get("RCT"))
+        rid_map.setdefault(key, raw.get("RID"))
+
+    for rec in records:
+        key = (
+            getattr(rec, "Execution", None),
+            getattr(rec, target_col, None),
+            getattr(rec, "RCT", None),
+        )
+        rid = rid_map.get(key)
+        if rid is not None:
+            # ``object.__setattr__`` bypasses pydantic v2's field
+            # validation. We've enriched the upstream record with the
+            # row's own RID -- the field is not declared on the dynamic
+            # record class (because deriva-ml excludes it from
+            # ``feature_columns``), so a plain ``setattr`` would raise
+            # under ``model_config['extra'] = 'forbid'``.
+            object.__setattr__(rec, "RID", rid)
+
+    return records
+
+
 def register(ctx: PluginContext) -> None:
     """Register all feature domain tools with the plugin context.
 
@@ -461,6 +547,19 @@ def register(ctx: PluginContext) -> None:
 
                     records = await asyncio.to_thread(_drain_ml_feature_values)
 
+                # If upstream records don't carry their own ``RID``
+                # (pre-fix deriva-ml ``FeatureRecord`` -- see
+                # ``deriva-ml-model-template-e2e/findings/curator/02-
+                # feature-values-next-after-rid-empty-string.md``), enrich
+                # them with a second pathBuilder query that maps each
+                # ``(Execution, target_col, RCT)`` tuple to its row RID.
+                # Skipped entirely when records already have RID --
+                # forward-compatible with the upstream fix.
+                if records and getattr(records[0], "RID", None) is None:
+                    records = await asyncio.to_thread(
+                        _enrich_records_with_rid, ml, records, table, feature_name
+                    )
+
             if preflight_count:
                 total = len(records)
                 return PreflightCountResponse(
@@ -472,27 +571,42 @@ def register(ctx: PluginContext) -> None:
                     ),
                 ).model_dump_json(by_alias=True)
 
-            # Sort by RID for stable pagination. Records are pydantic
-            # FeatureRecord instances; their RID lives at the .RID
-            # attribute (catalog convention).
-            sorted_records = sorted(records, key=lambda r: getattr(r, "RID", "") or "")
+            # Sort by RID for stable pagination. Records may be pydantic
+            # FeatureRecord instances (from ``ml.feature_values()``) or
+            # plain MagicMocks in tests. Either way ``RID`` is exposed
+            # via ``getattr`` -- on real records it's set by
+            # ``_enrich_records_with_rid`` above, on test mocks it's
+            # set on the mock directly. Drop any record whose RID is
+            # missing -- without it the cursor cannot advance and the
+            # caller cannot correlate the row back to the catalog.
+            # See ``deriva-ml-model-template-e2e/findings/curator/02-
+            # feature-values-next-after-rid-empty-string.md`` for the
+            # discovery and the upstream gap that drove the enrichment
+            # workaround.
+            with_rid = [(getattr(r, "RID", None), r) for r in records]
+            with_rid = [(rid, r) for rid, r in with_rid if rid is not None]
+            sorted_records = sorted(with_rid, key=lambda pair: pair[0])
             capped = min(max(limit, 0), _MAX_LIMIT)
             page, truncated, next_after = _paginate(
                 sorted_records,
                 after_rid=after_rid,
                 limit=capped,
-                key=lambda r: getattr(r, "RID", "") or "",
+                key=lambda pair: pair[0],
             )
-            # Validate each record into FeatureValueRecord. The model
-            # declares the four stable provenance fields (RID, Execution,
-            # Feature_Name, RCT) and allows the feature's dynamic
-            # value / term / asset columns through under extra="allow".
-            # r.model_dump() preserves the same dict shape we previously
-            # emitted via json.dumps; constructing the model just
-            # type-checks the four stable fields and pins the wire
-            # contract for downstream consumers.
+            # Build each wire record by merging the upstream
+            # ``model_dump()`` payload with the row's RID. We can't
+            # rely on ``model_dump()`` to surface RID -- the dynamic
+            # record class returned by ``feature_record_class()`` is
+            # built from ``feature_columns`` only (excludes system
+            # columns) and ``extra='forbid'`` is inherited from
+            # ``FeatureRecord``. The enrichment step uses
+            # ``object.__setattr__`` to attach RID, so attribute access
+            # works but ``model_dump()`` skips it. Inject it explicitly
+            # here. ``FeatureValueRecord`` declares ``RID`` as a stable
+            # field and allows the feature's dynamic columns through
+            # under ``extra="allow"``.
             return FeatureValueListResponse(
-                records=[FeatureValueRecord(**r.model_dump()) for r in page],
+                records=[FeatureValueRecord(**{**r.model_dump(), "RID": rid}) for rid, r in page],
                 count=len(page),
                 truncated=truncated,
                 next_after_rid=next_after,
@@ -583,9 +697,7 @@ def register(ctx: PluginContext) -> None:
                 # create_feature returns the FeatureRecord subclass, not
                 # the Feature schema. Re-look up the Feature for the
                 # response shape.
-                feature = await asyncio.to_thread(
-                    ml.lookup_feature, target_table, feature_name
-                )
+                feature = await asyncio.to_thread(ml.lookup_feature, target_table, feature_name)
                 summary = _summarize_feature(feature)
             audit_event(
                 "deriva_ml_create_feature",
