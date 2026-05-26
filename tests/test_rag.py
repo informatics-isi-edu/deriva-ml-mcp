@@ -1031,13 +1031,15 @@ def test_reindex_workflow_writes_one_per_rid_source() -> None:
 
     fake_ml = MagicMock()
     fake_wf = MagicMock()
-    fake_wf.rid = "1-WFAA"
+    # ``Workflow.rid`` -> ``workflow_rid`` (deriva-ml #226, 2026-05-25).
+    fake_wf.workflow_rid = "1-WFAA"
     fake_wf.name = "MyPipe"
     fake_wf.url = "https://example/repo"
     fake_wf.checksum = "abc"
     fake_wf.version = "1.0.0"
     fake_wf.workflow_type = ["Model_Training"]
     fake_wf.description = "demo"
+    del fake_wf.rid
     fake_ml.lookup_workflow.return_value = fake_wf
 
     captured: dict[str, Any] = {}

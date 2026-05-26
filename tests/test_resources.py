@@ -88,13 +88,15 @@ def _make_workflow_mock(
     description: str = "",
 ) -> MagicMock:
     wf = MagicMock()
-    wf.rid = rid
+    # ``Workflow.rid`` -> ``workflow_rid`` (deriva-ml #226, 2026-05-25).
+    wf.workflow_rid = rid
     wf.name = name
     wf.workflow_type = workflow_type or ["Model_Training"]
     wf.url = url
     wf.checksum = checksum
     wf.version = version
     wf.description = description
+    del wf.rid  # match the real model's missing attribute
     return wf
 
 
@@ -109,7 +111,8 @@ def _make_execution_record_mock(
     record.execution_rid = rid
     record.workflow_rid = workflow_rid
     workflow = MagicMock()
-    workflow.rid = workflow_rid
+    workflow.workflow_rid = workflow_rid
+    del workflow.rid
     record.workflow = workflow
     record.status = ExecutionStatus.Stopped
     record.description = description

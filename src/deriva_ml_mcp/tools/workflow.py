@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from deriva_mcp_core import deriva_call
@@ -39,7 +38,6 @@ from deriva_ml_mcp._helpers import (
     _MAX_LIMIT,
     _error_envelope,
     _paginate,
-    _read_rid,
 )
 from deriva_ml_mcp._response_models import (
     CreateWorkflowResponse,
@@ -52,6 +50,53 @@ from deriva_ml_mcp.ml_context import get_ml
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
+
+
+def _resolve_workflow_rid(wf: Any) -> str | None:
+    """Resolve the RID of a Workflow object, with a defensive recovery path.
+
+    Same root cause as ``tools.execution.read._resolve_workflow_rid``:
+    deriva-ml #226 renamed the field from ``rid`` to ``workflow_rid``
+    but its two construction sites (``find_workflows``,
+    ``lookup_workflow``) still pass the OLD kwarg name. Pydantic's
+    permissive config silently drops the value, leaving
+    ``workflow.workflow_rid == None`` on every Workflow returned by
+    either API.
+
+    Fast path: if ``wf.workflow_rid`` is populated, return it. Recovery
+    path: if the workflow is bound to a catalog (``_ml_instance``)
+    and carries either ``checksum`` or ``url``, call
+    ``ml._find_workflow_rid_by_url(checksum_or_url)`` to look the RID
+    up. That helper is server-side filtered (single round trip with
+    one row in the response) so the recovery cost is bounded.
+
+    Args:
+        wf: A ``deriva_ml.execution.workflow.Workflow`` instance, or a
+            Mock-shaped stand-in.
+
+    Returns:
+        The Workflow RID, or None if recovery wasn't possible.
+
+    Example:
+        >>> from unittest.mock import MagicMock
+        >>> wf = MagicMock()
+        >>> wf.workflow_rid = "1-WF"
+        >>> _resolve_workflow_rid(wf)
+        '1-WF'
+    """
+    rid = getattr(wf, "workflow_rid", None)
+    if rid:
+        return rid
+    ml = getattr(wf, "_ml_instance", None)
+    if ml is None:
+        return None
+    lookup_key = getattr(wf, "checksum", None) or getattr(wf, "url", None)
+    if not lookup_key:
+        return None
+    try:
+        return ml._find_workflow_rid_by_url(lookup_key)
+    except Exception:  # noqa: BLE001 -- defensive recovery, return None on any failure
+        return None
 
 
 def _summarize_workflow(wf: Any) -> WorkflowSummary:
@@ -72,9 +117,17 @@ def _summarize_workflow(wf: Any) -> WorkflowSummary:
         previously dict-accessed (``summary["rid"]``) must use
         attribute access (``summary.rid``) or call ``.model_dump()``
         to get a plain dict back.
+
+    NOTE(2026-05-26 audit): ``Workflow.rid`` was renamed to
+    ``Workflow.workflow_rid`` in deriva-ml #226 but the deriva-ml
+    construction sites still pass ``rid=`` and the field is silently
+    dropped. We read through ``_resolve_workflow_rid`` so the
+    Workflow's RID is recovered (via checksum/url lookup) when the
+    upstream property returns None. Once deriva-ml is patched the
+    recovery path becomes dead code.
     """
     return WorkflowSummary(
-        rid=wf.rid,
+        rid=_resolve_workflow_rid(wf),
         name=wf.name,
         url=wf.url,
         checksum=wf.checksum,
@@ -113,15 +166,22 @@ def _list_workflows_impl(
     # Keep stable RID-ascending order for the default path; under
     # sort=True we honor the catalog-side RCT-desc ordering and skip
     # the post-fetch sort (sorting by RID would clobber the RCT order).
+    #
+    # Both the sort key and the pagination cursor read through
+    # ``_resolve_workflow_rid`` so the deriva-ml #226 regression (every
+    # Workflow returns workflow_rid=None) does not collapse the sort
+    # to "all-empty" or break cursor pagination. The recovery branch
+    # in the resolver is a server-side filter (single round trip per
+    # workflow); a fix in deriva-ml will skip it entirely.
     if sort:
         workflows = raw
     else:
-        workflows = sorted(raw, key=lambda w: w.rid)
+        workflows = sorted(raw, key=lambda w: _resolve_workflow_rid(w) or "")
     page, truncated, next_after = _paginate(
         workflows,
         after_rid=after_rid,
         limit=limit,
-        key=partial(_read_rid, rid_key="rid"),
+        key=lambda w: _resolve_workflow_rid(w) or "",
     )
     return WorkflowListResponse(
         workflows=[_summarize_workflow(w) for w in page],
@@ -468,7 +528,13 @@ def register(ctx: PluginContext) -> None:
                 except DerivaMLException:
                     existing = None
                 if existing is not None:
-                    rid = existing.rid
+                    # NOTE(2026-05-26 audit): ``Workflow.rid`` -> ``workflow_rid``
+                    # in deriva-ml #226. Route through the defensive
+                    # resolver so the rename regression (workflow_rid
+                    # populated as None on every Workflow returned by
+                    # lookup_workflow_by_url) doesn't surface here as
+                    # a null ``workflow_rid`` in the response.
+                    rid = _resolve_workflow_rid(existing)
                     status = "exists"
                 else:
                     # Validate every workflow_type term against the
@@ -477,9 +543,7 @@ def register(ctx: PluginContext) -> None:
                     # ``ml.create_workflow(name, workflow_type, description)``,
                     # which we no longer call -- see the note below.
                     for wt in normalized_types:
-                        await asyncio.to_thread(
-                            ml.lookup_term, MLVocab.workflow_type, wt
-                        )
+                        await asyncio.to_thread(ml.lookup_term, MLVocab.workflow_type, wt)
                     # Construct ``Workflow`` directly with url / checksum
                     # / version set at construction time so the model
                     # validator (``setup_url_checksum``) short-circuits

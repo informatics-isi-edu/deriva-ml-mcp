@@ -423,9 +423,7 @@ async def test_get_lineage_success(execution_ctx, capturing_mcp, mock_ml):
     assert out["root"]["rid"] == "2-PRED"
     assert out["walked_complete"] is True
     # Tool surfaces depth + max_executions to underlying call.
-    mock_ml.lookup_lineage.assert_called_once_with(
-        "2-PRED", depth=2, max_executions=100
-    )
+    mock_ml.lookup_lineage.assert_called_once_with("2-PRED", depth=2, max_executions=100)
 
 
 async def test_get_lineage_defaults_unbounded(execution_ctx, capturing_mcp, mock_ml):
@@ -441,38 +439,41 @@ async def test_get_lineage_defaults_unbounded(execution_ctx, capturing_mcp, mock
 
     mock_ml.lookup_lineage.return_value = LineageResult(
         root=RootDescriptor(
-            rid="1-EXEC", type="Execution",
+            rid="1-EXEC",
+            type="Execution",
             producing_execution=ExecutionSummary(
-                rid="1-EXEC", description="root execution", workflow=None,
+                rid="1-EXEC",
+                description="root execution",
+                workflow=None,
                 status="Completed",
             ),
         ),
         lineage=LineageNode(
             execution=ExecutionSummary(
-                rid="1-EXEC", description="root execution", workflow=None,
+                rid="1-EXEC",
+                description="root execution",
+                workflow=None,
                 status="Completed",
             ),
-            consumed_datasets=[], consumed_assets=[], parents=[],
+            consumed_datasets=[],
+            consumed_assets=[],
+            parents=[],
         ),
-        executions_visited=1, walked_complete=True, cycle_detected=False,
+        executions_visited=1,
+        walked_complete=True,
+        cycle_detected=False,
         depth_capped=False,
     )
 
-    await capturing_mcp.tools["deriva_ml_get_lineage"](
-        hostname="h", catalog_id="1", rid="1-EXEC"
-    )
-    mock_ml.lookup_lineage.assert_called_once_with(
-        "1-EXEC", depth=None, max_executions=500
-    )
+    await capturing_mcp.tools["deriva_ml_get_lineage"](hostname="h", catalog_id="1", rid="1-EXEC")
+    mock_ml.lookup_lineage.assert_called_once_with("1-EXEC", depth=None, max_executions=500)
 
 
 async def test_get_lineage_error_path_workflow_rid(execution_ctx, capturing_mcp, mock_ml):
     """A Workflow RID is not lineage-shaped; ``lookup_lineage`` raises
     and the tool wraps as ``{"error": ...}`` without emitting an audit
     row (read tool, silent on failure)."""
-    mock_ml.lookup_lineage.side_effect = RuntimeError(
-        "Workflow RIDs are not lineage-shaped"
-    )
+    mock_ml.lookup_lineage.side_effect = RuntimeError("Workflow RIDs are not lineage-shaped")
     with _patch_execution_audit() as mock_audit:
         result = await capturing_mcp.tools["deriva_ml_get_lineage"](
             hostname="h", catalog_id="1", rid="1-WF"
@@ -507,9 +508,7 @@ async def test_find_experiments_happy_path(execution_ctx, capturing_mcp, mock_ml
         rid=rid, status=ExecutionStatus.Uploaded
     )
 
-    result = await capturing_mcp.tools["deriva_ml_find_experiments"](
-        hostname="h", catalog_id="1"
-    )
+    result = await capturing_mcp.tools["deriva_ml_find_experiments"](hostname="h", catalog_id="1")
     out = json.loads(result)
 
     assert out["count"] == 2
@@ -547,3 +546,155 @@ async def test_find_experiments_error_path(execution_ctx, capturing_mcp, mock_ml
     out = json.loads(result)
     assert "error" in out
     assert mock_audit.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# 2026-05-26 projection audit: workflow_rid recovery (e2e finding developer/02)
+# ---------------------------------------------------------------------------
+#
+# Background: deriva-ml #226 renamed the Workflow field ``rid`` ->
+# ``workflow_rid`` but its construction sites in find_workflows /
+# lookup_workflow still pass the OLD kwarg name. Because
+# ``VALIDATION_CONFIG`` doesn't set extra="forbid", that value is
+# silently dropped, so every Workflow returned by either API has
+# ``workflow_rid=None``, and the ExecutionRecord's workflow_rid
+# property (which reads through self._workflow.workflow_rid) also
+# returns None on every execution. Surfaces as
+# ``deriva_ml_get_execution -> {"workflow_rid": null}`` for every
+# execution in the catalog (e2e finding developer/02, 2026-05-26).
+#
+# The MCP layer plugs this with a defensive recovery in
+# ``_resolve_workflow_rid``: when the fast attribute read returns
+# None but the record is bound to a live catalog, fetch the Workflow
+# FK directly via ``ml._retrieve_rid(execution_rid)``. These tests
+# exercise both the fast path (record exposes workflow_rid) and the
+# recovery path (record's workflow_rid is None -> ermrest lookup).
+
+
+def test_resolve_workflow_rid_fast_path_returns_attribute():
+    """When ``record.workflow_rid`` is populated, return it without I/O."""
+    from deriva_ml_mcp.tools.execution.read import _resolve_workflow_rid
+
+    rec = MagicMock()
+    rec.workflow_rid = "1-WF"
+    # _ml_instance set but should NOT be consulted on the fast path.
+    rec._ml_instance = MagicMock()
+    rec._ml_instance._retrieve_rid.side_effect = AssertionError("recovery path called")
+    assert _resolve_workflow_rid(rec) == "1-WF"
+    rec._ml_instance._retrieve_rid.assert_not_called()
+
+
+def test_resolve_workflow_rid_recovery_fetches_from_ermrest():
+    """When ``record.workflow_rid`` is None, recover via _retrieve_rid."""
+    from deriva_ml_mcp.tools.execution.read import _resolve_workflow_rid
+
+    rec = MagicMock()
+    rec.workflow_rid = None
+    rec.execution_rid = "1-EXEC"
+    rec._ml_instance = MagicMock()
+    rec._ml_instance._retrieve_rid.return_value = {
+        "RID": "1-EXEC",
+        "Workflow": "1-WF-RECOVERED",
+        "Status": "Uploaded",
+    }
+    assert _resolve_workflow_rid(rec) == "1-WF-RECOVERED"
+    rec._ml_instance._retrieve_rid.assert_called_once_with("1-EXEC")
+
+
+def test_resolve_workflow_rid_recovery_returns_none_without_ml_instance():
+    """Mock-shaped records that don't expose ``_ml_instance`` return None safely."""
+    from deriva_ml_mcp.tools.execution.read import _resolve_workflow_rid
+
+    rec = MagicMock()
+    rec.workflow_rid = None
+    rec.execution_rid = "1-EXEC"
+    # Spec restricts attribute access to a closed list -- no _ml_instance.
+    del rec._ml_instance
+    assert _resolve_workflow_rid(rec) is None
+
+
+def test_resolve_workflow_rid_recovery_returns_none_on_fetch_failure():
+    """If ``_retrieve_rid`` raises, recovery returns None (no propagation)."""
+    from deriva_ml_mcp.tools.execution.read import _resolve_workflow_rid
+
+    rec = MagicMock()
+    rec.workflow_rid = None
+    rec.execution_rid = "1-EXEC"
+    rec._ml_instance = MagicMock()
+    rec._ml_instance._retrieve_rid.side_effect = RuntimeError("ermrest unreachable")
+    assert _resolve_workflow_rid(rec) is None
+
+
+def test_resolve_workflow_rid_recovery_returns_none_when_workflow_fk_missing():
+    """``Execution.Workflow == None`` (legitimate) returns None, not raises."""
+    from deriva_ml_mcp.tools.execution.read import _resolve_workflow_rid
+
+    rec = MagicMock()
+    rec.workflow_rid = None
+    rec.execution_rid = "1-EXEC"
+    rec._ml_instance = MagicMock()
+    rec._ml_instance._retrieve_rid.return_value = {"RID": "1-EXEC", "Workflow": None}
+    assert _resolve_workflow_rid(rec) is None
+
+
+async def test_get_execution_recovers_workflow_rid_via_ermrest(
+    execution_ctx, capturing_mcp, mock_ml
+):
+    """End-to-end: a deriva-ml bug-shaped record still gets a real workflow_rid."""
+    # Simulate the deriva-ml #226 regression: ExecutionRecord with
+    # workflow_rid=None but _ml_instance present and the underlying
+    # ermrest row carrying the real Workflow FK.
+    record = _make_execution_record_mock(rid="1-EXEC", workflow_rid=None)
+    record._ml_instance = mock_ml
+    mock_ml._retrieve_rid.return_value = {
+        "RID": "1-EXEC",
+        "Workflow": "1-WF-FROM-ERMREST",
+        "Status": "Uploaded",
+    }
+    mock_ml.lookup_execution.return_value = record
+    result = await capturing_mcp.tools["deriva_ml_get_execution"](
+        hostname="h", catalog_id="1", execution_rid="1-EXEC"
+    )
+    payload = json.loads(result)
+    assert payload["rid"] == "1-EXEC"
+    assert payload["workflow_rid"] == "1-WF-FROM-ERMREST"
+
+
+async def test_list_execution_children_recovers_workflow_rid(execution_ctx, capturing_mcp, mock_ml):
+    """Recovery applies to every child in list_execution_children."""
+    parent = _make_execution_record_mock(rid="1-PARENT", workflow_rid="1-WF")
+    parent._ml_instance = mock_ml
+    child_a = _make_execution_record_mock(rid="1-CHILD-A", workflow_rid=None)
+    child_a._ml_instance = mock_ml
+    child_b = _make_execution_record_mock(rid="1-CHILD-B", workflow_rid=None)
+    child_b._ml_instance = mock_ml
+    parent.list_execution_children.return_value = [child_a, child_b]
+    mock_ml.lookup_execution.return_value = parent
+    mock_ml._retrieve_rid.side_effect = lambda rid: {
+        "1-CHILD-A": {"RID": "1-CHILD-A", "Workflow": "1-WF-A"},
+        "1-CHILD-B": {"RID": "1-CHILD-B", "Workflow": "1-WF-B"},
+    }[rid]
+    result = await capturing_mcp.tools["deriva_ml_list_execution_children"](
+        hostname="h", catalog_id="1", execution_rid="1-PARENT"
+    )
+    payload = json.loads(result)
+    assert payload["count"] == 2
+    rids = {(c["rid"], c["workflow_rid"]) for c in payload["children"]}
+    assert rids == {("1-CHILD-A", "1-WF-A"), ("1-CHILD-B", "1-WF-B")}
+
+
+async def test_get_execution_preserves_workflow_rid_when_present(
+    execution_ctx, capturing_mcp, mock_ml
+):
+    """Sanity check: when workflow_rid IS populated, recovery is not invoked."""
+    record = _make_execution_record_mock(rid="1-EXEC", workflow_rid="1-WF-DIRECT")
+    record._ml_instance = mock_ml
+    mock_ml._retrieve_rid.side_effect = AssertionError(
+        "recovery path called when fast path should have returned"
+    )
+    mock_ml.lookup_execution.return_value = record
+    result = await capturing_mcp.tools["deriva_ml_get_execution"](
+        hostname="h", catalog_id="1", execution_rid="1-EXEC"
+    )
+    payload = json.loads(result)
+    assert payload["workflow_rid"] == "1-WF-DIRECT"
