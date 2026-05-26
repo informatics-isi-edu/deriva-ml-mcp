@@ -60,6 +60,75 @@ if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
 
 
+def _resolve_workflow_rid(record: Any) -> str | None:
+    """Resolve the Workflow FK for an ExecutionRecord, with a defensive recovery path.
+
+    Background: deriva-ml #226 (2026-05-25) renamed the ``Workflow``
+    Pydantic field from ``rid`` to ``workflow_rid``. The two
+    construction sites for ``Workflow`` objects in
+    ``deriva_ml.core.mixins.workflow`` (``find_workflows`` and
+    ``lookup_workflow``) still pass the OLD kwarg name (``rid=...``),
+    and because ``VALIDATION_CONFIG`` does not set ``extra="forbid"``,
+    that value is silently dropped. The result: every ``Workflow``
+    returned by either API has ``workflow_rid=None``, which makes
+    ``ExecutionRecord.workflow_rid`` (a property that reads
+    ``self._workflow.workflow_rid``) also return None on every
+    execution. That surfaced in e2e finding developer/02 as
+    ``deriva_ml_get_execution`` returning ``{"workflow_rid": null}``
+    for every execution in the catalog.
+
+    The clean upstream fix is the two-character change
+    ``rid=`` -> ``workflow_rid=`` in ``find_workflows`` /
+    ``lookup_workflow``. This helper is a defensive MCP-boundary
+    workaround so the bug is plugged without waiting on a deriva-ml
+    release: when ``record.workflow_rid`` is None AND the record is
+    bound to a live catalog (``_ml_instance`` set), do a single
+    attribute-projection query against the ``Execution`` table to
+    recover the Workflow FK directly. Adds one HTTP GET per execution
+    that hit the deriva-ml bug; once the upstream is fixed the fast
+    path returns immediately and the recovery branch becomes dead
+    code (kept as belt-and-suspenders).
+
+    Args:
+        record: An ``ExecutionRecord`` (preferred) or any object
+            with ``execution_rid`` / ``workflow_rid`` /
+            ``_ml_instance`` attributes. Tolerates Mock-shaped
+            objects that don't expose ``_ml_instance``.
+
+    Returns:
+        The Workflow RID as a string, or None if the row has no
+        Workflow FK (legitimate -- e.g. a snapshot row predating
+        execution-workflow linking) or the lookup failed.
+
+    Example:
+        >>> from unittest.mock import MagicMock
+        >>> rec = MagicMock()
+        >>> rec.workflow_rid = "1-WF"
+        >>> _resolve_workflow_rid(rec)
+        '1-WF'
+    """
+    # Fast path: the record's own ``workflow_rid`` attribute returned
+    # a non-empty value. Once upstream is fixed, this is the only
+    # branch reached.
+    rid = getattr(record, "workflow_rid", None)
+    if rid:
+        return rid
+    # Recovery path: deriva-ml #226 regression -- fetch the FK directly
+    # via ermrest using the same private accessor ``lookup_execution``
+    # itself uses (``_retrieve_rid``). Defensive try/except so any
+    # failure (mock object, snapshot catalog, network) returns None
+    # rather than blowing up the whole list response.
+    ml = getattr(record, "_ml_instance", None)
+    execution_rid = getattr(record, "execution_rid", None)
+    if ml is None or not execution_rid:
+        return None
+    try:
+        row = ml._retrieve_rid(execution_rid)
+        return row.get("Workflow")
+    except Exception:  # noqa: BLE001 -- defensive recovery, return None on any failure
+        return None
+
+
 def _summarize_execution(record: Any) -> ExecutionSummary:
     """Render an ``ExecutionRecord`` (or ``Execution``) into the validated summary.
 
@@ -67,6 +136,12 @@ def _summarize_execution(record: Any) -> ExecutionSummary:
     / ``find_executions``) and ``Execution`` (returned by
     ``resume_execution``) — the only attributes read are common to both
     surfaces or fall back to ``None``.
+
+    NOTE(2026-05-26 audit): the ``workflow_rid`` field reads through
+    :func:`_resolve_workflow_rid` to defensively recover from a
+    deriva-ml field-rename regression (#226). Once deriva-ml is patched
+    and pinned, the recovery path becomes dead code -- the fast
+    attribute read returns the correct value.
 
     Args:
         record: An ``ExecutionRecord`` (preferred) or ``Execution`` mock.
@@ -99,7 +174,7 @@ def _summarize_execution(record: Any) -> ExecutionSummary:
     status = getattr(record, "status", None)
     return ExecutionSummary(
         rid=getattr(record, "execution_rid", None),
-        workflow_rid=getattr(record, "workflow_rid", None),
+        workflow_rid=_resolve_workflow_rid(record),
         status=status.value if isinstance(status, ExecutionStatus) else status,
         description=getattr(record, "description", None),
         start_time=getattr(record, "start_time", None),

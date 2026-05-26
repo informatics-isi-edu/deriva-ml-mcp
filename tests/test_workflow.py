@@ -27,17 +27,25 @@ def _make_workflow_mock(
 ) -> MagicMock:
     """Build a Workflow-shaped MagicMock.
 
-    The real Workflow class exposes ``rid``, ``name``, ``workflow_type``
-    (list[str]), ``url``, ``checksum``, ``version``, and ``description``.
+    The real ``deriva_ml.execution.workflow.Workflow`` Pydantic model
+    exposes the RID through the ``workflow_rid`` attribute (renamed
+    from the historical ``rid`` in deriva-ml #226, 2026-05-25). This
+    helper sets the new attribute name so MagicMock-based tests catch
+    the same projection drops a real catalog row would.
     """
     wf = MagicMock()
-    wf.rid = rid
+    wf.workflow_rid = rid
     wf.name = name
     wf.workflow_type = workflow_type or ["Model_Training"]
     wf.url = url
     wf.checksum = checksum
     wf.version = version
     wf.description = description
+    # Remove the auto-generated ``rid`` MagicMock attribute so calls to
+    # ``wf.rid`` raise AttributeError, matching the real model. Without
+    # this delete the test fixture would mask the projection bug the
+    # 2026-05-26 audit fixed.
+    del wf.rid
     return wf
 
 
@@ -495,3 +503,102 @@ async def test_create_workflow_triggers_surgical_reindex(workflow_ctx, capturing
             url="https://github.com/x/r/blob/abc/main.py",
         )
     fake_reindex.assert_awaited_once_with("h", "1", "1-NEW")
+
+
+# ---------------------------------------------------------------------------
+# 2026-05-26 projection audit: workflow_rid recovery on Workflow objects
+# ---------------------------------------------------------------------------
+#
+# deriva-ml #226 renamed Workflow.rid -> Workflow.workflow_rid but the
+# construction sites in find_workflows / lookup_workflow still pass
+# ``rid=``, silently dropping it. ``_resolve_workflow_rid(wf)`` plugs
+# this by re-fetching via ``ml._find_workflow_rid_by_url(checksum or
+# url)`` when the fast attribute path returns None.
+
+
+def test_workflow_resolve_workflow_rid_fast_path():
+    """Workflow with ``workflow_rid`` populated returns immediately."""
+    from deriva_ml_mcp.tools.workflow import _resolve_workflow_rid
+
+    wf = MagicMock()
+    wf.workflow_rid = "1-WF"
+    wf._ml_instance = MagicMock()
+    wf._ml_instance._find_workflow_rid_by_url.side_effect = AssertionError(
+        "recovery path called when fast path should have returned"
+    )
+    assert _resolve_workflow_rid(wf) == "1-WF"
+
+
+def test_workflow_resolve_workflow_rid_recovery_via_checksum():
+    """When workflow_rid is None, recover via checksum lookup."""
+    from deriva_ml_mcp.tools.workflow import _resolve_workflow_rid
+
+    wf = MagicMock()
+    wf.workflow_rid = None
+    wf.checksum = "abc123"
+    wf.url = "https://github.com/example/repo"
+    wf._ml_instance = MagicMock()
+    wf._ml_instance._find_workflow_rid_by_url.return_value = "1-WF-FROM-LOOKUP"
+    assert _resolve_workflow_rid(wf) == "1-WF-FROM-LOOKUP"
+    # Checksum is preferred over URL (matches _add_workflow's lookup key).
+    wf._ml_instance._find_workflow_rid_by_url.assert_called_once_with("abc123")
+
+
+def test_workflow_resolve_workflow_rid_recovery_via_url_when_no_checksum():
+    """No checksum? Recovery falls back to URL."""
+    from deriva_ml_mcp.tools.workflow import _resolve_workflow_rid
+
+    wf = MagicMock()
+    wf.workflow_rid = None
+    wf.checksum = None
+    wf.url = "https://github.com/example/repo"
+    wf._ml_instance = MagicMock()
+    wf._ml_instance._find_workflow_rid_by_url.return_value = "1-WF-VIA-URL"
+    assert _resolve_workflow_rid(wf) == "1-WF-VIA-URL"
+    wf._ml_instance._find_workflow_rid_by_url.assert_called_once_with(
+        "https://github.com/example/repo"
+    )
+
+
+def test_workflow_resolve_workflow_rid_returns_none_with_no_lookup_key():
+    """No checksum AND no URL: recovery returns None safely."""
+    from deriva_ml_mcp.tools.workflow import _resolve_workflow_rid
+
+    wf = MagicMock()
+    wf.workflow_rid = None
+    wf.checksum = None
+    wf.url = None
+    wf._ml_instance = MagicMock()
+    assert _resolve_workflow_rid(wf) is None
+    wf._ml_instance._find_workflow_rid_by_url.assert_not_called()
+
+
+def test_workflow_resolve_workflow_rid_recovery_swallows_errors():
+    """A failing _find_workflow_rid_by_url returns None, not raises."""
+    from deriva_ml_mcp.tools.workflow import _resolve_workflow_rid
+
+    wf = MagicMock()
+    wf.workflow_rid = None
+    wf.checksum = "abc"
+    wf.url = None
+    wf._ml_instance = MagicMock()
+    wf._ml_instance._find_workflow_rid_by_url.side_effect = RuntimeError("network")
+    assert _resolve_workflow_rid(wf) is None
+
+
+async def test_get_workflow_recovers_rid_when_attribute_is_none(
+    workflow_ctx, capturing_mcp, mock_ml
+):
+    """End-to-end: a bug-shaped Workflow surfaces a recovered RID."""
+    # Construct a Workflow MagicMock that simulates the deriva-ml bug:
+    # the helper sets workflow_rid by default, so override it to None.
+    wf = _make_workflow_mock(rid="1-WF-IGNORED")
+    wf.workflow_rid = None
+    wf._ml_instance = mock_ml
+    mock_ml.lookup_workflow.return_value = wf
+    mock_ml._find_workflow_rid_by_url.return_value = "1-WF-RECOVERED"
+    result = await capturing_mcp.tools["deriva_ml_get_workflow"](
+        hostname="h", catalog_id="1", workflow_rid="anything"
+    )
+    payload = json.loads(result)
+    assert payload["rid"] == "1-WF-RECOVERED"
