@@ -191,6 +191,40 @@ DERIVA-ML DOMAIN OBJECTS, NOT AS RAW TABLES.
              local Python via the user's environment (``ml.download_asset``,
              ``exe.asset_file_path()``).
 
+USE DIRECT ATTRIBUTE ACCESS ON THESE DOMAIN OBJECTS
+---------------------------------------------------
+The five abstractions above are returned as TYPED records (Pydantic
+models / DerivaML domain objects), not as raw dicts. Read their
+fields with the dot operator:
+
+  - ``Dataset``         -> ``.dataset_rid``, ``.current_version``,
+                           ``.dataset_types``, ``.description``
+  - ``Execution``       -> ``.execution_rid``, ``.status``,
+                           ``.workflow``, ``.description``
+  - ``Workflow``        -> ``.workflow_rid``, ``.workflow_type``,
+                           ``.url``, ``.checksum``
+  - ``FeatureRecord``   -> one named attribute per feature column
+                           (``.Diagnosis_Type``, ``.Confidence``, ...)
+                           plus ``.Execution``, ``.Feature_Name``,
+                           ``.RCT``
+  - ``Asset``           -> ``.asset_rid``, ``.filename``, ``.length``,
+                           ``.md5``, ``.asset_types``
+
+The ``repr()`` of any domain object spells out its field names --
+``print(obj)`` is faster than guessing.
+
+DO NOT use ``getattr(obj, "name", default)`` on these objects. The
+attributes either exist by contract or they don't; a wrong name is
+an ``AttributeError`` you WANT to see. ``getattr``-with-default
+converts API ignorance into a silent fallback --
+``getattr(d, "version", "?")`` quietly returns ``"?"`` when the real
+field is ``current_version``, and the bug ships. Dot directly into
+the object, let ``AttributeError`` tell you what's wrong, and fix
+the call. Reach for ``getattr`` only when reflecting over genuinely
+unknown attribute names (e.g. iterating user-supplied column names,
+debug-printing arbitrary records). That is rare; the normal case is
+``obj.field_name``.
+
 THE ASSET_ROLE CONTRACT
 -----------------------
 Every execution-linked asset carries TWO pieces of role metadata
