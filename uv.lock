@@ -709,8 +709,8 @@ provides-extras = ["rag", "dev"]
 
 [[package]]
 name = "deriva-ml"
-version = "1.39.4"
-source = { git = "https://github.com/informatics-isi-edu/deriva-ml.git#4ed881223fe1f57286f7abadbf4cefe4fa2132d4" }
+version = "1.39.4.post2+g916bf6610"
+source = { git = "https://github.com/informatics-isi-edu/deriva-ml.git#916bf6610d7b4a4009e6a265caf3fa33a429b5f1" }
 dependencies = [
     { name = "bdbag" },
     { name = "bump-my-version" },
