@@ -142,4 +142,4 @@ show_missing = true
 allow_dirty = false
 commit = true
 tag = true
-current_version = "0.5.5"
+current_version = "0.5.6"
