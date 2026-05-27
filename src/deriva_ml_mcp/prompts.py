@@ -225,6 +225,34 @@ unknown attribute names (e.g. iterating user-supplied column names,
 debug-printing arbitrary records). That is rare; the normal case is
 ``obj.field_name``.
 
+CARRY STRUCTURE, DON'T DECAY IT
+-------------------------------
+The dot-access rule is the local case. The broader principle: when
+data has a known shape, carry it in a container that knows the shape,
+end-to-end through the analysis. Match the container to the shape:
+
+  - One record (a row, a config, a ranking entry): ``@dataclass`` or
+    Pydantic ``BaseModel`` -- named fields, typo-checked at definition.
+  - Many records of the same shape (a query result, a denormalized
+    dataset, a per-image prediction table): ``pandas.DataFrame``.
+    A DataFrame returned by ``Dataset.denormalize_dataset()`` is
+    exactly this -- keep it as a DataFrame.
+  - A few labeled tables that belong together: a ``@dataclass`` whose
+    fields are DataFrames, or ``dict[str, DataFrame]`` if names are
+    dynamic.
+  - Genuinely schemaless mappings (config blobs from arbitrary YAML,
+    MCP responses you're inspecting interactively): ``dict``, and
+    ``.get(key, default)`` is correct here -- but ONLY here.
+
+The rule is not "avoid DataFrames" -- DataFrames ARE the typed
+container for table-of-records. The rule is don't downgrade: don't
+turn a DataFrame into a list-of-dicts, don't turn a Pydantic record
+into a dict, don't turn a ``@dataclass`` into a tuple. Each downgrade
+trades a real schema for stringly-typed lookups, and every downstream
+call site pays the cost. ``getattr(d, "version", "?")`` returning
+``"?"`` is the symptom; the disease is that ``d`` should never have
+been treated as if its fields were optional.
+
 THE ASSET_ROLE CONTRACT
 -----------------------
 Every execution-linked asset carries TWO pieces of role metadata
