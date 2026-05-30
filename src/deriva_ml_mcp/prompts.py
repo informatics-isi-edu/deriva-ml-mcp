@@ -111,7 +111,7 @@ The stack:
     manager pattern.
   - ``deriva-ml-mcp`` is THIS plugin (loaded by ``deriva-mcp-core``);
     exposes the ``deriva_ml_*`` MCP tools and the
-    ``deriva://catalog/{h}/{c}/ml/...`` resource family.
+    ``deriva://catalog/{h}/{c}/deriva-ml/...`` resource family.
   - ``deriva-ml-skills`` is a companion Claude Code skill plugin that
     layers workflow guidance on top -- only relevant when the LLM is
     running inside Claude Code with that plugin loaded.
@@ -135,7 +135,7 @@ DERIVA-ML DOMAIN OBJECTS, NOT AS RAW TABLES.
              For local bag materialization, run ``ml.cache_dataset(spec)``
              in your own Python -- the MCP server has no per-user
              filesystem (v0.5.0 stateless rule). Use the
-             ``deriva://catalog/.../ml/dataset/{rid}/bag-preview``
+             ``deriva://catalog/.../deriva-ml/dataset/{rid}/bag-preview``
              resource (or ``deriva_ml_bag_info`` tool) to size a bag
              before deciding to download it locally.
 
@@ -719,7 +719,7 @@ READ-SIDE QUESTIONS: FETCH THE RESOURCE FIRST
 For READ-SIDE QUESTIONS ABOUT AN EXISTING ENTITY -- "show me X by RID",
 "what's in Y", "what did Z produce / consume", "what's the current
 version of W", "have we tried <thing>", "why was <choice> made" -- fetch
-the matching ``deriva://catalog/{h}/{c}/ml/...`` resource BEFORE
+the matching ``deriva://catalog/{h}/{c}/deriva-ml/...`` resource BEFORE
 reaching for ``deriva_ml_*`` tools or generic catalog CRUD
 (``get_entities``, ``query_attribute``, ``list_foreign_keys``).
 
@@ -738,30 +738,30 @@ follow-up ``deriva_ml_list_assets`` / ``query_attribute`` calls. The
 
 The full read-only resource family:
 
-    deriva://catalog/{h}/{c}/ml/datasets         -- all datasets, capped at 1000
-    deriva://catalog/{h}/{c}/ml/dataset/{rid}    -- one dataset + version_history + members
-    deriva://catalog/{h}/{c}/ml/dataset/{rid}/members  -- members grouped by table
-    deriva://catalog/{h}/{c}/ml/dataset/{rid}/spec     -- DatasetSpecConfig snippet for hydra-zen configs
-    deriva://catalog/{h}/{c}/ml/dataset/{rid}/bag-preview
+    deriva://catalog/{h}/{c}/deriva-ml/datasets         -- all datasets, capped at 1000
+    deriva://catalog/{h}/{c}/deriva-ml/dataset/{rid}    -- one dataset + version_history + members
+    deriva://catalog/{h}/{c}/deriva-ml/dataset/{rid}/members  -- members grouped by table
+    deriva://catalog/{h}/{c}/deriva-ml/dataset/{rid}/spec     -- DatasetSpecConfig snippet for hydra-zen configs
+    deriva://catalog/{h}/{c}/deriva-ml/dataset/{rid}/bag-preview
                                                  -- bag size + table counts BEFORE downloading
                                                     (use to size a bag before deciding to
                                                     run ml.cache_dataset(spec) locally)
-    deriva://catalog/{h}/{c}/ml/workflows        -- all workflows
-    deriva://catalog/{h}/{c}/ml/workflow/{rid}   -- one workflow
-    deriva://catalog/{h}/{c}/ml/executions       -- all executions
-    deriva://catalog/{h}/{c}/ml/execution/{rid}  -- one execution: summary + inputs +
+    deriva://catalog/{h}/{c}/deriva-ml/workflows        -- all workflows
+    deriva://catalog/{h}/{c}/deriva-ml/workflow/{rid}   -- one workflow
+    deriva://catalog/{h}/{c}/deriva-ml/executions       -- all executions
+    deriva://catalog/{h}/{c}/deriva-ml/execution/{rid}  -- one execution: summary + inputs +
                                                     outputs (split into ``assets`` and
                                                     ``metadata``) + experiment
-    deriva://catalog/{h}/{c}/ml/lineage/{rid}    -- provenance chain for any artifact
+    deriva://catalog/{h}/{c}/deriva-ml/lineage/{rid}    -- provenance chain for any artifact
                                                     (Dataset, Asset, Feature value, Execution)
-    deriva://catalog/{h}/{c}/ml/features/{table} -- features defined on one table
-    deriva://catalog/{h}/{c}/ml/asset/{rid}      -- one asset + bundled executions
-    deriva://catalog/{h}/{c}/ml/assets/{schema}  -- asset tables in one schema
-    deriva://catalog/{h}/{c}/ml/assets/{schema}/{asset_table}
+    deriva://catalog/{h}/{c}/deriva-ml/features/{table} -- features defined on one table
+    deriva://catalog/{h}/{c}/deriva-ml/asset/{rid}      -- one asset + bundled executions
+    deriva://catalog/{h}/{c}/deriva-ml/assets/{schema}  -- asset tables in one schema
+    deriva://catalog/{h}/{c}/deriva-ml/assets/{schema}/{asset_table}
                                                  -- contents of one asset table
-    deriva://catalog/{h}/{c}/ml/vocabularies/{schema}
+    deriva://catalog/{h}/{c}/deriva-ml/vocabularies/{schema}
                                                  -- vocabulary tables in one schema
-    deriva://catalog/{h}/{c}/ml/vocabularies/{schema}/{vocab_name}
+    deriva://catalog/{h}/{c}/deriva-ml/vocabularies/{schema}/{vocab_name}
                                                  -- terms in one vocabulary table
 
 RESOURCE-TOOL PAIRINGS (when in doubt, prefer the resource)
@@ -777,20 +777,20 @@ resource cannot express (status, workflow, deleted-only, etc.).
 
     Snapshot resource                                      Paginated tool
     --------------------------------------------------     -------------------------------
-    deriva://catalog/{h}/{c}/ml/datasets                   deriva_ml_list_datasets
-    deriva://catalog/{h}/{c}/ml/dataset/{rid}              deriva_ml_get_dataset
-    deriva://catalog/{h}/{c}/ml/dataset/{rid}/members      deriva_ml_list_dataset_members
-    deriva://catalog/{h}/{c}/ml/dataset/{rid}/spec         deriva_ml_get_dataset_spec
-    deriva://catalog/{h}/{c}/ml/dataset/{rid}/bag-preview  deriva_ml_bag_info
-    deriva://catalog/{h}/{c}/ml/workflows                  deriva_ml_list_workflows
-    deriva://catalog/{h}/{c}/ml/workflow/{rid}             deriva_ml_get_workflow
-    deriva://catalog/{h}/{c}/ml/executions                 deriva_ml_list_executions
-    deriva://catalog/{h}/{c}/ml/execution/{rid}            deriva_ml_get_execution
-    deriva://catalog/{h}/{c}/ml/features/{table}           deriva_ml_list_features (table-scoped)
-    deriva://catalog/{h}/{c}/ml/assets/{schema}            deriva_ml_list_assets (schema-scoped)
-    deriva://catalog/{h}/{c}/ml/asset/{rid}                (no list tool -- one-RID only)
-    deriva://catalog/{h}/{c}/ml/lineage/{rid}              deriva_ml_get_lineage
-    deriva://catalog/{h}/{c}/ml/vocabularies/{schema}      list_vocabulary_terms (core; per-table)
+    deriva://catalog/{h}/{c}/deriva-ml/datasets                   deriva_ml_list_datasets
+    deriva://catalog/{h}/{c}/deriva-ml/dataset/{rid}              deriva_ml_get_dataset
+    deriva://catalog/{h}/{c}/deriva-ml/dataset/{rid}/members      deriva_ml_list_dataset_members
+    deriva://catalog/{h}/{c}/deriva-ml/dataset/{rid}/spec         deriva_ml_get_dataset_spec
+    deriva://catalog/{h}/{c}/deriva-ml/dataset/{rid}/bag-preview  deriva_ml_bag_info
+    deriva://catalog/{h}/{c}/deriva-ml/workflows                  deriva_ml_list_workflows
+    deriva://catalog/{h}/{c}/deriva-ml/workflow/{rid}             deriva_ml_get_workflow
+    deriva://catalog/{h}/{c}/deriva-ml/executions                 deriva_ml_list_executions
+    deriva://catalog/{h}/{c}/deriva-ml/execution/{rid}            deriva_ml_get_execution
+    deriva://catalog/{h}/{c}/deriva-ml/features/{table}           deriva_ml_list_features (table-scoped)
+    deriva://catalog/{h}/{c}/deriva-ml/assets/{schema}            deriva_ml_list_assets (schema-scoped)
+    deriva://catalog/{h}/{c}/deriva-ml/asset/{rid}                (no list tool -- one-RID only)
+    deriva://catalog/{h}/{c}/deriva-ml/lineage/{rid}              deriva_ml_get_lineage
+    deriva://catalog/{h}/{c}/deriva-ml/vocabularies/{schema}      list_vocabulary_terms (core; per-table)
 
 Write tools (create / update / commit / abort / start / add_members /
 delete_members / ...) have NO resource counterpart -- resources are
@@ -848,7 +848,7 @@ identifier in this order:
 3. EXPLICIT LIST REQUEST GETS A LIST. If the user says "show me
    all dataset types" or "list workflows", use the appropriate
    list endpoint (ml/vocabularies/{schema}/Dataset_Type,
-   deriva_ml_list_workflows, deriva://catalog/{h}/{c}/ml/datasets).
+   deriva_ml_list_workflows, deriva://catalog/{h}/{c}/deriva-ml/datasets).
    Don't run rag_search when they explicitly want enumeration.
 
 INDEX COVERAGE BY CATEGORY
@@ -950,9 +950,9 @@ lifecycle:
 
 Plus three matching resources:
 
-    deriva://catalog/{h}/{c}/ml/asset/{rid}      -- bundled per-asset detail
-    deriva://catalog/{h}/{c}/ml/assets/{schema}  -- asset tables in one schema
-    deriva://catalog/{h}/{c}/ml/assets/{schema}/{asset_table}
+    deriva://catalog/{h}/{c}/deriva-ml/asset/{rid}      -- bundled per-asset detail
+    deriva://catalog/{h}/{c}/deriva-ml/assets/{schema}  -- asset tables in one schema
+    deriva://catalog/{h}/{c}/deriva-ml/assets/{schema}/{asset_table}
                                                  -- snapshot of one asset table
 
 What these tools do NOT do: register a new asset from a local file, or
@@ -1019,7 +1019,7 @@ THE MENU
 --------
 Quick orientation: 43 tools across 5 domains (dataset, feature, workflow,
 execution, asset) + 18 read-only resources under the
-``deriva://catalog/{h}/{c}/ml/...`` URI prefix + 1 GitHub doc source
+``deriva://catalog/{h}/{c}/deriva-ml/...`` URI prefix + 1 GitHub doc source
 indexed for RAG (``deriva-ml-docs``) + 3 per-user RAG indexes that
 ingest Dataset / Workflow / Execution rows on first connect to a
 catalog. Plus 4 built-in core prompts and 1 ML prompt (this one --

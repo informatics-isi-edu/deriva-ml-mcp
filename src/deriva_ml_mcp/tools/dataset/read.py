@@ -140,7 +140,7 @@ def _list_datasets_impl(
 def _get_dataset_detail_impl(ml: Any, dataset_rid: str) -> DatasetDetail:
     """Build the dataset detail payload (summary + chaise URL + version history).
 
-    Used by the ``deriva://catalog/{h}/{c}/ml/dataset/{rid}`` resource.
+    Used by the ``deriva://catalog/{h}/{c}/deriva-ml/dataset/{rid}`` resource.
     The shape mirrors ``deriva_ml_get_dataset(include_history=True)``
     but always includes ``version_history``.
 
@@ -384,7 +384,7 @@ def register(ctx: PluginContext) -> None:
             v2.0 wire change vs v1.x: the field key is
             ``version_history`` (was ``history`` in v1.x). This unifies
             the tool's wire shape with the resource's wire shape (the
-            ``deriva://catalog/{h}/{c}/ml/dataset/{rid}`` resource has
+            ``deriva://catalog/{h}/{c}/deriva-ml/dataset/{rid}`` resource has
             always used ``version_history``). The two surfaces now
             return identical wire shapes; consumers can switch freely
             between tool and resource without re-mapping field names.
@@ -807,7 +807,7 @@ def register(ctx: PluginContext) -> None:
         """Generate a ``DatasetSpecConfig(...)`` snippet for a hydra-zen config.
 
         Same payload as the
-        ``deriva://catalog/{h}/{c}/ml/dataset/{rid}/spec`` resource --
+        ``deriva://catalog/{h}/{c}/deriva-ml/dataset/{rid}/spec`` resource --
         the two share an internal helper so the payloads cannot drift.
         The resource form omits the ``version`` parameter (always uses
         current version with a warning); callers needing to pin a
@@ -1177,7 +1177,7 @@ def _bag_info_impl(
     exclude_tables: list[str] | None = None,
 ) -> dict[str, Any]:
     """Shared helper: tool ``deriva_ml_bag_info`` and resource
-    ``deriva://catalog/{h}/{c}/ml/dataset/{rid}/bag-preview`` both call
+    ``deriva://catalog/{h}/{c}/deriva-ml/dataset/{rid}/bag-preview`` both call
     this so their payloads cannot drift.
 
     Args:
@@ -1235,7 +1235,7 @@ def _get_dataset_spec_impl(
     ml: Any, dataset_rid: str, version: str | None
 ) -> dict[str, Any]:
     """Shared helper: tool ``deriva_ml_get_dataset_spec`` and resource
-    ``deriva://catalog/{h}/{c}/ml/dataset/{rid}/spec`` both call this so
+    ``deriva://catalog/{h}/{c}/deriva-ml/dataset/{rid}/spec`` both call this so
     their payloads cannot drift.
 
     Args:

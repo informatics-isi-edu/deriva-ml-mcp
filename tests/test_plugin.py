@@ -151,33 +151,33 @@ _ALL_REGISTERED_TOOLS = (
 # ``coverage.md`` in lockstep with ``resources/ml.py``.
 _ML_RESOURCE_URIS = frozenset(
     {
-        "deriva://catalog/{hostname}/{catalog_id}/ml/datasets",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/members",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/workflows",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{workflow_rid}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/executions",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/datasets",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}/members",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/workflows",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/workflow/{workflow_rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/executions",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/execution/{execution_rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/features/{table_name}",
         # Asset resources. Single-asset detail by RID is unchanged;
         # ``ml/asset-tables`` was retired in v3.4 in favor of the
         # schema-scoped ``ml/assets/{schema}`` discovery surface.
-        "deriva://catalog/{hostname}/{catalog_id}/ml/asset/{asset_rid}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}/{asset_table}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/asset/{asset_rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/assets/{schema}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/assets/{schema}/{asset_table}",
         # v3.4 vocabulary discovery resources. Replaced the
         # ``ml/registries`` curated-four bundle with a schema-scoped
         # hierarchy that surfaces user-defined vocabularies too.
-        "deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}/{vocab_name}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/vocabularies/{schema}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/vocabularies/{schema}/{vocab_name}",
         # v3.3 lineage resource (mirrors deriva_ml_get_lineage tool).
-        "deriva://catalog/{hostname}/{catalog_id}/ml/lineage/{rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/lineage/{rid}",
         # v3.3 dataset-spec resource (mirrors deriva_ml_get_dataset_spec tool).
-        "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/spec",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}/spec",
         # bag-preview resource (mirrors deriva_ml_bag_info tool, current
         # version, no exclusions). Closes a documented-but-missing URI
         # flagged by the debug-bag-contents skill (2026-05-13 e2e findings).
-        "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/bag-preview",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}/bag-preview",
         # Static cold-start orientation resources. Same content as the
         # matching MCP prompts (``deriva_ml_getting_started`` /
         # ``deriva_ml_concepts``); exposed as resources so resource-walking

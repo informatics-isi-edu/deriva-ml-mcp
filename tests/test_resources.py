@@ -40,26 +40,32 @@ def resource_ctx(ctx, mock_ml):
 # ---------------------------------------------------------------------------
 
 
-_DATASETS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/datasets"
-_DATASET_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}"
-_DATASET_SPEC_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/spec"
+_DATASETS_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/datasets"
+_DATASET_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}"
+_DATASET_SPEC_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}/spec"
 _DATASET_BAG_PREVIEW_URI = (
-    "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/bag-preview"
+    "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}/bag-preview"
 )
-_DATASET_MEMBERS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/members"
-_WORKFLOWS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/workflows"
-_WORKFLOW_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{workflow_rid}"
-_EXECUTIONS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/executions"
-_EXECUTION_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}"
-_LINEAGE_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/lineage/{rid}"
-_FEATURES_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}"
-_ASSET_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/asset/{asset_rid}"
-_ASSETS_IN_SCHEMA_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}"
+_DATASET_MEMBERS_URI = (
+    "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}/members"
+)
+_WORKFLOWS_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/workflows"
+_WORKFLOW_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/workflow/{workflow_rid}"
+_EXECUTIONS_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/executions"
+_EXECUTION_DETAIL_URI = (
+    "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/execution/{execution_rid}"
+)
+_LINEAGE_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/lineage/{rid}"
+_FEATURES_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/features/{table_name}"
+_ASSET_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/asset/{asset_rid}"
+_ASSETS_IN_SCHEMA_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/assets/{schema}"
 _ASSET_TABLE_CONTENTS_URI = (
-    "deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}/{asset_table}"
+    "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/assets/{schema}/{asset_table}"
 )
-_VOCABS_IN_SCHEMA_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}"
-_VOCAB_TERMS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}/{vocab_name}"
+_VOCABS_IN_SCHEMA_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/vocabularies/{schema}"
+_VOCAB_TERMS_URI = (
+    "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/vocabularies/{schema}/{vocab_name}"
+)
 
 
 def _make_dataset_mock(
@@ -170,22 +176,22 @@ def test_register_adds_all_resources(resource_ctx, capturing_mcp):
         "deriva://deriva-ml/concepts",
         "deriva://deriva-ml/getting-started",
         # Catalog-scoped ML resource templates.
-        "deriva://catalog/{hostname}/{catalog_id}/ml/datasets",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/spec",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/bag-preview",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/members",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/workflows",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{workflow_rid}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/executions",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/lineage/{rid}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/asset/{asset_rid}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}/{asset_table}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}",
-        "deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}/{vocab_name}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/datasets",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}/spec",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}/bag-preview",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}/members",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/workflows",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/workflow/{workflow_rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/executions",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/execution/{execution_rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/lineage/{rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/features/{table_name}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/asset/{asset_rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/assets/{schema}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/assets/{schema}/{asset_table}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/vocabularies/{schema}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/vocabularies/{schema}/{vocab_name}",
     }
     actual = set(capturing_mcp.resources.keys())
     assert actual == expected, (

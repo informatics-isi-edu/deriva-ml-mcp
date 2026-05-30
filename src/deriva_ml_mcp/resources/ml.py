@@ -20,21 +20,21 @@ Resources differ from tools in three respects:
 
 Resources registered:
 
-    deriva://catalog/{hostname}/{catalog_id}/ml/datasets
-    deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}
-    deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/spec
-    deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/members
-    deriva://catalog/{hostname}/{catalog_id}/ml/workflows
-    deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{workflow_rid}
-    deriva://catalog/{hostname}/{catalog_id}/ml/executions
-    deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}
-    deriva://catalog/{hostname}/{catalog_id}/ml/lineage/{rid}
-    deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}
-    deriva://catalog/{hostname}/{catalog_id}/ml/asset/{asset_rid}
-    deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}
-    deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}/{asset_table}
-    deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}
-    deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}/{vocab_name}
+    deriva://catalog/{hostname}/{catalog_id}/deriva-ml/datasets
+    deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}
+    deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}/spec
+    deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}/members
+    deriva://catalog/{hostname}/{catalog_id}/deriva-ml/workflows
+    deriva://catalog/{hostname}/{catalog_id}/deriva-ml/workflow/{workflow_rid}
+    deriva://catalog/{hostname}/{catalog_id}/deriva-ml/executions
+    deriva://catalog/{hostname}/{catalog_id}/deriva-ml/execution/{execution_rid}
+    deriva://catalog/{hostname}/{catalog_id}/deriva-ml/lineage/{rid}
+    deriva://catalog/{hostname}/{catalog_id}/deriva-ml/features/{table_name}
+    deriva://catalog/{hostname}/{catalog_id}/deriva-ml/asset/{asset_rid}
+    deriva://catalog/{hostname}/{catalog_id}/deriva-ml/assets/{schema}
+    deriva://catalog/{hostname}/{catalog_id}/deriva-ml/assets/{schema}/{asset_table}
+    deriva://catalog/{hostname}/{catalog_id}/deriva-ml/vocabularies/{schema}
+    deriva://catalog/{hostname}/{catalog_id}/deriva-ml/vocabularies/{schema}/{vocab_name}
 """
 
 from __future__ import annotations
@@ -350,7 +350,7 @@ def register(ctx: PluginContext) -> None:
         skip prompts) still see the (hostname, catalog_id) rule, the
         pagination contract, the resource-vs-tool decision, and the
         discovery-via-resources orientation. Read this before using any
-        ``deriva_ml_*`` tool or ``deriva://catalog/.../ml/...`` resource.
+        ``deriva_ml_*`` tool or ``deriva://catalog/.../deriva-ml/...`` resource.
         """
         return _GETTING_STARTED_GUIDE
 
@@ -366,7 +366,7 @@ def register(ctx: PluginContext) -> None:
         """
         return _CONCEPTS_GUIDE
 
-    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/datasets")
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/deriva-ml/datasets")
     async def ml_datasets(hostname: str, catalog_id: str) -> str:
         """Snapshot of all datasets in the catalog (up to 1000 rows).
 
@@ -397,7 +397,7 @@ def register(ctx: PluginContext) -> None:
                 audit=False,
             )
 
-    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}")
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}")
     async def ml_dataset_detail(hostname: str, catalog_id: str, dataset_rid: str) -> str:
         """Detail payload for one dataset: summary + chaise URL + version_history.
 
@@ -419,7 +419,7 @@ def register(ctx: PluginContext) -> None:
                 audit=False,
             )
 
-    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/spec")
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}/spec")
     async def ml_dataset_spec(hostname: str, catalog_id: str, dataset_rid: str) -> str:
         """``DatasetSpecConfig(...)`` snippet for one dataset (current version).
 
@@ -446,7 +446,9 @@ def register(ctx: PluginContext) -> None:
                 audit=False,
             )
 
-    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/bag-preview")
+    @ctx.resource(
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}/bag-preview"
+    )
     async def ml_dataset_bag_preview(hostname: str, catalog_id: str, dataset_rid: str) -> str:
         """Bag-content preview for one dataset (current version, no exclusions).
 
@@ -503,7 +505,9 @@ def register(ctx: PluginContext) -> None:
                 audit=False,
             )
 
-    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/members")
+    @ctx.resource(
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}/members"
+    )
     async def ml_dataset_members(hostname: str, catalog_id: str, dataset_rid: str) -> str:
         """Members of a dataset grouped by table, with a flattened sample list.
 
@@ -528,7 +532,7 @@ def register(ctx: PluginContext) -> None:
                 audit=False,
             )
 
-    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/workflows")
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/deriva-ml/workflows")
     async def ml_workflows(hostname: str, catalog_id: str) -> str:
         """Snapshot of all workflows in the catalog (up to 1000 rows).
 
@@ -551,7 +555,7 @@ def register(ctx: PluginContext) -> None:
                 audit=False,
             )
 
-    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{workflow_rid}")
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/deriva-ml/workflow/{workflow_rid}")
     async def ml_workflow_detail(hostname: str, catalog_id: str, workflow_rid: str) -> str:
         """Detail payload for one workflow: name, type, url, checksum, version, etc."""
         try:
@@ -568,7 +572,7 @@ def register(ctx: PluginContext) -> None:
                 audit=False,
             )
 
-    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/executions")
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/deriva-ml/executions")
     async def ml_executions(hostname: str, catalog_id: str) -> str:
         """Snapshot of all executions in the catalog (up to 1000 rows).
 
@@ -598,7 +602,7 @@ def register(ctx: PluginContext) -> None:
                 audit=False,
             )
 
-    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}")
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/deriva-ml/execution/{execution_rid}")
     async def ml_execution_detail(hostname: str, catalog_id: str, execution_rid: str) -> str:
         """Detail payload for one execution.
 
@@ -631,7 +635,7 @@ def register(ctx: PluginContext) -> None:
                 audit=False,
             )
 
-    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/lineage/{rid}")
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/deriva-ml/lineage/{rid}")
     async def ml_lineage(hostname: str, catalog_id: str, rid: str) -> str:
         """Provenance chain for any artifact (Dataset, Asset, Feature
         value, or Execution).
@@ -663,7 +667,7 @@ def register(ctx: PluginContext) -> None:
                 audit=False,
             )
 
-    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}")
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/deriva-ml/features/{table_name}")
     async def ml_features_for_table(hostname: str, catalog_id: str, table_name: str) -> str:
         """Features defined on the given target table (up to 1000 rows).
 
@@ -690,7 +694,7 @@ def register(ctx: PluginContext) -> None:
                 audit=False,
             )
 
-    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/asset/{asset_rid}")
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/deriva-ml/asset/{asset_rid}")
     async def ml_asset_detail(hostname: str, catalog_id: str, asset_rid: str) -> str:
         """Detail payload for one asset: summary + bundled executions.
 
@@ -718,7 +722,7 @@ def register(ctx: PluginContext) -> None:
                 audit=False,
             )
 
-    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}")
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/deriva-ml/assets/{schema}")
     async def ml_assets_in_schema(hostname: str, catalog_id: str, schema: str) -> str:
         """Asset tables in one schema.
 
@@ -755,7 +759,9 @@ def register(ctx: PluginContext) -> None:
                 audit=False,
             )
 
-    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}/{asset_table}")
+    @ctx.resource(
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/assets/{schema}/{asset_table}"
+    )
     async def ml_asset_table_contents(
         hostname: str, catalog_id: str, schema: str, asset_table: str
     ) -> str:
@@ -787,7 +793,7 @@ def register(ctx: PluginContext) -> None:
                 audit=False,
             )
 
-    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}")
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/deriva-ml/vocabularies/{schema}")
     async def ml_vocabularies_in_schema(hostname: str, catalog_id: str, schema: str) -> str:
         """Vocabulary tables in one schema.
 
@@ -823,7 +829,9 @@ def register(ctx: PluginContext) -> None:
                 audit=False,
             )
 
-    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}/{vocab_name}")
+    @ctx.resource(
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/vocabularies/{schema}/{vocab_name}"
+    )
     async def ml_vocabulary_terms(
         hostname: str, catalog_id: str, schema: str, vocab_name: str
     ) -> str:

@@ -57,17 +57,23 @@ pytestmark = [
 # Resource URI templates -- copies of the keys that resources/ml.py registers.
 # Kept here as constants so test functions read like the unit tests in
 # tests/test_resources.py.
-_DATASETS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/datasets"
-_DATASET_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}"
-_DATASET_MEMBERS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/dataset/{dataset_rid}/members"
-_WORKFLOWS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/workflows"
-_WORKFLOW_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/workflow/{workflow_rid}"
-_EXECUTIONS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/executions"
-_EXECUTION_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/execution/{execution_rid}"
-_FEATURES_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/features/{table_name}"
-_VOCABS_IN_SCHEMA_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}"
-_VOCAB_TERMS_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/vocabularies/{schema}/{vocab_name}"
-_ASSETS_IN_SCHEMA_URI = "deriva://catalog/{hostname}/{catalog_id}/ml/assets/{schema}"
+_DATASETS_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/datasets"
+_DATASET_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}"
+_DATASET_MEMBERS_URI = (
+    "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}/members"
+)
+_WORKFLOWS_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/workflows"
+_WORKFLOW_DETAIL_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/workflow/{workflow_rid}"
+_EXECUTIONS_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/executions"
+_EXECUTION_DETAIL_URI = (
+    "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/execution/{execution_rid}"
+)
+_FEATURES_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/features/{table_name}"
+_VOCABS_IN_SCHEMA_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/vocabularies/{schema}"
+_VOCAB_TERMS_URI = (
+    "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/vocabularies/{schema}/{vocab_name}"
+)
+_ASSETS_IN_SCHEMA_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/assets/{schema}"
 
 # A clearly-fake RID for the detail-error tests. The catalog is empty so
 # any RID would do, but one obviously not produced by Deriva makes the

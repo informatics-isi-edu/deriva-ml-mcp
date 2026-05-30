@@ -232,7 +232,7 @@ class DatasetDetail(DatasetSummary):
     """Full Dataset detail: summary + cite URL + version history.
 
     Produced by ``_get_dataset_detail_impl``. Used by the
-    ``deriva://catalog/{h}/{c}/ml/dataset/{rid}`` resource.
+    ``deriva://catalog/{h}/{c}/deriva-ml/dataset/{rid}`` resource.
 
     The ``cite_url`` field replaces the previous ``chaise_url`` field
     (renamed in v3.4 with no compat shim). The new URL is the
@@ -267,7 +267,7 @@ class DatasetMembersSummaryResponse(BaseModel):
     """Members-summary payload for a Dataset.
 
     Produced by ``_list_dataset_members_summary_impl``. Used by the
-    ``deriva://catalog/{h}/{c}/ml/dataset/{rid}/members`` resource.
+    ``deriva://catalog/{h}/{c}/deriva-ml/dataset/{rid}/members`` resource.
     The ``members`` list is capped at ``_MAX_LIMIT`` rows; for the
     full paginated member list, use the
     ``deriva_ml_list_dataset_members`` tool instead.
@@ -528,7 +528,7 @@ class ExecutionDetail(ExecutionSummary):
     """Full Execution detail: summary + inputs + outputs + optional experiment.
 
     Produced by ``_get_execution_detail_impl``. Used by the
-    ``deriva://catalog/{h}/{c}/ml/execution/{rid}`` resource.
+    ``deriva://catalog/{h}/{c}/deriva-ml/execution/{rid}`` resource.
 
     The ``experiment`` key is None when the execution is not a
     Hydra-driven experiment (the common case). The ``inputs.datasets``
@@ -937,7 +937,7 @@ class AssetDetail(AssetSummary):
     """Full Asset detail with associated-execution provenance.
 
     Produced by ``_get_asset_detail_impl``. Used by the
-    ``deriva://catalog/{h}/{c}/ml/asset/{rid}`` resource.
+    ``deriva://catalog/{h}/{c}/deriva-ml/asset/{rid}`` resource.
 
     Executions semantics. Two distinct empty-list cases are
     distinguishable on the wire so callers can tell "no executions

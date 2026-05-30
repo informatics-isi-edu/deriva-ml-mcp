@@ -260,7 +260,7 @@ def _list_executions_impl(
 def _get_execution_detail_impl(ml: Any, execution_rid: str) -> ExecutionDetail:
     """Build the execution detail payload (summary + inputs + outputs + experiment).
 
-    Used by the ``deriva://catalog/{h}/{c}/ml/execution/{rid}`` resource.
+    Used by the ``deriva://catalog/{h}/{c}/deriva-ml/execution/{rid}`` resource.
     Aggregates input datasets, asset I/O grouped by role, and an
     optional ``experiment`` key for executions that are Hydra-driven
     experiments.
@@ -967,7 +967,7 @@ def register(ctx: PluginContext) -> None:
         view). See deriva-ml ADR-0001 for the rationale.
 
         Same shape as the
-        ``deriva://catalog/{h}/{c}/ml/lineage/{rid}`` resource -- the
+        ``deriva://catalog/{h}/{c}/deriva-ml/lineage/{rid}`` resource -- the
         two share an internal helper so the payloads cannot drift.
 
         Args:
@@ -1026,7 +1026,7 @@ def register(ctx: PluginContext) -> None:
 
 def _get_lineage_impl(ml: Any, rid: str, depth: int | None, max_executions: int) -> Any:
     """Shared helper: tool ``deriva_ml_get_lineage`` and resource
-    ``deriva://catalog/{h}/{c}/ml/lineage/{rid}`` both call this so
+    ``deriva://catalog/{h}/{c}/deriva-ml/lineage/{rid}`` both call this so
     their payloads cannot drift.
 
     Wraps ``ml.lookup_lineage(rid, depth=..., max_executions=...)``

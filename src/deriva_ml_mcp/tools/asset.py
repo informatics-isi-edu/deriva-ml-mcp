@@ -5,7 +5,7 @@ Read tools: ``deriva_ml_list_assets``, ``deriva_ml_find_assets``,
 Mutation tools: ``deriva_ml_update_asset``.
 
 Asset table discovery is exposed through the
-``deriva://catalog/{h}/{c}/ml/assets/{schema}`` resource (in
+``deriva://catalog/{h}/{c}/deriva-ml/assets/{schema}`` resource (in
 ``resources/ml.py``), not a tool, since asset tables are bounded
 per-schema and have no need for cursor pagination.
 
@@ -30,7 +30,7 @@ read+update-by-RID surfaces:
 - ``list_assets`` paginates by Asset RID using the standard
   ``_paginate`` + ``_read_rid(rid_key="asset_rid")`` cursor pattern.
 - ``lookup_asset`` returns a bundled detail (the same payload the
-  ``deriva://catalog/{h}/{c}/ml/asset/{rid}`` resource serves) so
+  ``deriva://catalog/{h}/{c}/deriva-ml/asset/{rid}`` resource serves) so
   resource and tool stay byte-identical via the shared
   ``_get_asset_detail_impl`` helper.
 - ``update_asset`` follows the curation pattern shared with
@@ -496,7 +496,7 @@ def register(ctx: PluginContext) -> None:
         Returns the per-asset summary plus the list of executions
         associated with the asset (with role where the underlying API
         exposes it). Same shape as the
-        ``deriva://catalog/{h}/{c}/ml/asset/{rid}`` resource -- the two
+        ``deriva://catalog/{h}/{c}/deriva-ml/asset/{rid}`` resource -- the two
         share an internal helper so the payloads cannot drift.
 
         ``asset_types`` field note: execution-linked assets carry an
