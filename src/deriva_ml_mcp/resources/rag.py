@@ -76,6 +76,22 @@ Vocab freshness (v1.1):
     fire it, and the cost/benefit is wrong for v1.1; the manual tool
     is the bridge until upstream ships ``on_data_change``.
 
+First-connect lag (no startup prewarm):
+    All four hooks here fire lazily on the first tool call that
+    connects to a given catalog, so the first user to touch a catalog
+    after a (re)start pays the indexing cost inline. The per-server
+    GitHub doc sources ARE pre-warmed at startup (core's
+    ``_startup_update``), but there is no startup prewarm for
+    per-catalog indexing. The catalog-public parts (core's schema
+    index + this plugin's vocab hook) COULD be primed at startup from
+    an operator-configured catalog list; the per-user trio cannot
+    (no calling-user credential exists at startup -- correct by
+    design). Tracked upstream as deriva-mcp-core#10 (startup prewarm
+    for catalog-public per-catalog indexing). Workaround until then:
+    call ``deriva_ml_reindex_vocabularies(hostname, catalog_id)`` once
+    per catalog after a restart to remove the vocab portion of the
+    first-connect lag.
+
 Wiring into ``plugin.py`` is in ``register_rag_sources(ctx)``. This
 module is import-safe and idempotent on its own.
 """
