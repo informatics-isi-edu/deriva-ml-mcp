@@ -142,6 +142,67 @@ Inherited from `deriva-mcp-core`'s plugin authoring guide
   proceed" even though no user action occurred). See
   Development Gotchas → "Sync calls in async tools" for history.
 
+## Naming conventions (provenance: which plugin does a name come from?)
+
+Multiple plugins co-load on one `deriva-mcp-core` server (this plugin,
+the eye-ai plugin, future domain plugins). A client/LLM must be able to
+tell, from a name alone, which plugin exposed it. The convention that
+makes that work, confirmed by the 2026-05-30 naming audit:
+
+**Tools — `deriva_ml_<verb>[_<noun>]`.** Every tool this plugin
+registers carries the `deriva_ml_` prefix (e.g. `deriva_ml_list_datasets`,
+`deriva_ml_create_workflow`). This distinguishes them from:
+- **core's built-in tools**, which are bare verbs (`get_entities`,
+  `add_term`, `create_table`, `query_attribute`) plus the
+  self-namespaced `rag_*` family; and
+- **sibling plugins**, which use their own `deriva_<domain>_` prefix
+  (the eye-ai plugin uses `deriva_eye_ai_*`).
+
+The general rule for any deriva-mcp-core domain plugin is
+`deriva_<domain>_<verb>`: a shared `deriva_` root + a domain token. New
+tools MUST follow it. There are zero unprefixed tools in this plugin and
+that is load-bearing — `tests/test_plugin.py`'s exact-equality frozensets
+pin it.
+
+**Prompts — `deriva_ml_<name>`.** `deriva_ml_concepts`,
+`deriva_ml_getting_started`. Same prefix rule as tools. (Core's prompts
+use the `*_guide` suffix: `query_guide`, `entity_guide`, etc.)
+
+**Audit events — `deriva_ml_<op>` / `deriva_ml_<op>_failed`.** See Tool
+Implementation Rules above. Core's own events use `<module>_<op>`
+(`catalog_create`, `vocabulary_add_term`) with no top-level prefix, so
+the `deriva_ml_` prefix keeps this plugin's events distinguishable in
+the audit log.
+
+**Resource URIs — `deriva://catalog/{h}/{c}/deriva-ml/...`.** The
+catalog-scoped resource family uses a `/deriva-ml/` path segment (NOT a
+terse `/ml/`). This was renamed from `/ml/` in the 2026-05-30 audit
+cleanup precisely for provenance clarity: the URI root
+`deriva://catalog/{h}/{c}/...` is SHARED with core (core ships
+`deriva://catalog/{h}/{c}/schema|tables`), so the plugin-naming segment
+is the only origin marker — it must name the plugin, not read as
+generic. The two static cold-start resources use
+`deriva://deriva-ml/concepts` and `deriva://deriva-ml/getting-started`
+(authority segment names the plugin). New resources MUST use a
+`deriva-ml`-naming segment; never reintroduce a bare `/ml/`.
+
+**RAG source-name prefixes.** Per-user catalog rows use core's
+`data:{host}:{cat}:{user_id}:...` prefix (gated by core's user-id
+filter). Catalog-public content uses a plugin-custom prefix that bypasses
+that filter: this plugin uses `vocab:` for vocabularies; the eye-ai
+plugin uses `eye-ai:`. These bypass prefixes are independent carve-outs
+from core's filter (which only gates `schema:` / `data:` / `enriched:`).
+A new public-bypass prefix must be unique across co-loaded plugins;
+embed `{host}:{cat}` in the source name so same-prefix content from
+different catalogs never collides. GitHub doc sources are named
+`deriva-ml-docs` / `deriva-ml-mcp-docs` (the `-docs` suffix + `deriva-ml`
+token make them self-identifying).
+
+**Entry-point name == package name.** The `deriva_mcp.plugins`
+entry-point name is `deriva-ml-mcp` (matches the PyPI/package name), so
+the deriva-docker `DERIVA_MCP_PLUGIN_ALLOWLIST` value works without the
+name-vs-package confusion. (See Development Gotchas for the war story.)
+
 ## Stateless / bounded-resource rule for MCP operations
 
 **MCP operations must be stateless on the server side and consume bounded

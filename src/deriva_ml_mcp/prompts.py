@@ -673,11 +673,14 @@ the ``deriva_ml_create_dataset`` tool). The bare verbs below name the
 concept; prepend ``deriva_ml_`` (and append the noun where natural)
 for the wire name.
 
-    dataset    -- 17 tools. Curated bundles of catalog rows (image
+    dataset    -- 19 tools. Curated bundles of catalog rows (image
                   collections, training subsets, splits). Verbs:
-                  list / get / create / add_members / delete_members /
-                  update / increment_version / cache /
-                  denormalize / split / get_dataset_spec / bag_info.
+                  list / get / list_members / list_relations /
+                  list_element_types / create / delete / add_members /
+                  delete_members / update / add_element_type / release /
+                  get_dataset_spec / bag_info / denormalize /
+                  validate_dataset_specs / validate_execution_configuration /
+                  validate_config_file / bootstrap_config.
 
     feature    -- 5 tools. Per-row labels, scores, and asset attachments
                   attached to a target table. Verbs: list / get /
