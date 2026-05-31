@@ -1,10 +1,10 @@
-"""Smoke tests for the deriva-ml-mcp plugin entry point."""
+"""Smoke tests for the deriva-ml-mcp-plugin plugin entry point."""
 
 from __future__ import annotations
 
 from importlib import metadata
 
-from deriva_ml_mcp.plugin import register
+from deriva_ml_mcp_plugin.plugin import register
 
 # Per-domain frozensets of registered tools. Each new domain phase
 # (workflow, execution) adds one of these and OR-unions it
@@ -208,17 +208,17 @@ def test_register_runs_without_error(ctx):
 
 
 def test_entry_point_resolves_to_register():
-    """The 'deriva-ml-mcp' entry point must resolve to our register function.
+    """The 'deriva-ml' entry point must resolve to our register function.
 
-    Name matches the PyPI package name (set in pyproject.toml under
-    ``[project.entry-points."deriva_mcp.plugins"]``) so the deriva-docker
-    default ``DERIVA_MCP_PLUGIN_ALLOWLIST=facebase,deriva-ml-mcp`` loads
-    the plugin without override. The earlier name was ``deriva-ml`` --
-    see commit edd2aae for the alignment rationale.
+    The entry-point name is the bare domain (``deriva-ml``), matching the
+    facebase-deriva-mcp-plugin convention (entry point ``facebase``). This is
+    the *plugin* token the deriva-docker ``DERIVA_MCP_PLUGIN_ALLOWLIST``
+    references — distinct from the distribution name (``deriva-ml-mcp-plugin``)
+    and the import package (``deriva_ml_mcp_plugin``).
     """
     eps = metadata.entry_points(group="deriva_mcp.plugins")
-    matching = [ep for ep in eps if ep.name == "deriva-ml-mcp"]
-    assert matching, "entry point 'deriva-ml-mcp' not declared"
+    matching = [ep for ep in eps if ep.name == "deriva-ml"]
+    assert matching, "entry point 'deriva-ml' not declared"
     assert matching[0].load() is register
 
 
@@ -422,7 +422,7 @@ def test_vocab_hook_writes_to_vocab_prefix_not_data_prefix(ctx):
     fake_store.delete_source = AsyncMock()
     fake_store.add = AsyncMock()
 
-    from deriva_ml_mcp.resources import rag as rag_module
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
 
     with (
         patch.object(rag_module, "get_rag_store", return_value=fake_store),
@@ -466,7 +466,7 @@ def test_data_sources_use_per_rid_naming(ctx):
         captured.append((table_name, source))
         return 1
 
-    from deriva_ml_mcp.resources import rag as rag_module
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
 
     user_id = "https://auth.example.org/sub/u1"
     user_prefix = f"data:h.example:1:{user_id}"

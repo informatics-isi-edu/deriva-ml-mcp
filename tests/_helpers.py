@@ -1,4 +1,4 @@
-"""Module-level test utilities for deriva-ml-mcp.
+"""Module-level test utilities for deriva-ml-mcp-plugin.
 
 Pure helpers (functions, classes, factories) that don't depend on
 pytest's fixture machinery. Pytest-fixture definitions live in
@@ -66,20 +66,20 @@ def make_patch_audit(module_name: str):
     ``deriva_mcp_core.telemetry`` directly (success-path emission). The
     failure path goes through ``_error_envelope`` in ``_helpers``, which
     has its own bound name. To capture both with one mock, we patch BOTH
-    ``deriva_ml_mcp.tools.<module_name>.audit_event`` and
-    ``deriva_ml_mcp._helpers.audit_event`` to the same MagicMock.
+    ``deriva_ml_mcp_plugin.tools.<module_name>.audit_event`` and
+    ``deriva_ml_mcp_plugin._helpers.audit_event`` to the same MagicMock.
 
     Why two patches: Python's ``from X import name`` binds ``name`` in
     the importing module's namespace at import time, so patching only
     the source module wouldn't redirect calls in modules that already
-    bound the name. See ``deriva_ml_mcp/_helpers.py`` docstring for the
+    bound the name. See ``deriva_ml_mcp_plugin/_helpers.py`` docstring for the
     canonical explanation.
 
     Args:
         module_name: Bare domain module name (e.g. ``"dataset"``,
             ``"feature"``, ``"workflow"``, ``"execution"``). Used to
             construct the import path
-            ``deriva_ml_mcp.tools.<module_name>.audit_event``.
+            ``deriva_ml_mcp_plugin.tools.<module_name>.audit_event``.
 
     Returns:
         A no-arg context manager. Entering yields a single
@@ -92,13 +92,13 @@ def make_patch_audit(module_name: str):
         ...     pass
         >>> # mock_audit captures both success and failure-path audits
     """
-    target = f"deriva_ml_mcp.tools.{module_name}.audit_event"
+    target = f"deriva_ml_mcp_plugin.tools.{module_name}.audit_event"
 
     @contextmanager
     def _patch():
         with (
             patch(target) as mock_audit,
-            patch("deriva_ml_mcp._helpers.audit_event", new=mock_audit),
+            patch("deriva_ml_mcp_plugin._helpers.audit_event", new=mock_audit),
         ):
             yield mock_audit
 

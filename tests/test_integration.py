@@ -1,4 +1,4 @@
-"""Live-catalog integration tests for deriva-ml-mcp dataset tools.
+"""Live-catalog integration tests for deriva-ml-mcp-plugin dataset tools.
 
 These exercise the registered dataset tools end-to-end against a real
 Deriva server. They are gated by the ``integration`` pytest marker and
@@ -77,7 +77,7 @@ def integration_dataset_tools(demo_catalog: tuple[str, str]) -> Iterator[_Captur
     plugin_ctx = PluginContext(capturing)
     _set_plugin_context(plugin_ctx)
     try:
-        from deriva_ml_mcp.tools import dataset as dataset_module
+        from deriva_ml_mcp_plugin.tools import dataset as dataset_module
 
         dataset_module.register(plugin_ctx)
         yield capturing

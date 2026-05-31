@@ -59,12 +59,12 @@ def _make_feature_mock(
 def feature_ctx(ctx, mock_ml):
     """Register feature tools with mock_ml as the DerivaML stand-in.
 
-    Patches at the use-site (`deriva_ml_mcp.tools.feature.get_ml`) and
+    Patches at the use-site (`deriva_ml_mcp_plugin.tools.feature.get_ml`) and
     imports the tool module *inside* the patch block so registration sees
     the mock.
     """
-    with patch("deriva_ml_mcp.tools.feature.get_ml", return_value=mock_ml):
-        from deriva_ml_mcp.tools import feature as feature_module
+    with patch("deriva_ml_mcp_plugin.tools.feature.get_ml", return_value=mock_ml):
+        from deriva_ml_mcp_plugin.tools import feature as feature_module
 
         feature_module.register(ctx)
         yield ctx

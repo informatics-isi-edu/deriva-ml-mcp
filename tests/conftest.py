@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for deriva-ml-mcp tests.
+"""Shared pytest fixtures for deriva-ml-mcp-plugin tests.
 
 Module-level utilities (``_success_calls``, ``make_patch_audit``,
 ``_CapturingMCP``, ``_server_reachable``) live in ``tests/_helpers.py``

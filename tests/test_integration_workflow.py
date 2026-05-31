@@ -1,4 +1,4 @@
-"""Live-catalog integration tests for deriva-ml-mcp workflow tools.
+"""Live-catalog integration tests for deriva-ml-mcp-plugin workflow tools.
 
 Same shape as ``tests/test_integration.py`` and
 ``tests/test_integration_feature.py`` — gated by the ``integration``
@@ -119,7 +119,7 @@ def integration_workflow_tools(
     plugin_ctx = PluginContext(capturing)
     _set_plugin_context(plugin_ctx)
     try:
-        from deriva_ml_mcp.tools import workflow as workflow_module
+        from deriva_ml_mcp_plugin.tools import workflow as workflow_module
 
         workflow_module.register(plugin_ctx)
         yield capturing

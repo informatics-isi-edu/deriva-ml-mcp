@@ -11,7 +11,7 @@ modules consume to keep tool / resource shapes in sync.
 
 The helpers live here (not in a sibling ``_helpers.py``) because they
 are dataset-specific and the resource modules already import them via
-``deriva_ml_mcp.tools.dataset`` -- the package ``__init__.py`` re-exports
+``deriva_ml_mcp_plugin.tools.dataset`` -- the package ``__init__.py`` re-exports
 them so that import path keeps resolving identically after the split.
 
 Every tool wraps DERIVA I/O in ``with deriva_call():`` and routes errors
@@ -30,13 +30,13 @@ from deriva_ml.dataset.aux_classes import DatasetSpec
 
 # ``get_ml`` is accessed inside tool bodies via attribute lookup on the
 # parent package (``_pkg.get_ml``) so a single
-# ``patch("deriva_ml_mcp.tools.dataset.get_ml")`` (used by the
+# ``patch("deriva_ml_mcp_plugin.tools.dataset.get_ml")`` (used by the
 # ``dataset_ctx`` fixture in tests/test_dataset.py) redirects every
 # call across read / mutate / complex submodules. A direct
-# ``from deriva_ml_mcp.ml_context import get_ml`` here would create a
+# ``from deriva_ml_mcp_plugin.ml_context import get_ml`` here would create a
 # per-submodule binding the patch can't reach.
-import deriva_ml_mcp.tools.dataset as _pkg  # noqa: E402  (intentional cycle)
-from deriva_ml_mcp._helpers import (
+import deriva_ml_mcp_plugin.tools.dataset as _pkg  # noqa: E402  (intentional cycle)
+from deriva_ml_mcp_plugin._helpers import (
     _MAX_LIMIT,
     _cite_dataset_version_url,
     _error_envelope,
@@ -44,7 +44,7 @@ from deriva_ml_mcp._helpers import (
     _read_rid,
     _table_to_dict,
 )
-from deriva_ml_mcp._response_models import (
+from deriva_ml_mcp_plugin._response_models import (
     DatasetDetail,
     DatasetListResponse,
     DatasetMemberRef,
@@ -67,7 +67,7 @@ def _summarize_dataset(ds: Any) -> DatasetSummary:
 
     Returns:
         ``DatasetSummary`` Pydantic instance -- see
-        ``deriva_ml_mcp._response_models``.
+        ``deriva_ml_mcp_plugin._response_models``.
 
     Note:
         v2.2 sweep: this helper now returns Pydantic. Consumers that
@@ -108,7 +108,7 @@ def _list_datasets_impl(
             sets is bounded by the internal fetch cap.
 
     Returns:
-        ``DatasetListResponse`` -- see ``deriva_ml_mcp._response_models``.
+        ``DatasetListResponse`` -- see ``deriva_ml_mcp_plugin._response_models``.
     """
     raw = list(
         ml.find_datasets(
@@ -149,7 +149,7 @@ def _get_dataset_detail_impl(ml: Any, dataset_rid: str) -> DatasetDetail:
         dataset_rid: The RID of the dataset to look up.
 
     Returns:
-        ``DatasetDetail`` -- see ``deriva_ml_mcp._response_models``.
+        ``DatasetDetail`` -- see ``deriva_ml_mcp_plugin._response_models``.
         ``version_history`` is a list of deriva-ml ``DatasetHistory``
         Pydantic models (no re-declaration of the version-row shape on
         our side).
@@ -191,7 +191,7 @@ def _list_dataset_members_summary_impl(ml: Any, dataset_rid: str) -> DatasetMemb
 
     Returns:
         ``DatasetMembersSummaryResponse`` -- see
-        ``deriva_ml_mcp._response_models``.
+        ``deriva_ml_mcp_plugin._response_models``.
     """
     ds = ml.lookup_dataset(dataset_rid)
     members_by_table = ds.list_dataset_members()
@@ -378,7 +378,7 @@ def register(ctx: PluginContext) -> None:
 
         Returns:
             ``DatasetDetail`` JSON shape -- see
-            ``deriva_ml_mcp._response_models``.
+            ``deriva_ml_mcp_plugin._response_models``.
 
         Note:
             v2.0 wire change vs v1.x: the field key is

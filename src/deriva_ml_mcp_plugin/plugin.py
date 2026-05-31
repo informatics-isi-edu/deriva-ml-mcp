@@ -1,4 +1,4 @@
-"""Plugin entry point for deriva-ml-mcp.
+"""Plugin entry point for deriva-ml-mcp-plugin.
 
 The ``register`` function is exposed via the ``deriva_mcp.plugins``
 entry-point group in ``pyproject.toml``. ``deriva-mcp-core`` calls it
@@ -9,7 +9,7 @@ Example:
     plugin loader)::
 
         from deriva_mcp_core.plugin.api import PluginContext
-        from deriva_ml_mcp.plugin import register
+        from deriva_ml_mcp_plugin.plugin import register
 
         ctx = PluginContext(some_mcp_server)
         register(ctx)
@@ -19,23 +19,23 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from deriva_ml_mcp import prompts as _ml_prompts
-from deriva_ml_mcp.resources import ml as _ml_resources
-from deriva_ml_mcp.resources import rag as _ml_rag
-from deriva_ml_mcp.tools import asset as _asset
-from deriva_ml_mcp.tools import dataset as _dataset
-from deriva_ml_mcp.tools import execution as _execution
-from deriva_ml_mcp.tools import feature as _feature
-from deriva_ml_mcp.tools import maintenance as _maintenance
-from deriva_ml_mcp.tools import vocabulary as _vocabulary
-from deriva_ml_mcp.tools import workflow as _workflow
+from deriva_ml_mcp_plugin import prompts as _ml_prompts
+from deriva_ml_mcp_plugin.resources import ml as _ml_resources
+from deriva_ml_mcp_plugin.resources import rag as _ml_rag
+from deriva_ml_mcp_plugin.tools import asset as _asset
+from deriva_ml_mcp_plugin.tools import dataset as _dataset
+from deriva_ml_mcp_plugin.tools import execution as _execution
+from deriva_ml_mcp_plugin.tools import feature as _feature
+from deriva_ml_mcp_plugin.tools import maintenance as _maintenance
+from deriva_ml_mcp_plugin.tools import vocabulary as _vocabulary
+from deriva_ml_mcp_plugin.tools import workflow as _workflow
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
 
 
 def register(ctx: PluginContext) -> None:
-    """Register all deriva-ml-mcp tools and resources with the given context.
+    """Register all deriva-ml-mcp-plugin tools and resources with the given context.
 
     Phase 5 ships dataset, feature, workflow, and execution domain tools.
     Phase 6 added MCP resources and per-user RAG indexing (one GitHub

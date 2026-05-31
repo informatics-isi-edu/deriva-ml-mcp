@@ -24,7 +24,7 @@ deriva-mcp-core API for plugin-contributed instructions exists.
 
 from __future__ import annotations
 
-from deriva_ml_mcp import prompts
+from deriva_ml_mcp_plugin import prompts
 
 _EXPECTED_PROMPT_NAMES = frozenset(
     {

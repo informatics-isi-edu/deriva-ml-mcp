@@ -10,7 +10,7 @@ consume to keep tool / resource shapes in sync.
 
 The helpers live here (not in a sibling ``_helpers.py``) because they
 are execution-specific and the resource modules already import them via
-``deriva_ml_mcp.tools.execution`` -- the package ``__init__.py`` re-exports
+``deriva_ml_mcp_plugin.tools.execution`` -- the package ``__init__.py`` re-exports
 them so that import path keeps resolving identically after the split.
 
 Every tool wraps DERIVA I/O in ``with deriva_call():`` and routes errors
@@ -28,13 +28,13 @@ from deriva_ml.execution.execution import ExecutionStatus
 
 # ``get_ml`` is accessed inside tool bodies via attribute lookup on the
 # parent package (``_pkg.get_ml``) so a single
-# ``patch("deriva_ml_mcp.tools.execution.get_ml")`` (used by the
+# ``patch("deriva_ml_mcp_plugin.tools.execution.get_ml")`` (used by the
 # ``execution_ctx`` fixture in tests/test_execution.py) redirects every
 # call across read / mutate submodules. A direct
-# ``from deriva_ml_mcp.ml_context import get_ml`` here would create a
+# ``from deriva_ml_mcp_plugin.ml_context import get_ml`` here would create a
 # per-submodule binding the patch can't reach.
-import deriva_ml_mcp.tools.execution as _pkg  # noqa: E402  (intentional cycle)
-from deriva_ml_mcp._helpers import (
+import deriva_ml_mcp_plugin.tools.execution as _pkg  # noqa: E402  (intentional cycle)
+from deriva_ml_mcp_plugin._helpers import (
     _MAX_LIMIT,
     _cite_dataset_version_url,
     _cite_url,
@@ -42,7 +42,7 @@ from deriva_ml_mcp._helpers import (
     _paginate,
     _read_rid,
 )
-from deriva_ml_mcp._response_models import (
+from deriva_ml_mcp_plugin._response_models import (
     ExecutionAssetRef,
     ExecutionChildrenResponse,
     ExecutionDetail,
@@ -148,7 +148,7 @@ def _summarize_execution(record: Any) -> ExecutionSummary:
 
     Returns:
         ``ExecutionSummary`` Pydantic instance -- see
-        ``deriva_ml_mcp._response_models``.
+        ``deriva_ml_mcp_plugin._response_models``.
 
     Note:
         v2.2 sweep: this helper now returns Pydantic. Consumers that
@@ -222,7 +222,7 @@ def _list_executions_impl(
             sets is bounded by the internal fetch cap.
 
     Returns:
-        ``ExecutionListResponse`` -- see ``deriva_ml_mcp._response_models``.
+        ``ExecutionListResponse`` -- see ``deriva_ml_mcp_plugin._response_models``.
     """
     status_enum = ExecutionStatus(status) if status else None
     raw = list(
@@ -288,7 +288,7 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> ExecutionDetail:
 
     Returns:
         ``ExecutionDetail`` Pydantic model -- see
-        ``deriva_ml_mcp._response_models``. Wire shape matches v1.x
+        ``deriva_ml_mcp_plugin._response_models``. Wire shape matches v1.x
         verbatim: ``{...summary fields..., "inputs": {"datasets":
         [...], "assets": [...]}, "outputs": {"assets": [...]},
         "experiment": {...} | null}``.
@@ -430,7 +430,7 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> ExecutionDetail:
                 "ExecutionExperiment serialization failed for %s: %s. "
                 "Returning experiment=None; the underlying Experiment object "
                 "from deriva-ml exists but its fields failed validation. This "
-                "is likely a deriva-ml-mcp serializer regression -- the "
+                "is likely a deriva-ml-mcp-plugin serializer regression -- the "
                 "lookup_experiment path itself succeeded.",
                 execution_rid,
                 exc,

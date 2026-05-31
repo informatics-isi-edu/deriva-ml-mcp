@@ -1,4 +1,4 @@
-"""Execution domain tools for deriva-ml-mcp.
+"""Execution domain tools for deriva-ml-mcp-plugin.
 
 **Read-only domain.** As of v0.5.0, this package registers only
 read-side tools. The execution lifecycle (``create``, ``start``,
@@ -38,15 +38,15 @@ Public surface:
 - ``register(ctx)`` -- aggregator; dispatches to ``read.register(ctx)``.
   ``plugin.py`` calls this.
 - ``audit_event`` -- re-exported from ``deriva_mcp_core.telemetry`` so
-  ``patch("deriva_ml_mcp.tools.execution.audit_event")`` continues to
+  ``patch("deriva_ml_mcp_plugin.tools.execution.audit_event")`` continues to
   redirect emissions through the canonical patch site (even though no
   read tools emit audit events today, the re-export stays for tests
   and for any future read-tool side-effect that wants to audit).
 - ``get_ml`` -- same patch-target rationale; the
-  ``deriva_ml_mcp.tools.execution.get_ml`` patch in ``test_execution.py``
+  ``deriva_ml_mcp_plugin.tools.execution.get_ml`` patch in ``test_execution.py``
   must keep redirecting through this re-export.
 - The three ``_*_impl`` helpers re-exported from ``read.py`` so
-  ``from deriva_ml_mcp.tools.execution import _list_executions_impl, ...``
+  ``from deriva_ml_mcp_plugin.tools.execution import _list_executions_impl, ...``
   (used by ``resources/ml.py`` and ``resources/rag.py``) keeps
   resolving identically.
 
@@ -60,7 +60,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 # Re-exports below preserve the pre-split single-file patch surface.
-# Test code patches ``deriva_ml_mcp.tools.execution.{audit_event, get_ml}``
+# Test code patches ``deriva_ml_mcp_plugin.tools.execution.{audit_event, get_ml}``
 # as a single canonical site, and the read/mutate submodules deliberately
 # access those names via attribute lookup on this package
 # (``_pkg.audit_event``, ``_pkg.get_ml``) so a single ``patch(...)``
@@ -69,14 +69,14 @@ from typing import TYPE_CHECKING
 # bindings that the patch wouldn't reach.
 from deriva_mcp_core.telemetry import audit_event
 
-from deriva_ml_mcp.ml_context import get_ml
+from deriva_ml_mcp_plugin.ml_context import get_ml
 
 # Re-export of the three execution helpers consumed by ``resources/ml.py``
 # and ``resources/rag.py``. They live in ``read.py`` (their natural
 # domain home) but the import path
-# ``from deriva_ml_mcp.tools.execution import _list_executions_impl, ...``
+# ``from deriva_ml_mcp_plugin.tools.execution import _list_executions_impl, ...``
 # is preserved here so the resource modules don't need to change.
-from deriva_ml_mcp.tools.execution.read import (
+from deriva_ml_mcp_plugin.tools.execution.read import (
     _get_execution_detail_impl,
     _get_lineage_impl,
     _list_executions_impl,
@@ -124,6 +124,6 @@ def register(ctx: PluginContext) -> None:
         >>> # ctx provided by the framework
         >>> register(ctx)  # doctest: +SKIP
     """
-    from deriva_ml_mcp.tools.execution import read as _read
+    from deriva_ml_mcp_plugin.tools.execution import read as _read
 
     _read.register(ctx)

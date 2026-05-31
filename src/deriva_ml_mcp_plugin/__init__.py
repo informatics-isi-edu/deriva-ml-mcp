@@ -1,4 +1,4 @@
-"""deriva-ml-mcp: DerivaML domain plugin for deriva-mcp-core.
+"""deriva-ml-mcp-plugin: DerivaML domain plugin for deriva-mcp-core.
 
 This package registers MCP tools and resources that express ML-domain
 workflows (datasets, features, workflows, executions). Generic Deriva
@@ -9,7 +9,7 @@ Example:
     Operators load this plugin by installing the package alongside
     deriva-mcp-core::
 
-        uv pip install deriva-mcp-core deriva-ml-mcp
+        uv pip install deriva-mcp-core deriva-ml-mcp-plugin
 
     The plugin is then discovered automatically via the
     ``deriva_mcp.plugins`` entry-point group at server startup.

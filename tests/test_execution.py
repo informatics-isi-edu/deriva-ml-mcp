@@ -65,12 +65,12 @@ def _make_execution_mock(
 def execution_ctx(ctx, mock_ml):
     """Register execution tools with mock_ml as the DerivaML stand-in.
 
-    Patches at the use-site (``deriva_ml_mcp.tools.execution.get_ml``) and
+    Patches at the use-site (``deriva_ml_mcp_plugin.tools.execution.get_ml``) and
     imports the tool module *inside* the patch block so registration sees
     the mock.
     """
-    with patch("deriva_ml_mcp.tools.execution.get_ml", return_value=mock_ml):
-        from deriva_ml_mcp.tools import execution as execution_module
+    with patch("deriva_ml_mcp_plugin.tools.execution.get_ml", return_value=mock_ml):
+        from deriva_ml_mcp_plugin.tools import execution as execution_module
 
         execution_module.register(ctx)
         yield ctx
@@ -573,7 +573,7 @@ async def test_find_experiments_error_path(execution_ctx, capturing_mcp, mock_ml
 
 def test_resolve_workflow_rid_fast_path_returns_attribute():
     """When ``record.workflow_rid`` is populated, return it without I/O."""
-    from deriva_ml_mcp.tools.execution.read import _resolve_workflow_rid
+    from deriva_ml_mcp_plugin.tools.execution.read import _resolve_workflow_rid
 
     rec = MagicMock()
     rec.workflow_rid = "1-WF"
@@ -586,7 +586,7 @@ def test_resolve_workflow_rid_fast_path_returns_attribute():
 
 def test_resolve_workflow_rid_recovery_fetches_from_ermrest():
     """When ``record.workflow_rid`` is None, recover via _retrieve_rid."""
-    from deriva_ml_mcp.tools.execution.read import _resolve_workflow_rid
+    from deriva_ml_mcp_plugin.tools.execution.read import _resolve_workflow_rid
 
     rec = MagicMock()
     rec.workflow_rid = None
@@ -603,7 +603,7 @@ def test_resolve_workflow_rid_recovery_fetches_from_ermrest():
 
 def test_resolve_workflow_rid_recovery_returns_none_without_ml_instance():
     """Mock-shaped records that don't expose ``_ml_instance`` return None safely."""
-    from deriva_ml_mcp.tools.execution.read import _resolve_workflow_rid
+    from deriva_ml_mcp_plugin.tools.execution.read import _resolve_workflow_rid
 
     rec = MagicMock()
     rec.workflow_rid = None
@@ -615,7 +615,7 @@ def test_resolve_workflow_rid_recovery_returns_none_without_ml_instance():
 
 def test_resolve_workflow_rid_recovery_returns_none_on_fetch_failure():
     """If ``_retrieve_rid`` raises, recovery returns None (no propagation)."""
-    from deriva_ml_mcp.tools.execution.read import _resolve_workflow_rid
+    from deriva_ml_mcp_plugin.tools.execution.read import _resolve_workflow_rid
 
     rec = MagicMock()
     rec.workflow_rid = None
@@ -627,7 +627,7 @@ def test_resolve_workflow_rid_recovery_returns_none_on_fetch_failure():
 
 def test_resolve_workflow_rid_recovery_returns_none_when_workflow_fk_missing():
     """``Execution.Workflow == None`` (legitimate) returns None, not raises."""
-    from deriva_ml_mcp.tools.execution.read import _resolve_workflow_rid
+    from deriva_ml_mcp_plugin.tools.execution.read import _resolve_workflow_rid
 
     rec = MagicMock()
     rec.workflow_rid = None

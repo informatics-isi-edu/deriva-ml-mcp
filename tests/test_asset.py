@@ -53,12 +53,12 @@ def _make_execution_record_mock(
 def asset_ctx(ctx, mock_ml):
     """Register asset tools with mock_ml as the DerivaML stand-in.
 
-    Patches at the use-site (``deriva_ml_mcp.tools.asset.get_ml``) and
+    Patches at the use-site (``deriva_ml_mcp_plugin.tools.asset.get_ml``) and
     imports the tool module *inside* the patch block so registration
     sees the mock.
     """
-    with patch("deriva_ml_mcp.tools.asset.get_ml", return_value=mock_ml):
-        from deriva_ml_mcp.tools import asset as asset_module
+    with patch("deriva_ml_mcp_plugin.tools.asset.get_ml", return_value=mock_ml):
+        from deriva_ml_mcp_plugin.tools import asset as asset_module
 
         asset_module.register(ctx)
         yield ctx
@@ -544,7 +544,7 @@ async def test_update_asset_types_no_diff_skips_calls(asset_ctx, capturing_mcp, 
     """If the desired list matches current, no add/remove calls fire."""
     asset = _make_asset_mock(asset_rid="1-AAAA", asset_types=["X", "Y"])
     mock_ml.lookup_asset.return_value = asset
-    with patch("deriva_ml_mcp.tools.asset.audit_event"):
+    with patch("deriva_ml_mcp_plugin.tools.asset.audit_event"):
         out = json.loads(
             await capturing_mcp.tools["deriva_ml_update_asset"](
                 hostname="h",
@@ -597,7 +597,7 @@ async def test_update_asset_types_and_description_together(asset_ctx, capturing_
     description_prop = _wire_description_setter_mock(asset)
 
     try:
-        with patch("deriva_ml_mcp.tools.asset.audit_event"):
+        with patch("deriva_ml_mcp_plugin.tools.asset.audit_event"):
             out = json.loads(
                 await capturing_mcp.tools["deriva_ml_update_asset"](
                     hostname="h",

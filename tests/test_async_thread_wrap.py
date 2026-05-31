@@ -30,7 +30,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-PLUGIN_ROOT = Path(__file__).resolve().parent.parent / "src" / "deriva_ml_mcp"
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent / "src" / "deriva_ml_mcp_plugin"
 TOOLS_ROOT = PLUGIN_ROOT / "tools"
 RESOURCES_ROOT = PLUGIN_ROOT / "resources"
 

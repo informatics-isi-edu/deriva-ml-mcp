@@ -1,6 +1,6 @@
 """Helpers for obtaining a :class:`deriva_ml.DerivaML` instance.
 
-This is the **only** module in deriva-ml-mcp that touches deriva-mcp-core's
+This is the **only** module in deriva-ml-mcp-plugin that touches deriva-mcp-core's
 connection plumbing. Every tool gets its DerivaML through :func:`get_ml`;
 no tool calls into core's credential surface directly or re-instantiates
 connections.
@@ -48,7 +48,7 @@ def get_ml(hostname: str, catalog_id: str) -> DerivaML:
     Example:
         Inside a tool body::
 
-            from deriva_ml_mcp.ml_context import get_ml
+            from deriva_ml_mcp_plugin.ml_context import get_ml
 
             ml = get_ml(hostname, catalog_id)
             datasets = ml.find_datasets()

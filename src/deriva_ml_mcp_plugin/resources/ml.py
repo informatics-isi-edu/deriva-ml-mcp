@@ -1,4 +1,4 @@
-"""ML-domain MCP resources for deriva-ml-mcp.
+"""ML-domain MCP resources for deriva-ml-mcp-plugin.
 
 Resources are read-only URI-addressable views into ML-domain catalog
 state. The MCP client fetches them via ``read_resource(uri)`` without
@@ -45,14 +45,14 @@ from typing import TYPE_CHECKING, Any
 
 from deriva_mcp_core import deriva_call
 
-import deriva_ml_mcp.resources.ml as _pkg  # noqa: E402  (intentional self-import)
-from deriva_ml_mcp._helpers import (
+import deriva_ml_mcp_plugin.resources.ml as _pkg  # noqa: E402  (intentional self-import)
+from deriva_ml_mcp_plugin._helpers import (
     _MAX_LIMIT,
     _error_envelope,
     _paginate,
     _read_rid,
 )
-from deriva_ml_mcp._response_models import (
+from deriva_ml_mcp_plugin._response_models import (
     AssetTableContentsResponse,
     AssetTableNameRef,
     AssetTablesInSchemaResponse,
@@ -64,30 +64,30 @@ from deriva_ml_mcp._response_models import (
 
 # ``get_ml`` is accessed inside resource bodies via attribute lookup on
 # the module (``_pkg.get_ml``) so tests patching
-# ``deriva_ml_mcp.resources.ml.get_ml`` rebind the module attribute,
+# ``deriva_ml_mcp_plugin.resources.ml.get_ml`` rebind the module attribute,
 # and ``_pkg.get_ml`` (resolved at call time) sees the patched value.
-# A direct ``from deriva_ml_mcp.ml_context import get_ml`` here would
+# A direct ``from deriva_ml_mcp_plugin.ml_context import get_ml`` here would
 # capture the unpatched reference at module-import time and bypass the
 # patch -- same rationale as ``tools/dataset/read.py``.
-from deriva_ml_mcp.ml_context import get_ml  # noqa: F401  (re-exported for test patching)
-from deriva_ml_mcp.tools.asset import (
+from deriva_ml_mcp_plugin.ml_context import get_ml  # noqa: F401  (re-exported for test patching)
+from deriva_ml_mcp_plugin.tools.asset import (
     _get_asset_detail_impl,
     _summarize_asset,
 )
-from deriva_ml_mcp.tools.dataset import (
+from deriva_ml_mcp_plugin.tools.dataset import (
     _bag_info_impl,
     _get_dataset_detail_impl,
     _get_dataset_spec_impl,
     _list_dataset_members_summary_impl,
     _list_datasets_impl,
 )
-from deriva_ml_mcp.tools.execution import (
+from deriva_ml_mcp_plugin.tools.execution import (
     _get_execution_detail_impl,
     _get_lineage_impl,
     _list_executions_impl,
 )
-from deriva_ml_mcp.tools.feature import _list_features_impl
-from deriva_ml_mcp.tools.workflow import _get_workflow_impl, _list_workflows_impl
+from deriva_ml_mcp_plugin.tools.feature import _list_features_impl
+from deriva_ml_mcp_plugin.tools.workflow import _get_workflow_impl, _list_workflows_impl
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
@@ -339,11 +339,11 @@ def register(ctx: PluginContext) -> None:
     # but keeping the import inside ``register`` mirrors the per-resource
     # import discipline used by the catalog handlers below (no module-
     # level side effects at plugin load time).
-    from deriva_ml_mcp.prompts import _CONCEPTS_GUIDE, _GETTING_STARTED_GUIDE
+    from deriva_ml_mcp_plugin.prompts import _CONCEPTS_GUIDE, _GETTING_STARTED_GUIDE
 
     @ctx.resource("deriva://deriva-ml/getting-started")
     async def deriva_ml_getting_started_resource() -> str:
-        """Cold-start orientation guide for the deriva-ml-mcp plugin.
+        """Cold-start orientation guide for the deriva-ml-mcp-plugin plugin.
 
         Same content as the ``deriva_ml_getting_started`` MCP prompt --
         exposed here as a resource so clients that walk resources (and

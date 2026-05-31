@@ -27,12 +27,12 @@ from tests._helpers import _success_calls
 def dataset_ctx(ctx, mock_ml):
     """Register dataset tools with mock_ml as the DerivaML stand-in.
 
-    Patches at the use-site (``deriva_ml_mcp.tools.dataset.get_ml``) and
+    Patches at the use-site (``deriva_ml_mcp_plugin.tools.dataset.get_ml``) and
     imports the tool module *inside* the patch block so registration
     sees the mock.
     """
-    with patch("deriva_ml_mcp.tools.dataset.get_ml", return_value=mock_ml):
-        from deriva_ml_mcp.tools import dataset as dataset_module
+    with patch("deriva_ml_mcp_plugin.tools.dataset.get_ml", return_value=mock_ml):
+        from deriva_ml_mcp_plugin.tools import dataset as dataset_module
 
         dataset_module.register(ctx)
         yield ctx
@@ -47,7 +47,7 @@ async def test_create_dataset_success(dataset_ctx, capturing_mcp, mock_ml):
     """Happy path: returns the new dataset summary and emits success audit."""
     new_ds = _make_dataset_mock("1-NEW", "desc", ["Training"], "1.0.0")
     with (
-        patch("deriva_ml_mcp.tools.dataset.Dataset") as mock_dataset_cls,
+        patch("deriva_ml_mcp_plugin.tools.dataset.Dataset") as mock_dataset_cls,
         _patch_audit() as mock_audit,
     ):
         mock_dataset_cls.create_dataset.return_value = new_ds
@@ -78,8 +78,8 @@ async def test_create_dataset_parses_explicit_version(dataset_ctx, capturing_mcp
     """A version string is parsed into a DatasetVersion before being passed in."""
     new_ds = _make_dataset_mock("1-NEW", current_version="2.5.7")
     with (
-        patch("deriva_ml_mcp.tools.dataset.Dataset") as mock_dataset_cls,
-        patch("deriva_ml_mcp.tools.dataset.audit_event"),
+        patch("deriva_ml_mcp_plugin.tools.dataset.Dataset") as mock_dataset_cls,
+        patch("deriva_ml_mcp_plugin.tools.dataset.audit_event"),
     ):
         mock_dataset_cls.create_dataset.return_value = new_ds
         await capturing_mcp.tools["deriva_ml_create_dataset"](
@@ -97,7 +97,7 @@ async def test_create_dataset_parses_explicit_version(dataset_ctx, capturing_mcp
 async def test_create_dataset_failure_emits_failed_audit(dataset_ctx, capturing_mcp, mock_ml):
     """Error path: audit fires `_failed`, response has {error: ...}."""
     with (
-        patch("deriva_ml_mcp.tools.dataset.Dataset") as mock_dataset_cls,
+        patch("deriva_ml_mcp_plugin.tools.dataset.Dataset") as mock_dataset_cls,
         _patch_audit() as mock_audit,
     ):
         mock_dataset_cls.create_dataset.side_effect = RuntimeError("invalid term")
@@ -209,7 +209,7 @@ async def test_add_dataset_members_with_list(dataset_ctx, capturing_mcp, mock_ml
 async def test_add_dataset_members_with_dict(dataset_ctx, capturing_mcp, mock_ml):
     ds = _make_dataset_mock("1-AAAA", current_version="1.2.0")
     mock_ml.lookup_dataset.return_value = ds
-    with patch("deriva_ml_mcp.tools.dataset.audit_event"):
+    with patch("deriva_ml_mcp_plugin.tools.dataset.audit_event"):
         out = json.loads(
             await capturing_mcp.tools["deriva_ml_add_dataset_members"](
                 hostname="h",
@@ -357,7 +357,7 @@ async def test_update_dataset_no_diff_skips_calls(dataset_ctx, capturing_mcp, mo
     """If desired == current, neither add_dataset_types nor remove fire."""
     ds = _make_dataset_mock("1-AAAA", dataset_types=["Training"])
     mock_ml.lookup_dataset.return_value = ds
-    with patch("deriva_ml_mcp.tools.dataset.audit_event"):
+    with patch("deriva_ml_mcp_plugin.tools.dataset.audit_event"):
         out = json.loads(
             await capturing_mcp.tools["deriva_ml_update_dataset"](
                 hostname="h",
@@ -377,7 +377,7 @@ async def test_update_dataset_remove_only_loops_per_term(dataset_ctx, capturing_
     """Diff-remove of multiple terms loops through remove_dataset_type."""
     ds = _make_dataset_mock("1-AAAA", dataset_types=["Keep", "A", "B", "C"])
     mock_ml.lookup_dataset.return_value = ds
-    with patch("deriva_ml_mcp.tools.dataset.audit_event"):
+    with patch("deriva_ml_mcp_plugin.tools.dataset.audit_event"):
         await capturing_mcp.tools["deriva_ml_update_dataset"](
             hostname="h",
             catalog_id="1",
@@ -540,7 +540,7 @@ async def test_update_dataset_types_and_description_in_one_call(
     description_prop = PropertyMock(return_value="initial")
     type(ds).description = description_prop
 
-    with patch("deriva_ml_mcp.tools.dataset.audit_event"):
+    with patch("deriva_ml_mcp_plugin.tools.dataset.audit_event"):
         out = json.loads(
             await capturing_mcp.tools["deriva_ml_update_dataset"](
                 hostname="h",
@@ -659,7 +659,7 @@ async def test_release_major(dataset_ctx, capturing_mcp, mock_ml):
     new_ver.__str__ = lambda self: "2.0.0"
     ds.release.return_value = new_ver
     mock_ml.lookup_dataset.return_value = ds
-    with patch("deriva_ml_mcp.tools.dataset.audit_event"):
+    with patch("deriva_ml_mcp_plugin.tools.dataset.audit_event"):
         out = json.loads(
             await capturing_mcp.tools["deriva_ml_release"](
                 hostname="h", catalog_id="1", dataset_rid="1-AAAA", bump="major"
@@ -708,8 +708,8 @@ async def test_create_dataset_triggers_surgical_reindex(dataset_ctx, capturing_m
     new_ds = _make_dataset_mock("1-NEW", "desc", ["Training"], "1.0.0")
     fake_reindex = AsyncMock(return_value=1)
     with (
-        patch("deriva_ml_mcp.tools.dataset.Dataset") as mock_dataset_cls,
-        patch("deriva_ml_mcp.resources.rag._reindex_dataset", new=fake_reindex),
+        patch("deriva_ml_mcp_plugin.tools.dataset.Dataset") as mock_dataset_cls,
+        patch("deriva_ml_mcp_plugin.resources.rag._reindex_dataset", new=fake_reindex),
         _patch_audit(),
     ):
         mock_dataset_cls.create_dataset.return_value = new_ds
@@ -728,7 +728,7 @@ async def test_delete_dataset_triggers_surgical_drop(dataset_ctx, capturing_mcp,
 
     fake_drop = AsyncMock(return_value=True)
     with (
-        patch("deriva_ml_mcp.resources.rag._delete_dataset_source", new=fake_drop),
+        patch("deriva_ml_mcp_plugin.resources.rag._delete_dataset_source", new=fake_drop),
         _patch_audit(),
     ):
         await capturing_mcp.tools["deriva_ml_delete_dataset"](
@@ -746,8 +746,8 @@ async def test_create_dataset_reindex_failure_does_not_fail_tool(
     new_ds = _make_dataset_mock("1-NEW", "desc", ["Training"], "1.0.0")
     fake_reindex = AsyncMock(side_effect=RuntimeError("rag boom"))
     with (
-        patch("deriva_ml_mcp.tools.dataset.Dataset") as mock_dataset_cls,
-        patch("deriva_ml_mcp.resources.rag._reindex_dataset", new=fake_reindex),
+        patch("deriva_ml_mcp_plugin.tools.dataset.Dataset") as mock_dataset_cls,
+        patch("deriva_ml_mcp_plugin.resources.rag._reindex_dataset", new=fake_reindex),
         _patch_audit() as mock_audit,
     ):
         mock_dataset_cls.create_dataset.return_value = new_ds

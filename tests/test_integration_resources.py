@@ -1,4 +1,4 @@
-"""Live-catalog integration tests for deriva-ml-mcp ML resources.
+"""Live-catalog integration tests for deriva-ml-mcp-plugin ML resources.
 
 Same shape as ``tests/test_integration_workflow.py`` and
 ``tests/test_integration_feature.py`` -- gated by the ``integration``
@@ -8,7 +8,7 @@ helper and the ``deriva_host`` / ``demo_catalog`` session fixtures
 live in ``tests/conftest.py``.
 
 Scope (per Phase 6.5 plan): a read-only round-trip across the 9 MCP
-resource URIs registered by ``src/deriva_ml_mcp/resources/ml.py``'s
+resource URIs registered by ``src/deriva_ml_mcp_plugin/resources/ml.py``'s
 ``register(ctx)`` function. Resources are read-only by definition, so
 this file uses the shared ``demo_catalog`` fixture (NOT the
 ``demo_mutation_catalog`` reserved for write-side integration tests).
@@ -126,7 +126,7 @@ def integration_resources(
     plugin_ctx = PluginContext(capturing)
     _set_plugin_context(plugin_ctx)
     try:
-        from deriva_ml_mcp.resources import ml as ml_module
+        from deriva_ml_mcp_plugin.resources import ml as ml_module
 
         ml_module.register(plugin_ctx)
         yield capturing

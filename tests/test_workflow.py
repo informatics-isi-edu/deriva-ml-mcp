@@ -53,12 +53,12 @@ def _make_workflow_mock(
 def workflow_ctx(ctx, mock_ml):
     """Register workflow tools with mock_ml as the DerivaML stand-in.
 
-    Patches at the use-site (`deriva_ml_mcp.tools.workflow.get_ml`) and
+    Patches at the use-site (`deriva_ml_mcp_plugin.tools.workflow.get_ml`) and
     imports the tool module *inside* the patch block so registration sees
     the mock.
     """
-    with patch("deriva_ml_mcp.tools.workflow.get_ml", return_value=mock_ml):
-        from deriva_ml_mcp.tools import workflow as workflow_module
+    with patch("deriva_ml_mcp_plugin.tools.workflow.get_ml", return_value=mock_ml):
+        from deriva_ml_mcp_plugin.tools import workflow as workflow_module
 
         workflow_module.register(ctx)
         yield ctx
@@ -492,7 +492,7 @@ async def test_create_workflow_triggers_surgical_reindex(workflow_ctx, capturing
     mock_ml._add_workflow.return_value = "1-NEW"
     fake_reindex = AsyncMock(return_value=1)
     with (
-        patch("deriva_ml_mcp.resources.rag._reindex_workflow", new=fake_reindex),
+        patch("deriva_ml_mcp_plugin.resources.rag._reindex_workflow", new=fake_reindex),
         _patch_workflow_audit(),
     ):
         await capturing_mcp.tools["deriva_ml_create_workflow"](
@@ -518,7 +518,7 @@ async def test_create_workflow_triggers_surgical_reindex(workflow_ctx, capturing
 
 def test_workflow_resolve_workflow_rid_fast_path():
     """Workflow with ``workflow_rid`` populated returns immediately."""
-    from deriva_ml_mcp.tools.workflow import _resolve_workflow_rid
+    from deriva_ml_mcp_plugin.tools.workflow import _resolve_workflow_rid
 
     wf = MagicMock()
     wf.workflow_rid = "1-WF"
@@ -531,7 +531,7 @@ def test_workflow_resolve_workflow_rid_fast_path():
 
 def test_workflow_resolve_workflow_rid_recovery_via_checksum():
     """When workflow_rid is None, recover via checksum lookup."""
-    from deriva_ml_mcp.tools.workflow import _resolve_workflow_rid
+    from deriva_ml_mcp_plugin.tools.workflow import _resolve_workflow_rid
 
     wf = MagicMock()
     wf.workflow_rid = None
@@ -546,7 +546,7 @@ def test_workflow_resolve_workflow_rid_recovery_via_checksum():
 
 def test_workflow_resolve_workflow_rid_recovery_via_url_when_no_checksum():
     """No checksum? Recovery falls back to URL."""
-    from deriva_ml_mcp.tools.workflow import _resolve_workflow_rid
+    from deriva_ml_mcp_plugin.tools.workflow import _resolve_workflow_rid
 
     wf = MagicMock()
     wf.workflow_rid = None
@@ -562,7 +562,7 @@ def test_workflow_resolve_workflow_rid_recovery_via_url_when_no_checksum():
 
 def test_workflow_resolve_workflow_rid_returns_none_with_no_lookup_key():
     """No checksum AND no URL: recovery returns None safely."""
-    from deriva_ml_mcp.tools.workflow import _resolve_workflow_rid
+    from deriva_ml_mcp_plugin.tools.workflow import _resolve_workflow_rid
 
     wf = MagicMock()
     wf.workflow_rid = None
@@ -575,7 +575,7 @@ def test_workflow_resolve_workflow_rid_returns_none_with_no_lookup_key():
 
 def test_workflow_resolve_workflow_rid_recovery_swallows_errors():
     """A failing _find_workflow_rid_by_url returns None, not raises."""
-    from deriva_ml_mcp.tools.workflow import _resolve_workflow_rid
+    from deriva_ml_mcp_plugin.tools.workflow import _resolve_workflow_rid
 
     wf = MagicMock()
     wf.workflow_rid = None

@@ -1,1 +1,1 @@
-"""Test package for deriva-ml-mcp."""
+"""Test package for deriva-ml-mcp-plugin."""

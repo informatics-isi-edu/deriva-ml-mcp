@@ -1,4 +1,4 @@
-"""Resource modules for deriva-ml-mcp.
+"""Resource modules for deriva-ml-mcp-plugin.
 
 Resources are read-only views into ML-domain catalog state, exposed
 under the ``deriva-ml://`` URI scheme. Currently empty; populated in

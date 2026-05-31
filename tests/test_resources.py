@@ -24,12 +24,12 @@ import pytest
 def resource_ctx(ctx, mock_ml):
     """Register resources/ml.py with mock_ml as the DerivaML stand-in.
 
-    Patches at the use-site (``deriva_ml_mcp.resources.ml.get_ml``) and
+    Patches at the use-site (``deriva_ml_mcp_plugin.resources.ml.get_ml``) and
     imports the module *inside* the patch block so registration sees the
     mock.
     """
-    with patch("deriva_ml_mcp.resources.ml.get_ml", return_value=mock_ml):
-        from deriva_ml_mcp.resources import ml as ml_resources
+    with patch("deriva_ml_mcp_plugin.resources.ml.get_ml", return_value=mock_ml):
+        from deriva_ml_mcp_plugin.resources import ml as ml_resources
 
         ml_resources.register(ctx)
         yield ctx
@@ -213,7 +213,7 @@ async def test_static_resources_return_prompt_constants(resource_ctx, capturing_
     ``getting-started``. If the resource handler ever wraps or trims the
     content, this test catches it.
     """
-    from deriva_ml_mcp.prompts import _CONCEPTS_GUIDE, _GETTING_STARTED_GUIDE
+    from deriva_ml_mcp_plugin.prompts import _CONCEPTS_GUIDE, _GETTING_STARTED_GUIDE
 
     concepts_handler = capturing_mcp.resources["deriva://deriva-ml/concepts"]
     getting_started_handler = capturing_mcp.resources["deriva://deriva-ml/getting-started"]
@@ -250,7 +250,7 @@ async def test_ml_datasets_truncated_at_max_limit(resource_ctx, capturing_mcp, m
 async def test_ml_datasets_error_path_is_silent(resource_ctx, capturing_mcp, mock_ml):
     """Errors return ``{"error": ...}`` and emit NO audit (resource is read-only)."""
     mock_ml.find_datasets.side_effect = RuntimeError("kaboom")
-    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+    with patch("deriva_ml_mcp_plugin._helpers.audit_event") as mock_audit:
         out = json.loads(await capturing_mcp.resources[_DATASETS_URI](hostname="h", catalog_id="1"))
     assert out == {"error": "kaboom"}
     assert mock_audit.call_count == 0
@@ -300,7 +300,7 @@ async def test_ml_dataset_detail_includes_version_history(resource_ctx, capturin
 async def test_ml_dataset_detail_not_found(resource_ctx, capturing_mcp, mock_ml):
     """A missing RID returns ``{"error": ...}`` with no audit."""
     mock_ml.lookup_dataset.side_effect = RuntimeError("Dataset not found")
-    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+    with patch("deriva_ml_mcp_plugin._helpers.audit_event") as mock_audit:
         out = json.loads(
             await capturing_mcp.resources[_DATASET_DETAIL_URI](
                 hostname="h", catalog_id="1", dataset_rid="missing"
@@ -355,7 +355,7 @@ async def test_ml_dataset_members_truncated(resource_ctx, capturing_mcp, mock_ml
 
 async def test_ml_dataset_members_error_path(resource_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.side_effect = RuntimeError("nope")
-    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+    with patch("deriva_ml_mcp_plugin._helpers.audit_event") as mock_audit:
         out = json.loads(
             await capturing_mcp.resources[_DATASET_MEMBERS_URI](
                 hostname="h", catalog_id="1", dataset_rid="bad"
@@ -397,7 +397,7 @@ async def test_ml_dataset_spec_uses_current_version(resource_ctx, capturing_mcp,
 
 async def test_ml_dataset_spec_error_path_is_silent(resource_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.side_effect = RuntimeError("Dataset not found")
-    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+    with patch("deriva_ml_mcp_plugin._helpers.audit_event") as mock_audit:
         out = json.loads(
             await capturing_mcp.resources[_DATASET_SPEC_URI](
                 hostname="h", catalog_id="1", dataset_rid="missing"
@@ -460,7 +460,7 @@ async def test_ml_dataset_bag_preview_uses_current_version(resource_ctx, capturi
 
 async def test_ml_dataset_bag_preview_error_path_is_silent(resource_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.side_effect = RuntimeError("Dataset not found")
-    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+    with patch("deriva_ml_mcp_plugin._helpers.audit_event") as mock_audit:
         out = json.loads(
             await capturing_mcp.resources[_DATASET_BAG_PREVIEW_URI](
                 hostname="h", catalog_id="1", dataset_rid="missing"
@@ -488,7 +488,7 @@ async def test_ml_workflows_success(resource_ctx, capturing_mcp, mock_ml):
 
 async def test_ml_workflows_error_path(resource_ctx, capturing_mcp, mock_ml):
     mock_ml.find_workflows.side_effect = RuntimeError("kaboom")
-    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+    with patch("deriva_ml_mcp_plugin._helpers.audit_event") as mock_audit:
         out = json.loads(
             await capturing_mcp.resources[_WORKFLOWS_URI](hostname="h", catalog_id="1")
         )
@@ -516,7 +516,7 @@ async def test_ml_workflow_detail_success(resource_ctx, capturing_mcp, mock_ml):
 
 async def test_ml_workflow_detail_not_found(resource_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_workflow.side_effect = RuntimeError("Workflow not found")
-    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+    with patch("deriva_ml_mcp_plugin._helpers.audit_event") as mock_audit:
         out = json.loads(
             await capturing_mcp.resources[_WORKFLOW_DETAIL_URI](
                 hostname="h", catalog_id="1", workflow_rid="missing"
@@ -544,7 +544,7 @@ async def test_ml_executions_success(resource_ctx, capturing_mcp, mock_ml):
 
 async def test_ml_executions_error_path(resource_ctx, capturing_mcp, mock_ml):
     mock_ml.find_executions.side_effect = RuntimeError("boom")
-    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+    with patch("deriva_ml_mcp_plugin._helpers.audit_event") as mock_audit:
         out = json.loads(
             await capturing_mcp.resources[_EXECUTIONS_URI](hostname="h", catalog_id="1")
         )
@@ -926,7 +926,7 @@ async def test_ml_execution_detail_experiment_tolerates_non_primitive_values(
 
 async def test_ml_execution_detail_not_found(resource_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_execution.side_effect = RuntimeError("Execution not found")
-    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+    with patch("deriva_ml_mcp_plugin._helpers.audit_event") as mock_audit:
         out = json.loads(
             await capturing_mcp.resources[_EXECUTION_DETAIL_URI](
                 hostname="h", catalog_id="1", execution_rid="missing"
@@ -999,7 +999,7 @@ async def test_ml_lineage_error_path_is_silent(resource_ctx, capturing_mcp, mock
     the resource wraps it as ``{"error": ...}`` and emits no audit row
     (resources are read-only and silent on failure)."""
     mock_ml.lookup_lineage.side_effect = RuntimeError("Workflow RIDs are not lineage-shaped")
-    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+    with patch("deriva_ml_mcp_plugin._helpers.audit_event") as mock_audit:
         out = json.loads(
             await capturing_mcp.resources[_LINEAGE_URI](hostname="h", catalog_id="1", rid="1-WF")
         )
@@ -1031,7 +1031,7 @@ async def test_ml_features_for_table_success(resource_ctx, capturing_mcp, mock_m
 
 async def test_ml_features_for_table_error_path(resource_ctx, capturing_mcp, mock_ml):
     mock_ml.find_features.side_effect = RuntimeError("nope")
-    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+    with patch("deriva_ml_mcp_plugin._helpers.audit_event") as mock_audit:
         out = json.loads(
             await capturing_mcp.resources[_FEATURES_URI](
                 hostname="h", catalog_id="1", table_name="Image"
@@ -1149,7 +1149,7 @@ async def test_ml_vocabularies_in_schema_unknown_schema_errors(
 ):
     """An unknown schema returns an error envelope."""
     _wire_schema(mock_ml, "deriva-ml", [])
-    with patch("deriva_ml_mcp._helpers.audit_event") as mock_audit:
+    with patch("deriva_ml_mcp_plugin._helpers.audit_event") as mock_audit:
         out = json.loads(
             await capturing_mcp.resources[_VOCABS_IN_SCHEMA_URI](
                 hostname="h", catalog_id="1", schema="nope"
