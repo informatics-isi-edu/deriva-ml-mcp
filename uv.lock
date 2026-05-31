@@ -738,7 +738,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "deriva-ml-mcp"
+name = "deriva-ml-mcp-plugin"
 source = { editable = "." }
 dependencies = [
     { name = "deriva" },

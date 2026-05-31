@@ -1,4 +1,4 @@
-"""Asset domain tools for deriva-ml-mcp.
+"""Asset domain tools for deriva-ml-mcp-plugin.
 
 Read tools: ``deriva_ml_list_assets``, ``deriva_ml_find_assets``,
 ``deriva_ml_lookup_asset``.
@@ -60,16 +60,16 @@ from deriva_ml.core.exceptions import NoAssociationException
 # Note on testing audit_event: see ``make_patch_audit("asset")`` in
 # ``tests/_helpers.py``. Single-patch facade is impossible due to
 # Python's ``from X import name`` import binding semantics -- tests must
-# patch BOTH ``deriva_ml_mcp.tools.asset.audit_event`` (this module's
-# success-path emission) and ``deriva_ml_mcp._helpers.audit_event`` (the
+# patch BOTH ``deriva_ml_mcp_plugin.tools.asset.audit_event`` (this module's
+# success-path emission) and ``deriva_ml_mcp_plugin._helpers.audit_event`` (the
 # failure-path emission inside ``_error_envelope``).
-from deriva_ml_mcp._helpers import (
+from deriva_ml_mcp_plugin._helpers import (
     _MAX_LIMIT,
     _error_envelope,
     _paginate,
     _read_rid,
 )
-from deriva_ml_mcp._response_models import (
+from deriva_ml_mcp_plugin._response_models import (
     AssetDetail,
     AssetExecutionRef,
     AssetListResponse,
@@ -77,7 +77,7 @@ from deriva_ml_mcp._response_models import (
     PreflightCountResponse,
     UpdateAssetResponse,
 )
-from deriva_ml_mcp.ml_context import get_ml
+from deriva_ml_mcp_plugin.ml_context import get_ml
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
@@ -98,7 +98,7 @@ def _summarize_asset(asset: Any) -> AssetSummary:
 
     Returns:
         ``AssetSummary`` Pydantic instance -- see
-        ``deriva_ml_mcp._response_models``.
+        ``deriva_ml_mcp_plugin._response_models``.
 
     Note:
         v2.2 sweep: this helper now returns Pydantic. Consumers that
@@ -172,7 +172,7 @@ def _get_asset_detail_impl(ml: Any, asset_rid: str) -> AssetDetail:
         asset_rid: The RID of the asset to look up.
 
     Returns:
-        ``AssetDetail`` -- see ``deriva_ml_mcp._response_models``.
+        ``AssetDetail`` -- see ``deriva_ml_mcp_plugin._response_models``.
     """
     asset = ml.lookup_asset(asset_rid)
     executions: list[AssetExecutionRef] = []

@@ -1,4 +1,4 @@
-"""Vocabulary domain tools for deriva-ml-mcp.
+"""Vocabulary domain tools for deriva-ml-mcp-plugin.
 
 Mutation tools: ``deriva_ml_create_vocabulary``.
 
@@ -31,9 +31,9 @@ from deriva_mcp_core import deriva_call
 from deriva_mcp_core.plugin.api import fire_schema_change
 from deriva_mcp_core.telemetry import audit_event
 
-from deriva_ml_mcp._helpers import _error_envelope
-from deriva_ml_mcp._response_models import CreateVocabularyResponse
-from deriva_ml_mcp.ml_context import get_ml
+from deriva_ml_mcp_plugin._helpers import _error_envelope
+from deriva_ml_mcp_plugin._response_models import CreateVocabularyResponse
+from deriva_ml_mcp_plugin.ml_context import get_ml
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext

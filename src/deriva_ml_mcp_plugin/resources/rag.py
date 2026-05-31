@@ -1,4 +1,4 @@
-"""Per-user RAG indexing + vocab indexing + DerivaML docs source for deriva-ml-mcp.
+"""Per-user RAG indexing + vocab indexing + DerivaML docs source for deriva-ml-mcp-plugin.
 
 Phase 6.3 wired three things into the RAG subsystem; v1.1 added a
 fourth (vocabularies); v1.3 (this file) reshapes the per-user trio into
@@ -110,11 +110,11 @@ from deriva_mcp_core.rag.chunker import chunk_markdown
 from deriva_mcp_core.rag.data import RowSerializer
 from deriva_mcp_core.rag.store import Chunk
 
-from deriva_ml_mcp._helpers import _MAX_LIMIT, _table_qname
-from deriva_ml_mcp.ml_context import get_ml
-from deriva_ml_mcp.tools.dataset import _list_datasets_impl, _summarize_dataset
-from deriva_ml_mcp.tools.execution import _list_executions_impl, _summarize_execution
-from deriva_ml_mcp.tools.workflow import _list_workflows_impl, _summarize_workflow
+from deriva_ml_mcp_plugin._helpers import _MAX_LIMIT, _table_qname
+from deriva_ml_mcp_plugin.ml_context import get_ml
+from deriva_ml_mcp_plugin.tools.dataset import _list_datasets_impl, _summarize_dataset
+from deriva_ml_mcp_plugin.tools.execution import _list_executions_impl, _summarize_execution
+from deriva_ml_mcp_plugin.tools.workflow import _list_workflows_impl, _summarize_workflow
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext

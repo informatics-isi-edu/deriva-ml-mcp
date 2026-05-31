@@ -1,4 +1,4 @@
-"""Feature domain tools for deriva-ml-mcp.
+"""Feature domain tools for deriva-ml-mcp-plugin.
 
 Read tools: ``deriva_ml_list_features``, ``deriva_ml_get_feature``, ``deriva_ml_list_feature_values``.
 Mutation tools: ``deriva_ml_create_feature``, ``deriva_ml_delete_feature``.
@@ -35,15 +35,15 @@ from deriva_ml.feature import FeatureRecord
 # `_patch_feature_audit = make_patch_audit("feature")`). Single-patch
 # facade is impossible due to Python's `from X import name` import
 # binding semantics — tests must patch BOTH
-# `deriva_ml_mcp.tools.feature.audit_event` (this module's success-path
-# emission) and `deriva_ml_mcp._helpers.audit_event` (the failure-path
+# `deriva_ml_mcp_plugin.tools.feature.audit_event` (this module's success-path
+# emission) and `deriva_ml_mcp_plugin._helpers.audit_event` (the failure-path
 # emission inside `_error_envelope`).
-from deriva_ml_mcp._helpers import (
+from deriva_ml_mcp_plugin._helpers import (
     _MAX_LIMIT,
     _error_envelope,
     _paginate,
 )
-from deriva_ml_mcp._response_models import (
+from deriva_ml_mcp_plugin._response_models import (
     CreateFeatureResponse,
     DeleteFeatureResponse,
     FeatureListResponse,
@@ -52,7 +52,7 @@ from deriva_ml_mcp._response_models import (
     FeatureValueRecord,
     PreflightCountResponse,
 )
-from deriva_ml_mcp.ml_context import get_ml
+from deriva_ml_mcp_plugin.ml_context import get_ml
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
@@ -66,7 +66,7 @@ def _summarize_feature(feature: Any) -> FeatureSummary:
 
     Returns:
         ``FeatureSummary`` Pydantic instance -- see
-        ``deriva_ml_mcp._response_models``.
+        ``deriva_ml_mcp_plugin._response_models``.
 
     Note:
         v2.2 sweep: this helper now returns Pydantic. Consumers that
@@ -103,7 +103,7 @@ def _list_features_impl(
         limit: Max features per page (already capped by caller).
 
     Returns:
-        ``FeatureListResponse`` -- see ``deriva_ml_mcp._response_models``.
+        ``FeatureListResponse`` -- see ``deriva_ml_mcp_plugin._response_models``.
     """
     features = sorted(
         ml.find_features(table=table),

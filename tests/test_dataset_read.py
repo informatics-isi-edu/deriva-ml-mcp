@@ -25,12 +25,12 @@ from tests._dataset_helpers import _make_dataset_mock
 def dataset_ctx(ctx, mock_ml):
     """Register dataset tools with mock_ml as the DerivaML stand-in.
 
-    Patches at the use-site (``deriva_ml_mcp.tools.dataset.get_ml``) and
+    Patches at the use-site (``deriva_ml_mcp_plugin.tools.dataset.get_ml``) and
     imports the tool module *inside* the patch block so registration
     sees the mock.
     """
-    with patch("deriva_ml_mcp.tools.dataset.get_ml", return_value=mock_ml):
-        from deriva_ml_mcp.tools import dataset as dataset_module
+    with patch("deriva_ml_mcp_plugin.tools.dataset.get_ml", return_value=mock_ml):
+        from deriva_ml_mcp_plugin.tools import dataset as dataset_module
 
         dataset_module.register(ctx)
         yield ctx

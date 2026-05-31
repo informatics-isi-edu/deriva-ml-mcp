@@ -48,16 +48,16 @@ logger = logging.getLogger(__name__)
 # See the header note in ``mutate.py`` for why ``audit_event`` and
 # ``get_ml`` are accessed via attribute lookup on the parent package
 # (``_pkg.<name>``) rather than direct ``from ... import``: a single
-# ``patch("deriva_ml_mcp.tools.dataset.<name>")`` must redirect every
+# ``patch("deriva_ml_mcp_plugin.tools.dataset.<name>")`` must redirect every
 # call across read / mutate / complex submodules.
-import deriva_ml_mcp.tools.dataset as _pkg  # noqa: E402  (intentional cycle)
-from deriva_ml_mcp._helpers import (
+import deriva_ml_mcp_plugin.tools.dataset as _pkg  # noqa: E402  (intentional cycle)
+from deriva_ml_mcp_plugin._helpers import (
     _MAX_LIMIT,
     _error_envelope,
     _paginate,
     _row_rid_for,
 )
-from deriva_ml_mcp._response_models import (
+from deriva_ml_mcp_plugin._response_models import (
     DenormalizeCatalogShapeResponse,
     DenormalizeDatasetPageResponse,
     DenormalizeDatasetShapeResponse,

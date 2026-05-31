@@ -21,7 +21,7 @@ Audit event lookup goes through ``_pkg.audit_event(...)`` (attribute
 lookup on the parent package) rather than a direct import, so the
 package's single ``audit_event`` binding (set in ``__init__.py``) is the
 one canonical patch site for both ``mutate`` and ``complex`` -- preserving
-the pre-split behaviour where ``patch("deriva_ml_mcp.tools.dataset.audit_event")``
+the pre-split behaviour where ``patch("deriva_ml_mcp_plugin.tools.dataset.audit_event")``
 captured every success-path emission in one shot.
 """
 
@@ -39,19 +39,19 @@ logger = logging.getLogger(__name__)
 
 # Note on patchable names (``audit_event``, ``get_ml``, ``Dataset``):
 # the package ``__init__.py`` imports each of these at module level and
-# the test fixtures patch them at ``deriva_ml_mcp.tools.dataset.<name>``.
+# the test fixtures patch them at ``deriva_ml_mcp_plugin.tools.dataset.<name>``.
 # We deliberately access them via attribute lookup on the package
 # (``_pkg.<name>``) rather than ``from ... import <name>`` so a single
 # ``patch(...)`` redirects every call across read / mutate / complex
 # submodules. ``from ... import`` here would create per-submodule
 # bindings the patch can't reach. The failure path goes through
 # ``_error_envelope`` in ``_helpers`` and still needs the second patch
-# on ``deriva_ml_mcp._helpers.audit_event`` -- see
+# on ``deriva_ml_mcp_plugin._helpers.audit_event`` -- see
 # ``make_patch_audit("dataset")`` in ``tests/_helpers.py`` (the
 # canonical factory) for the dual-patch context manager.
-import deriva_ml_mcp.tools.dataset as _pkg  # noqa: E402  (intentional cycle)
-from deriva_ml_mcp._helpers import _error_envelope
-from deriva_ml_mcp._response_models import (
+import deriva_ml_mcp_plugin.tools.dataset as _pkg  # noqa: E402  (intentional cycle)
+from deriva_ml_mcp_plugin._helpers import _error_envelope
+from deriva_ml_mcp_plugin._response_models import (
     AddDatasetElementTypeResponse,
     AddDatasetMembersResponse,
     CreateDatasetResponse,
@@ -60,7 +60,7 @@ from deriva_ml_mcp._response_models import (
     ReleaseDatasetResponse,
     UpdateDatasetResponse,
 )
-from deriva_ml_mcp.tools.dataset.read import _summarize_dataset
+from deriva_ml_mcp_plugin.tools.dataset.read import _summarize_dataset
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
@@ -147,7 +147,7 @@ def register(ctx: PluginContext) -> None:
             # already succeeded). Lazy import to avoid the resources/rag
             # <-> tools/dataset module-load cycle.
             try:
-                from deriva_ml_mcp.resources.rag import _reindex_dataset
+                from deriva_ml_mcp_plugin.resources.rag import _reindex_dataset
 
                 await _reindex_dataset(hostname, catalog_id, new_ds.dataset_rid)
             except Exception:  # noqa: BLE001 -- best-effort cache refresh
@@ -219,7 +219,7 @@ def register(ctx: PluginContext) -> None:
             # Best-effort -- failure to drop is logged but does not affect
             # the tool's success envelope.
             try:
-                from deriva_ml_mcp.resources.rag import _delete_dataset_source
+                from deriva_ml_mcp_plugin.resources.rag import _delete_dataset_source
 
                 await _delete_dataset_source(hostname, catalog_id, dataset_rid)
             except Exception:  # noqa: BLE001 -- best-effort cache refresh
@@ -343,7 +343,7 @@ def register(ctx: PluginContext) -> None:
             )
             # v1.3 surgical re-index: member-count + version changed.
             try:
-                from deriva_ml_mcp.resources.rag import _reindex_dataset
+                from deriva_ml_mcp_plugin.resources.rag import _reindex_dataset
 
                 await _reindex_dataset(hostname, catalog_id, dataset_rid)
             except Exception:  # noqa: BLE001 -- best-effort cache refresh
@@ -435,7 +435,7 @@ def register(ctx: PluginContext) -> None:
             )
             # v1.3 surgical re-index: member-count + version changed.
             try:
-                from deriva_ml_mcp.resources.rag import _reindex_dataset
+                from deriva_ml_mcp_plugin.resources.rag import _reindex_dataset
 
                 await _reindex_dataset(hostname, catalog_id, dataset_rid)
             except Exception:  # noqa: BLE001 -- best-effort cache refresh
@@ -588,7 +588,7 @@ def register(ctx: PluginContext) -> None:
             )
             # v1.3 surgical re-index: types and/or description changed.
             try:
-                from deriva_ml_mcp.resources.rag import _reindex_dataset
+                from deriva_ml_mcp_plugin.resources.rag import _reindex_dataset
 
                 await _reindex_dataset(hostname, catalog_id, dataset_rid)
             except Exception:  # noqa: BLE001 -- best-effort cache refresh
@@ -791,7 +791,7 @@ def register(ctx: PluginContext) -> None:
             )
             # v1.3 surgical re-index: version field in the chunk changed.
             try:
-                from deriva_ml_mcp.resources.rag import _reindex_dataset
+                from deriva_ml_mcp_plugin.resources.rag import _reindex_dataset
 
                 await _reindex_dataset(hostname, catalog_id, dataset_rid)
             except Exception:  # noqa: BLE001 -- best-effort cache refresh

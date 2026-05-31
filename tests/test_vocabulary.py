@@ -53,12 +53,12 @@ def _make_vocab_table_mock(
 def vocabulary_ctx(ctx, mock_ml):
     """Register vocabulary tools with mock_ml as the DerivaML stand-in.
 
-    Patches at the use-site (``deriva_ml_mcp.tools.vocabulary.get_ml``)
+    Patches at the use-site (``deriva_ml_mcp_plugin.tools.vocabulary.get_ml``)
     and imports the tool module *inside* the patch block so the
     register call resolves ``get_ml`` to the mock.
     """
-    with patch("deriva_ml_mcp.tools.vocabulary.get_ml", return_value=mock_ml):
-        from deriva_ml_mcp.tools import vocabulary as vocabulary_module
+    with patch("deriva_ml_mcp_plugin.tools.vocabulary.get_ml", return_value=mock_ml):
+        from deriva_ml_mcp_plugin.tools import vocabulary as vocabulary_module
 
         vocabulary_module.register(ctx)
         yield ctx
@@ -86,7 +86,7 @@ async def test_create_vocabulary_success(vocabulary_ctx, capturing_mcp, mock_ml)
     # Patch fire_schema_change so the test doesn't touch the framework
     # plugin registry. _patch_vocabulary_audit handles audit_event.
     with (
-        patch("deriva_ml_mcp.tools.vocabulary.fire_schema_change"),
+        patch("deriva_ml_mcp_plugin.tools.vocabulary.fire_schema_change"),
         _patch_vocabulary_audit() as mock_audit,
     ):
         out = json.loads(
@@ -127,7 +127,7 @@ async def test_create_vocabulary_explicit_schema(vocabulary_ctx, capturing_mcp, 
     mock_ml.create_vocabulary.return_value = new_vocab
 
     with (
-        patch("deriva_ml_mcp.tools.vocabulary.fire_schema_change"),
+        patch("deriva_ml_mcp_plugin.tools.vocabulary.fire_schema_change"),
         _patch_vocabulary_audit(),
     ):
         out = json.loads(
@@ -157,7 +157,7 @@ async def test_create_vocabulary_failure_emits_failed_audit(
     mock_ml.create_vocabulary.side_effect = RuntimeError("Table Tissue_Type already exist")
 
     with (
-        patch("deriva_ml_mcp.tools.vocabulary.fire_schema_change"),
+        patch("deriva_ml_mcp_plugin.tools.vocabulary.fire_schema_change"),
         _patch_vocabulary_audit() as mock_audit,
     ):
         out = json.loads(

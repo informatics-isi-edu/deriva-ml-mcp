@@ -15,7 +15,7 @@
 # if your checkout lives elsewhere.
 #
 # This is a development/testing helper while the deriva-docker support
-# for installing the deriva-ml-mcp plugin via DERIVA_MCP_EXTRA_PACKAGES
+# for installing the deriva-ml-mcp-plugin package via DERIVA_MCP_EXTRA_PACKAGES
 # is still pre-release. When deriva-docker ships final support, this
 # script will be replaced by the deriva-docker docs' canonical workflow.
 

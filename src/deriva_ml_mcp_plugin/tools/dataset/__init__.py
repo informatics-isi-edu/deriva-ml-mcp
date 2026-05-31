@@ -1,4 +1,4 @@
-"""Dataset domain tools for deriva-ml-mcp.
+"""Dataset domain tools for deriva-ml-mcp-plugin.
 
 Why this is a package, not a single file: the prior single
 ``tools/dataset.py`` had grown to 17 tools / 1745 lines, well past the
@@ -31,13 +31,13 @@ Public surface (preserved from the pre-split single-file shape):
 - ``register(ctx)`` -- aggregator; dispatches to the three submodules'
   own ``register`` functions. ``plugin.py`` calls this.
 - ``audit_event`` -- re-exported from ``deriva_mcp_core.telemetry`` so
-  ``patch("deriva_ml_mcp.tools.dataset.audit_event")`` continues to
+  ``patch("deriva_ml_mcp_plugin.tools.dataset.audit_event")`` continues to
   redirect every success-path emission across read / mutate / complex
   in one shot. The submodules access this via attribute lookup on the
   package (``_pkg.audit_event``) rather than ``from ... import`` so
   the package binding IS the canonical patch site.
 - The four ``_*_impl`` helpers re-exported from ``read.py`` so
-  ``from deriva_ml_mcp.tools.dataset import _list_datasets_impl, ...``
+  ``from deriva_ml_mcp_plugin.tools.dataset import _list_datasets_impl, ...``
   (used by ``resources/ml.py`` and ``resources/rag.py``) keeps
   resolving identically.
 """
@@ -47,7 +47,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 # Re-exports below preserve the pre-split single-file patch surface.
-# Test code patches ``deriva_ml_mcp.tools.dataset.{audit_event,
+# Test code patches ``deriva_ml_mcp_plugin.tools.dataset.{audit_event,
 # get_ml, Dataset}`` as a single canonical site, and the
 # read/mutate/complex submodules deliberately access those three
 # names via attribute lookup on this package (``_pkg.audit_event``,
@@ -58,14 +58,14 @@ from typing import TYPE_CHECKING
 from deriva_mcp_core.telemetry import audit_event
 from deriva_ml.dataset.dataset import Dataset
 
-from deriva_ml_mcp.ml_context import get_ml
+from deriva_ml_mcp_plugin.ml_context import get_ml
 
 # Re-export of the four dataset helpers consumed by ``resources/ml.py``
 # and ``resources/rag.py``. They live in ``read.py`` (their natural
 # domain home) but the import path
-# ``from deriva_ml_mcp.tools.dataset import _list_datasets_impl, ...``
+# ``from deriva_ml_mcp_plugin.tools.dataset import _list_datasets_impl, ...``
 # is preserved here so the resource modules don't need to change.
-from deriva_ml_mcp.tools.dataset.read import (
+from deriva_ml_mcp_plugin.tools.dataset.read import (
     _bag_info_impl,
     _get_dataset_detail_impl,
     _get_dataset_spec_impl,
@@ -103,7 +103,7 @@ def register(ctx: PluginContext) -> None:
     backlog).
 
     Submodule imports are deferred to inside ``register`` because
-    ``mutate.py`` and ``complex.py`` import ``deriva_ml_mcp.tools.dataset``
+    ``mutate.py`` and ``complex.py`` import ``deriva_ml_mcp_plugin.tools.dataset``
     at module load time (to access ``_pkg.audit_event``); doing the
     submodule imports up here would create an import-time cycle. The
     deferred form lets ``__init__.py`` finish populating its module
@@ -121,9 +121,9 @@ def register(ctx: PluginContext) -> None:
         >>> # ctx provided by the framework
         >>> register(ctx)  # doctest: +SKIP
     """
-    from deriva_ml_mcp.tools.dataset import complex as _complex
-    from deriva_ml_mcp.tools.dataset import mutate as _mutate
-    from deriva_ml_mcp.tools.dataset import read as _read
+    from deriva_ml_mcp_plugin.tools.dataset import complex as _complex
+    from deriva_ml_mcp_plugin.tools.dataset import mutate as _mutate
+    from deriva_ml_mcp_plugin.tools.dataset import read as _read
 
     _read.register(ctx)
     _mutate.register(ctx)

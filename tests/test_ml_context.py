@@ -19,11 +19,11 @@ def test_get_ml_resolves_credential_via_core_get_credential():
 
     with (
         patch(
-            "deriva_ml_mcp.ml_context.get_credential", return_value=fake_credential
+            "deriva_ml_mcp_plugin.ml_context.get_credential", return_value=fake_credential
         ) as mock_get_cred,
-        patch("deriva_ml_mcp.ml_context.DerivaML") as mock_derivaml_cls,
+        patch("deriva_ml_mcp_plugin.ml_context.DerivaML") as mock_derivaml_cls,
     ):
-        from deriva_ml_mcp.ml_context import get_ml
+        from deriva_ml_mcp_plugin.ml_context import get_ml
 
         ml = get_ml("host.example.org", "1")
 
@@ -44,10 +44,10 @@ def test_get_ml_propagates_credential_errors():
     swallow or rewrite credential errors -- callers handle the message
     uniformly via the standard error path."""
     with patch(
-        "deriva_ml_mcp.ml_context.get_credential",
+        "deriva_ml_mcp_plugin.ml_context.get_credential",
         side_effect=RuntimeError("No credential in current request context."),
     ):
-        from deriva_ml_mcp.ml_context import get_ml
+        from deriva_ml_mcp_plugin.ml_context import get_ml
 
         try:
             get_ml("host.example.org", "1")

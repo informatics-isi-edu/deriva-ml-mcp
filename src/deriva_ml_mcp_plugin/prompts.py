@@ -1,4 +1,4 @@
-"""Built-in MCP prompts for deriva-ml-mcp.
+"""Built-in MCP prompts for deriva-ml-mcp-plugin.
 
 These are MCP prompts (registered via ``@ctx.prompt(...)``), not Python
 docstrings. FastMCP surfaces them through the MCP ``prompts/list`` and
@@ -42,7 +42,7 @@ Example:
     plugin loader through ``register(ctx)``)::
 
         from deriva_mcp_core.plugin.api import PluginContext
-        from deriva_ml_mcp.prompts import register
+        from deriva_ml_mcp_plugin.prompts import register
 
         ctx = PluginContext(some_mcp_server)
         register(ctx)
@@ -109,7 +109,7 @@ The stack:
     ``Workflow``, ``ExecutionConfiguration``, dataset / feature / asset
     APIs, and the ``with ml.create_execution(config) as exe:`` context
     manager pattern.
-  - ``deriva-ml-mcp`` is THIS plugin (loaded by ``deriva-mcp-core``);
+  - ``deriva-ml-mcp-plugin`` is THIS plugin (loaded by ``deriva-mcp-core``);
     exposes the ``deriva_ml_*`` MCP tools and the
     ``deriva://catalog/{h}/{c}/deriva-ml/...`` resource family.
   - ``deriva-ml-skills`` is a companion Claude Code skill plugin that
@@ -318,7 +318,7 @@ the underlying Deriva tables) breaks reproducibility silently.
 
 THE RULE: INHERITANCE WITH OVERRIDE
 -----------------------------------
-The deriva-ml-mcp plugin EXTENDS ``deriva-mcp-core``. Everything that
+The deriva-ml-mcp-plugin plugin EXTENDS ``deriva-mcp-core``. Everything that
 applies in a Deriva catalog applies in a deriva-ml catalog by default.
 OVERRIDE: if a deriva-ml surface exists for an operation, prefer it
 over the equivalent deriva surface. This applies symmetrically on all
@@ -549,7 +549,7 @@ Now that you have the conceptual frame, read these in this order:
 
 
 _GETTING_STARTED_GUIDE = """\
-DERIVA-ML GETTING STARTED -- read this before using any deriva-ml-mcp tool \
+DERIVA-ML GETTING STARTED -- read this before using any deriva-ml-mcp-plugin tool \
 or resource.
 
 If you do not already have a mental model of DerivaML's domain (what a
@@ -1056,7 +1056,7 @@ def register(ctx: PluginContext) -> None:
     @ctx.prompt(
         "deriva_ml_concepts",
         description=(
-            "Conceptual frame for any LLM client cold-starting on deriva-ml-mcp: "
+            "Conceptual frame for any LLM client cold-starting on deriva-ml-mcp-plugin: "
             "what DerivaML is, the five core abstractions (Dataset, Workflow, "
             "Execution, Feature, Asset), the provenance principle, and the "
             "vocabulary-extension pattern. Read this BEFORE deriva_ml_getting_started "
@@ -1071,7 +1071,7 @@ def register(ctx: PluginContext) -> None:
     @ctx.prompt(
         "deriva_ml_getting_started",
         description=(
-            "Cold-start orientation for deriva-ml-mcp: the (hostname, catalog_id) rule, "
+            "Cold-start orientation for deriva-ml-mcp-plugin: the (hostname, catalog_id) rule, "
             "the four ML domains, discovery via resources/RAG, the workflow->execution->outputs chain. "
             "Assumes the conceptual frame from deriva_ml_concepts."
         ),

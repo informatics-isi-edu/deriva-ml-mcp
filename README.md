@@ -1,4 +1,4 @@
-# deriva-ml-mcp
+# deriva-ml-mcp-plugin
 
 DerivaML domain plugin for [deriva-mcp-core](../deriva-mcp-core).
 
@@ -19,7 +19,7 @@ beyond having both packages installed in the same Python environment.
 ```bash
 uv tool install \
   --from git+https://github.com/informatics-isi-edu/deriva-mcp-core.git \
-  --with deriva-ml-mcp \
+  --with deriva-ml-mcp-plugin \
   --with deriva-ml \
   deriva-mcp-core
 ```
@@ -55,7 +55,7 @@ into the MCP server's image, add this line to your deriva-docker env
 file (typically `~/.deriva-docker/env/localhost.env`):
 
 ```bash
-DERIVA_MCP_EXTRA_PACKAGES="deriva-ml-mcp@git+https://github.com/informatics-isi-edu/deriva-ml-mcp.git@main deriva-ml@git+https://github.com/informatics-isi-edu/deriva-ml.git@main deriva@git+https://github.com/informatics-isi-edu/deriva-py@deriva-ml"
+DERIVA_MCP_EXTRA_PACKAGES="deriva-ml-mcp-plugin@git+https://github.com/informatics-isi-edu/deriva-ml-mcp.git@main deriva-ml@git+https://github.com/informatics-isi-edu/deriva-ml.git@main deriva@git+https://github.com/informatics-isi-edu/deriva-py@deriva-ml"
 ```
 
 The three packages pin against `main` (or a working branch for
@@ -63,10 +63,10 @@ The three packages pin against `main` (or a working branch for
 specific tag/commit for reproducible deployments.
 
 The plugin's entry-point name (set in `pyproject.toml` under
-`[project.entry-points."deriva_mcp.plugins"]`) is **`deriva-ml-mcp`** --
+`[project.entry-points."deriva_mcp.plugins"]`) is **`deriva-ml-mcp-plugin`** --
 deliberately the same as the PyPI package name so the deriva-docker
 default config (`mcp/config/deriva-mcp.env`,
-`DERIVA_MCP_PLUGIN_ALLOWLIST=facebase,deriva-ml-mcp`) loads the
+`DERIVA_MCP_PLUGIN_ALLOWLIST=facebase,deriva-ml-mcp-plugin`) loads the
 plugin out of the box, no override needed.
 
 The same config file sets `DERIVA_MCP_DISABLE_MUTATING_TOOLS=false`,
@@ -77,7 +77,7 @@ Confirm both on startup by grepping the container log for:
 
 ```
 INFO ... Mutating tools are ENABLED (DERIVA_MCP_DISABLE_MUTATING_TOOLS=false).
-INFO ... Loaded plugin: deriva-ml-mcp (deriva_ml_mcp.plugin:register)
+INFO ... Loaded plugin: deriva-ml-mcp-plugin (deriva_ml_mcp_plugin.plugin:register)
 ```
 
 To pick up new commits, rebuild and restart the MCP service:

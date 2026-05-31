@@ -1,4 +1,4 @@
-"""RAG cache management tools for deriva-ml-mcp.
+"""RAG cache management tools for deriva-ml-mcp-plugin.
 
 Both tools in this module are **manual cache-refresh** verbs --
 ``mutates=False``, no audit emission, no catalog-state change. They
@@ -32,8 +32,8 @@ from typing import TYPE_CHECKING
 
 from deriva_mcp_core import deriva_call
 
-from deriva_ml_mcp._helpers import _error_envelope
-from deriva_ml_mcp._response_models import (
+from deriva_ml_mcp_plugin._helpers import _error_envelope
+from deriva_ml_mcp_plugin._response_models import (
     ReindexVocabulariesResponse,
     ResyncIndexesResponse,
 )
@@ -113,7 +113,7 @@ def register(ctx: PluginContext) -> None:
                 # Imported lazily so module import time stays cheap and
                 # so test patches of ``rag._index_vocabularies`` reach
                 # this call site cleanly.
-                from deriva_ml_mcp.resources.rag import _index_vocabularies
+                from deriva_ml_mcp_plugin.resources.rag import _index_vocabularies
 
                 indexed = await _index_vocabularies(hostname, catalog_id, only_vocab=vocab)
             return ReindexVocabulariesResponse(reindexed=indexed).model_dump_json(by_alias=True)
@@ -207,7 +207,7 @@ def register(ctx: PluginContext) -> None:
                 # Lazy import per the established pattern -- keeps
                 # module import time cheap and lets tests patch
                 # rag._resync_user_sources at the use-site.
-                from deriva_ml_mcp.resources.rag import _resync_user_sources
+                from deriva_ml_mcp_plugin.resources.rag import _resync_user_sources
 
                 counts = await _resync_user_sources(hostname, catalog_id, target=target)
             return ResyncIndexesResponse(resynced=counts).model_dump_json(by_alias=True)

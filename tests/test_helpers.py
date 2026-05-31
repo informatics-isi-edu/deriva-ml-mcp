@@ -1,4 +1,4 @@
-"""Unit tests for ``deriva_ml_mcp._helpers``.
+"""Unit tests for ``deriva_ml_mcp_plugin._helpers``.
 
 The other helpers (``_error_envelope``, ``_paginate``, ``_read_rid``,
 ``_row_rid_for``) are exercised end-to-end by the per-domain test suites
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from deriva_ml_mcp._helpers import (
+from deriva_ml_mcp_plugin._helpers import (
     _table_qname,
     _table_to_dict,
 )
@@ -75,7 +75,7 @@ def test_error_envelope_surfaces_missing_rids_from_typed_exception() -> None:
 
     from deriva_ml.core.exceptions import DerivaMLRidsNotFound
 
-    from deriva_ml_mcp._helpers import _error_envelope
+    from deriva_ml_mcp_plugin._helpers import _error_envelope
 
     # audit=False to avoid touching the audit-event side; the
     # structured-fields injection runs regardless of the audit flag.
@@ -98,7 +98,7 @@ def test_error_envelope_no_missing_rids_for_generic_exception() -> None:
     """Non-RidsNotFound exceptions get the plain ``{"error": ...}`` envelope."""
     import json as _json
 
-    from deriva_ml_mcp._helpers import _error_envelope
+    from deriva_ml_mcp_plugin._helpers import _error_envelope
 
     out = _json.loads(
         _error_envelope(

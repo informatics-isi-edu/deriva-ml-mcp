@@ -1,4 +1,4 @@
-"""Workflow domain tools for deriva-ml-mcp.
+"""Workflow domain tools for deriva-ml-mcp-plugin.
 
 Read tools: ``deriva_ml_list_workflows``, ``deriva_ml_get_workflow``, ``deriva_ml_find_workflow_by_url``.
 Mutation tools: ``deriva_ml_create_workflow``, ``deriva_ml_update_workflow``.
@@ -31,22 +31,22 @@ logger = logging.getLogger(__name__)
 # Note on testing audit_event: see ``make_patch_audit("workflow")`` in
 # tests/conftest.py. Single-patch facade is impossible due to Python's
 # ``from X import name`` import binding semantics — tests must patch
-# BOTH ``deriva_ml_mcp.tools.workflow.audit_event`` (this module's
-# success-path emission) and ``deriva_ml_mcp._helpers.audit_event`` (the
+# BOTH ``deriva_ml_mcp_plugin.tools.workflow.audit_event`` (this module's
+# success-path emission) and ``deriva_ml_mcp_plugin._helpers.audit_event`` (the
 # failure-path emission inside ``_error_envelope``).
-from deriva_ml_mcp._helpers import (
+from deriva_ml_mcp_plugin._helpers import (
     _MAX_LIMIT,
     _error_envelope,
     _paginate,
 )
-from deriva_ml_mcp._response_models import (
+from deriva_ml_mcp_plugin._response_models import (
     CreateWorkflowResponse,
     PreflightCountResponse,
     UpdateWorkflowResponse,
     WorkflowListResponse,
     WorkflowSummary,
 )
-from deriva_ml_mcp.ml_context import get_ml
+from deriva_ml_mcp_plugin.ml_context import get_ml
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
@@ -107,7 +107,7 @@ def _summarize_workflow(wf: Any) -> WorkflowSummary:
 
     Returns:
         ``WorkflowSummary`` Pydantic instance -- see
-        ``deriva_ml_mcp._response_models``. Construction validates
+        ``deriva_ml_mcp_plugin._response_models``. Construction validates
         the field types; bad data from ``deriva-ml`` raises
         ``ValidationError`` here rather than surfacing as malformed
         JSON downstream.
@@ -160,7 +160,7 @@ def _list_workflows_impl(
             sets is bounded by the internal fetch cap.
 
     Returns:
-        ``WorkflowListResponse`` -- see ``deriva_ml_mcp._response_models``.
+        ``WorkflowListResponse`` -- see ``deriva_ml_mcp_plugin._response_models``.
     """
     raw = list(ml.find_workflows(sort=True if sort else None))
     # Keep stable RID-ascending order for the default path; under
@@ -199,7 +199,7 @@ def _get_workflow_impl(ml: Any, workflow_rid: str) -> WorkflowSummary:
         workflow_rid: The RID of the workflow to look up.
 
     Returns:
-        ``WorkflowSummary`` -- see ``deriva_ml_mcp._response_models``.
+        ``WorkflowSummary`` -- see ``deriva_ml_mcp_plugin._response_models``.
         The ``WorkflowDetail`` wrapper type was retired in the P2
         hygiene sweep because it was shape-identical to
         ``WorkflowSummary`` and had no detail-only fields.
@@ -587,7 +587,7 @@ def register(ctx: PluginContext) -> None:
             # already succeeded; a re-index hiccup must not propagate
             # to the tool's success path.
             try:
-                from deriva_ml_mcp.resources.rag import _reindex_workflow
+                from deriva_ml_mcp_plugin.resources.rag import _reindex_workflow
 
                 await _reindex_workflow(hostname, catalog_id, rid)
             except Exception:  # noqa: BLE001 -- best-effort cache refresh
@@ -705,7 +705,7 @@ def register(ctx: PluginContext) -> None:
             # v1.3 surgical re-index: description and/or workflow_type
             # tags appear in the chunk; refresh after the catalog write.
             try:
-                from deriva_ml_mcp.resources.rag import _reindex_workflow
+                from deriva_ml_mcp_plugin.resources.rag import _reindex_workflow
 
                 await _reindex_workflow(hostname, catalog_id, workflow_rid)
             except Exception:  # noqa: BLE001 -- best-effort cache refresh

@@ -1,4 +1,4 @@
-"""Pydantic response models for deriva-ml-mcp tools and resources.
+"""Pydantic response models for deriva-ml-mcp-plugin tools and resources.
 
 Every list / detail / summary response shape returned by an ``_*_impl``
 helper is declared here as a ``pydantic.BaseModel`` so the resource
@@ -64,7 +64,7 @@ contract explicit AND validated:
 These models are part of the wire contract -- tools and resources
 are versioned, and these shapes mirror what crosses the MCP wire as
 JSON. Changing a model is a contract change; bump the plugin's minor
-or major version accordingly per the deriva-ml-mcp release rules in
+or major version accordingly per the deriva-ml-mcp-plugin release rules in
 ``CLAUDE.md``.
 
 ## Behavior change (v2.0.0)

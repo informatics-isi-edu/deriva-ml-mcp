@@ -1,4 +1,4 @@
-"""Live-catalog integration tests for deriva-ml-mcp feature tools.
+"""Live-catalog integration tests for deriva-ml-mcp-plugin feature tools.
 
 Same shape as ``tests/test_integration.py`` — gated by the
 ``integration`` pytest marker and a ``skipif`` that probes
@@ -67,7 +67,7 @@ def integration_feature_tools(demo_catalog: tuple[str, str]) -> Iterator[_Captur
     plugin_ctx = PluginContext(capturing)
     _set_plugin_context(plugin_ctx)
     try:
-        from deriva_ml_mcp.tools import feature as feature_module
+        from deriva_ml_mcp_plugin.tools import feature as feature_module
 
         feature_module.register(plugin_ctx)
         yield capturing

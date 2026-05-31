@@ -1,4 +1,4 @@
-"""Shared helpers for deriva-ml-mcp tool modules.
+"""Shared helpers for deriva-ml-mcp-plugin tool modules.
 
 These were originally factored out during Phase 2 (dataset domain) and
 are lifted here so Phase 3+ domain modules (feature, workflow,
@@ -19,14 +19,14 @@ Public API:
     _MAX_LIMIT: Pagination cap (1000 rows per page).
 
 The leading underscore on each helper is preserved -- they're internal
-to deriva-ml-mcp, not part of the package's public API.
+to deriva-ml-mcp-plugin, not part of the package's public API.
 
 Note on testing audit events: ``audit_event`` (imported below from
 ``deriva_mcp_core.telemetry``) is called from inside ``_error_envelope``
 on the failure path. Tool modules also import ``audit_event`` directly
 into their own namespace for success-path emission. Tests that need to
 capture both paths must patch BOTH the tool-module name AND
-``deriva_ml_mcp._helpers.audit_event`` to the same mock — see
+``deriva_ml_mcp_plugin._helpers.audit_event`` to the same mock — see
 ``make_patch_audit(module_name)`` in ``tests/_helpers.py`` (the
 canonical factory; per-domain test files bind it as
 ``_patch_audit = make_patch_audit("dataset")`` etc.). Python's
