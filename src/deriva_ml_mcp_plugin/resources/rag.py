@@ -138,15 +138,15 @@ _GITHUB_DOCS_PATH_PREFIX = ""
 _GITHUB_DOCS_DOC_TYPE = "ml-docs"
 
 
-# v3.x: index the deriva-ml-mcp repo's own top-level README so MCP
-# server documentation is searchable via rag_search alongside the
+# v3.x: index the deriva-ml-mcp-plugin repo's own top-level README so
+# MCP server documentation is searchable via rag_search alongside the
 # deriva-ml library docs. Same noise caveat as the deriva-ml source
 # above -- repo-root indexing also picks up CLAUDE.md and the
 # docs/scratch/*.md planning notes; the upstream exclude_paths=[...]
 # addition would let us drop these cleanly.
-_GITHUB_MCP_DOCS_NAME = "deriva-ml-mcp-docs"
+_GITHUB_MCP_DOCS_NAME = "deriva-ml-mcp-plugin-docs"
 _GITHUB_MCP_DOCS_OWNER = "informatics-isi-edu"
-_GITHUB_MCP_DOCS_REPO = "deriva-ml-mcp"
+_GITHUB_MCP_DOCS_REPO = "deriva-ml-mcp-plugin"
 _GITHUB_MCP_DOCS_BRANCH = "main"
 _GITHUB_MCP_DOCS_PATH_PREFIX = ""
 _GITHUB_MCP_DOCS_DOC_TYPE = "ml-mcp-docs"

@@ -326,14 +326,14 @@ def test_register_wires_rag_github_sources(ctx):
       - 'deriva-ml-docs' -- the deriva-ml repo's user-guide / api-
         reference / etc. (v3.x: prefix widened from "docs/" to ""
         to also pick up the top-level README.md and CHANGELOG.md).
-      - 'deriva-ml-mcp-docs' -- the deriva-ml-mcp repo's own README
-        (v3.x: new source so MCP-server documentation is searchable
-        via rag_search alongside the library docs).
+      - 'deriva-ml-mcp-plugin-docs' -- the deriva-ml-mcp-plugin repo's
+        own README (v3.x: new source so MCP-server documentation is
+        searchable via rag_search alongside the library docs).
     """
     register(ctx)
     assert len(ctx._rag_sources) == 2
     names = {decl.name for decl in ctx._rag_sources}
-    assert names == {"deriva-ml-docs", "deriva-ml-mcp-docs"}
+    assert names == {"deriva-ml-docs", "deriva-ml-mcp-plugin-docs"}
 
 
 def test_register_wires_four_catalog_connect_hooks(ctx):
