@@ -77,8 +77,8 @@ def rag_ctx(ctx):
 def test_register_rag_sources_declares_two_github_sources(rag_ctx) -> None:
     """register_rag_sources adds two GitHub documentation sources.
 
-    v3.x added a second source ('deriva-ml-mcp-docs') so the
-    deriva-ml-mcp repo's own README is searchable via rag_search
+    v3.x added a second source ('deriva-ml-mcp-plugin-docs') so the
+    deriva-ml-mcp-plugin repo's own README is searchable via rag_search
     alongside the deriva-ml library docs.
     """
     assert len(rag_ctx._rag_sources) == 2
@@ -100,10 +100,10 @@ def test_register_rag_sources_github_source_targets_deriva_ml_docs(rag_ctx) -> N
 
 
 def test_register_rag_sources_mcp_source_targets_deriva_ml_mcp_readme(rag_ctx) -> None:
-    """The second GitHub source points at informatics-isi-edu/deriva-ml-mcp repo root."""
-    decl = next(s for s in rag_ctx._rag_sources if s.name == "deriva-ml-mcp-docs")
+    """The second GitHub source points at informatics-isi-edu/deriva-ml-mcp-plugin repo root."""
+    decl = next(s for s in rag_ctx._rag_sources if s.name == "deriva-ml-mcp-plugin-docs")
     assert decl.repo_owner == "informatics-isi-edu"
-    assert decl.repo_name == "deriva-ml-mcp"
+    assert decl.repo_name == "deriva-ml-mcp-plugin"
     assert decl.branch == "main"
     assert decl.path_prefix == ""
     assert decl.doc_type == "ml-mcp-docs"
