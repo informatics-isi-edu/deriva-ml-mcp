@@ -1020,7 +1020,10 @@ async def _index_vocabularies(
     serializer = _VocabSerializer()
     indexed: dict[str, int] = {}
 
-    vocab_tables = await asyncio.to_thread(ml.find_vocabularies)
+    # find_vocabularies lives on the DerivaModel (ml.model), not on the
+    # DerivaML facade -- deriva-ml >=1.41 exposes it there. (list_vocabulary_terms
+    # below remains on ml directly.)
+    vocab_tables = await asyncio.to_thread(ml.model.find_vocabularies)
     for vocab_table in vocab_tables:
         qname = _table_qname(vocab_table)
         if only_vocab is not None and qname != only_vocab:
