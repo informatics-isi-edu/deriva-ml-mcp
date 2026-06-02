@@ -695,7 +695,7 @@ def test_index_vocabularies_writes_one_source_per_vocab() -> None:
     }
 
     fake_ml = MagicMock()
-    fake_ml.find_vocabularies.return_value = vocabs
+    fake_ml.model.find_vocabularies.return_value = vocabs
     fake_ml.list_vocabulary_terms.side_effect = lambda t: terms_by_table[
         f"{t.schema.name}.{t.name}"
     ]
@@ -726,6 +726,48 @@ def test_index_vocabularies_writes_one_source_per_vocab() -> None:
             assert chunk.source.startswith("vocab:h.example:1:")
 
 
+def test_index_vocabularies_calls_find_vocabularies_on_model_not_facade() -> None:
+    """Regression: find_vocabularies lives on ml.model, not the DerivaML facade.
+
+    deriva-ml >=1.41 exposes ``find_vocabularies`` on the ``DerivaModel``
+    (``ml.model``), not on the ``DerivaML`` object. A plain ``MagicMock``
+    auto-creates ``ml.find_vocabularies``, so it masked the real
+    ``AttributeError: 'DerivaML' object has no attribute 'find_vocabularies'``
+    seen at runtime. Here we ``del`` the facade attribute so accessing
+    ``ml.find_vocabularies`` raises (like the real object) -- the code must go
+    through ``ml.model.find_vocabularies`` or this test fails.
+    """
+    from deriva_ml import DerivaML
+
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    # Sanity-check the assumption this regression guards: the real facade
+    # does not expose find_vocabularies (if deriva-ml moves it back, revisit).
+    assert not hasattr(DerivaML, "find_vocabularies"), (
+        "DerivaML now exposes find_vocabularies directly; the ml.model "
+        "indirection in _index_vocabularies may no longer be needed."
+    )
+
+    fake_ml = MagicMock()
+    # Make the mock behave like the real DerivaML: no find_vocabularies on the
+    # facade. Accessing it now raises AttributeError instead of auto-creating.
+    del fake_ml.find_vocabularies
+    fake_ml.model.find_vocabularies.return_value = [_vocab_table("deriva-ml", "Dataset_Type")]
+    fake_ml.list_vocabulary_terms.return_value = [_vocab_term("Training", None, [], "1-T1")]
+    fake_store = MagicMock()
+    fake_store.delete_source = AsyncMock()
+    fake_store.add = AsyncMock()
+
+    with (
+        patch.object(rag_module, "get_rag_store", return_value=fake_store),
+        patch.object(rag_module, "get_ml", return_value=fake_ml),
+    ):
+        result = _run(rag_module._index_vocabularies("h.example", "1"))
+
+    assert result == {"deriva-ml.Dataset_Type": 1}
+    fake_ml.model.find_vocabularies.assert_called_once()
+
+
 def test_index_vocabularies_filter_only_writes_requested_vocab() -> None:
     """``only_vocab='schema.X'`` indexes only that vocab; others are skipped."""
     from deriva_ml_mcp_plugin.resources import rag as rag_module
@@ -735,7 +777,7 @@ def test_index_vocabularies_filter_only_writes_requested_vocab() -> None:
         _vocab_table("deriva-ml", "Workflow_Type"),
     ]
     fake_ml = MagicMock()
-    fake_ml.find_vocabularies.return_value = vocabs
+    fake_ml.model.find_vocabularies.return_value = vocabs
     fake_ml.list_vocabulary_terms.return_value = [_vocab_term("X", None, [], "1-T")]
 
     fake_store = MagicMock()
@@ -762,7 +804,7 @@ def test_index_vocabularies_per_vocab_failures_are_isolated(caplog) -> None:
     bad = _vocab_table("deriva-ml", "Broken_Vocab")
     good = _vocab_table("deriva-ml", "Working_Vocab")
     fake_ml = MagicMock()
-    fake_ml.find_vocabularies.return_value = [bad, good]
+    fake_ml.model.find_vocabularies.return_value = [bad, good]
 
     def fake_terms(t):
         if t is bad:
@@ -798,7 +840,7 @@ def test_index_vocabularies_short_circuits_when_store_none() -> None:
         result = _run(rag_module._index_vocabularies("h.example", "1"))
 
     assert result == {}
-    fake_ml.find_vocabularies.assert_not_called()
+    fake_ml.model.find_vocabularies.assert_not_called()
 
 
 def test_index_vocabularies_uses_shared_source_across_users() -> None:
@@ -814,7 +856,7 @@ def test_index_vocabularies_uses_shared_source_across_users() -> None:
 
     vocabs = [_vocab_table("deriva-ml", "Dataset_Type")]
     fake_ml = MagicMock()
-    fake_ml.find_vocabularies.return_value = vocabs
+    fake_ml.model.find_vocabularies.return_value = vocabs
     fake_ml.list_vocabulary_terms.return_value = [_vocab_term("Training", None, [], "1-T")]
 
     fake_store = MagicMock()

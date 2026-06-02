@@ -415,7 +415,7 @@ def test_vocab_hook_writes_to_vocab_prefix_not_data_prefix(ctx):
     term.rid = "1-TRAIN"
 
     fake_ml = MagicMock()
-    fake_ml.find_vocabularies.return_value = [vocab_table]
+    fake_ml.model.find_vocabularies.return_value = [vocab_table]
     fake_ml.list_vocabulary_terms.return_value = [term]
 
     fake_store = MagicMock()
