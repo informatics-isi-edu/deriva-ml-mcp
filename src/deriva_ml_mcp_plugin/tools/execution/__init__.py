@@ -4,9 +4,12 @@
 read-side tools. The execution lifecycle (``create``, ``start``,
 ``commit``, ``abort``, ``update``, ``add_feature_values``,
 ``create_execution_dataset``, ``add_nested_execution``) is owned by
-the caller's local Python environment and lives in skills that
-generate user-side code -- mirroring the ``work-with-assets`` skill
-pattern in ``deriva-skills``.
+the caller's local Python environment (the ``with
+ml.create_execution(...) as exe:`` pattern). For the runnable how-to,
+call ``rag_search(query="execution lifecycle", doc_type="ml-docs")``
+(the ``user-guide/executions.md`` doc, retrievable over this MCP);
+Claude Code clients also have the ``deriva-skills``
+``execution-lifecycle`` skill.
 
 Per the stateless / bounded-resource rule (CLAUDE.md), executions
 originate in the user's environment because:

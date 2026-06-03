@@ -32,8 +32,10 @@ machine -- moved to the ``user-guide/executions.md`` doc in the
 deriva-ml repo (RAG-indexed). v0.5.0 then removed the eight
 execution-lifecycle TOOLS themselves: per the stateless rule, executions
 originate in the caller's local Python environment, not in the MCP
-server. The lifecycle docs at the deriva-ml-skills ``execution-lifecycle``
-skill remain the authoritative how-to.)
+server. The authoritative how-to lives in ``user-guide/executions.md``
+(retrieve it over this MCP via ``rag_search(query="execution lifecycle",
+doc_type="ml-docs")``); Claude Code clients also have the deriva-ml-skills
+``execution-lifecycle`` skill.)
 
 All prompts are static strings (no f-strings, no tool calls, no catalog
 access required to render). Plain ASCII only (workspace convention).
@@ -659,9 +661,10 @@ reach for:
               (success or ``_failed``). Mutating tools have NO
               resource counterpart -- resources are read-only by
               MCP convention. (Execution lifecycle verbs such as
-              ``start_`` / ``commit_`` / ``abort_`` are permanently
-              deferred to a future ``work-with-executions`` skill in
-              deriva-ml-skills; no such tools exist in this plugin.)
+              ``start_`` / ``commit_`` / ``abort_`` are not MCP tools at
+              all -- they run in the caller's local Python; see the
+              MUTATION section and ``rag_search(query="execution
+              lifecycle", doc_type="ml-docs")``.)
 
     lookup_*  Specialized RID-or-name resolution (currently only
               ``lookup_asset``). Treat as a sibling of ``get_*``.
@@ -723,16 +726,20 @@ for the wire name.
                   the MCP server -- the workflow code, the feature-
                   staging SQLite manifest, the asset bytes, and the
                   ``with Execution(...) as exe:`` context-manager
-                  semantics all live there. See the deriva-ml-skills
-                  ``execution-lifecycle`` skill for the local-Python
-                  pattern.
+                  semantics all live there. For the local-Python
+                  pattern, ``rag_search(query="execution lifecycle",
+                  doc_type="ml-docs")`` (user-guide/executions.md);
+                  Claude Code clients also have the deriva-ml-skills
+                  ``execution-lifecycle`` skill.
 
     asset      -- 4 tools. File-backed catalog rows (images, model
                   weights, etc.) -- catalog-state operations only.
-                  File I/O lives in deriva-skills's work-with-assets
-                  skill. Verbs: list_assets / find_assets / lookup /
-                  update. For "what asset tables exist in a schema?" use
-                  the ml/assets/{schema} resource (no dedicated tool).
+                  File I/O (upload/download) runs in local Python; for
+                  the how-to, ``rag_search(query="asset upload download",
+                  doc_type="ml-docs")`` (user-guide/assets.md). Verbs:
+                  list_assets / find_assets / lookup / update. For "what
+                  asset tables exist in a schema?" use the
+                  ml/assets/{schema} resource (no dedicated tool).
 
 READ-SIDE QUESTIONS: FETCH THE RESOURCE FIRST
 ---------------------------------------------
@@ -755,6 +762,24 @@ ANTI-PATTERN: do NOT call ``deriva_ml_get_execution`` (or
 the entity's full state. Those tools return a thinner record and force
 follow-up ``deriva_ml_list_assets`` / ``query_attribute`` calls. The
 ``ml/<kind>/{rid}`` resource is the one-fetch answer.
+
+PRESENTING & STORING RIDs
+-------------------------
+Resource and tool payloads include a ``cite_url`` field alongside each
+RID. Use it:
+
+  - PRESENTING to a user: render an RID as a Markdown link to its
+    ``cite_url`` -- ``[2-ABCD](https://host/id/cat/2-ABCD)`` -- not a bare
+    string. A bare RID is not clickable or citable.
+  - The ``cite_url`` of a RELEASED dataset version is snapshot-pinned
+    (``/id/cat/rid@snaptime``) -- a permanent, reproducible reference.
+    Assets, executions, workflows, and dev-version datasets have LIVE
+    cite_urls (no snaptime); they track current state.
+  - STORING an RID reference INSIDE the catalog (in a description,
+    annotation, or markdown field): always use the ``/id/`` resolver
+    form (``/id/<cat>/<rid>``), never a ``/chaise/...`` UI URL. The
+    ``/id/`` form survives UI/deployment changes; ``/chaise/`` URLs do
+    not. When a payload gives you a ``cite_url``, use it verbatim.
 
 The full read-only resource family:
 
@@ -783,6 +808,14 @@ The full read-only resource family:
                                                  -- vocabulary tables in one schema
     deriva://catalog/{h}/{c}/deriva-ml/vocabularies/{schema}/{vocab_name}
                                                  -- terms in one vocabulary table
+
+IMPORTANT -- these catalog-scoped resources are URI TEMPLATES, not static
+resources. ``ListMcpResourcesTool`` enumerates only the handful of static
+resources (the orientation guides); it does NOT list the
+``deriva://catalog/.../deriva-ml/...`` templates above. If ListMcpResources
+returns only 2-3 entries, that is expected -- it does NOT mean the catalog
+resources are missing. Construct the URI from (hostname, catalog_id, rid)
+yourself and read it directly with ``ReadMcpResourceTool``.
 
 RESOURCE-TOOL PAIRINGS (when in doubt, prefer the resource)
 -----------------------------------------------------------
@@ -833,6 +866,57 @@ need filtered scans (e.g. "executions with status=Failed for workflow
 asset tables. Reach for ``deriva_ml_*`` mutation tools (create / update
 / commit / abort / start) only for write-side operations -- those have
 no resource counterpart.
+
+NO SKILLS? USE THE DOCS (rag_search is your how-to source)
+----------------------------------------------------------
+Some clients (Claude Code) load companion "skills" with step-by-step
+how-to guidance; many clients (chatbots, SDK agents, raw MCP clients)
+do NOT. If you need workflow/how-to guidance that is not already in a
+tool docstring or this prompt -- how to run an execution, the
+``with ml.create_execution(...) as exe:`` pattern, recording feature
+values, uploading/downloading asset bytes, the dataset version
+lifecycle, writing a hydra-zen config, working offline, denormalizing,
+sharing/reproducibility -- do NOT dead-end on a "see the X skill"
+pointer. Instead retrieve the doc over this MCP:
+
+    rag_search(query="<your how-to question>", doc_type="ml-docs")
+
+The deriva-ml repo's user-guide is fully indexed under
+``doc_type="ml-docs"``; these pages contain the runnable Python
+patterns (not just concepts):
+
+    executions.md      run an execution; with-context pattern;
+                       add_features; commit_output_assets; asset I/O;
+                       state machine; crash/resume
+    datasets.md        create / version / release / split / download a dataset
+    features.md        create a feature; record + read feature values; selectors
+    assets.md          upload (asset_file_path), download (download_asset /
+                       asset.download), metadata reads
+    denormalization.md wide-table joins; multi-value feature row semantics
+    offline.md         materialize for offline; read from a bag; reconnect
+    reproducibility.md version pinning; workflow checksums; dirty-tree rules
+    hydra-zen.md       config composition; CLI overrides
+    sharing.md         MINID / BDBag / catalog clone
+    exploring.md       find_* vs list_*; pathBuilder queries; RID resolution
+
+COMMON TASKS -> WHERE TO LOOK
+-----------------------------
+    Intent                         Tools / route
+    ------------------------------ --------------------------------------------
+    "what's in this catalog?"      rag_search(doc_type="catalog-schema" |
+                                   "catalog-data"); ml/datasets, ml/workflows
+                                   resources
+    "set up / run an experiment"   create_workflow (MCP) -> local Python
+                                   execution; rag_search "execution lifecycle"
+    "organize data for ML"         create_dataset, add_dataset_members,
+                                   split_dataset, release; rag_search "datasets"
+    "label / score records"        create_feature (MCP) + exe.add_features
+                                   (local); rag_search "features"
+    "upload / fetch a file"        exe.asset_file_path / exe.download_asset
+                                   (local); rag_search "asset upload download"
+    "which runs used dataset X?"   find_dataset_executions / get_lineage
+    "why is my run failing?"       rag_search "troubleshoot execution",
+                                   doc_type="ml-docs"
 
 DISCOVERY: RESOLVING USER-MENTIONED NAMES TO CATALOG IDENTIFIERS
 ----------------------------------------------------------------
@@ -952,15 +1036,18 @@ ALWAYS create artefacts inside an execution context. Bare insertions
 (via core's ``insert_records`` etc.) bypass provenance tracking and
 should only be used when no domain-specific path exists.
 
-For the lifecycle state machine details, ``rag_search(query=...,
-doc_type="ml-docs")`` for "execution state machine" -- the
-``user-guide/executions.md`` doc in the deriva-ml repo carries the
-cross-cutting state-machine reference at depth. The deriva-ml-skills
-``execution-lifecycle`` skill carries the user-facing how-to (the
-Python pattern to paste into your editor / notebook).
+For the lifecycle state machine details AND the runnable how-to (the
+``with ml.create_execution(...) as exe:`` pattern, add_features,
+commit_output_assets), call ``rag_search(query="execution lifecycle",
+doc_type="ml-docs")`` -- the ``user-guide/executions.md`` doc in the
+deriva-ml repo carries the full Python pattern and the state-machine
+reference at depth, and is retrievable over this MCP. (Claude Code
+clients also have the deriva-ml-skills ``execution-lifecycle`` skill;
+clients WITHOUT skills should use the rag_search route above -- the
+doc contains the same code patterns.)
 
-ASSETS: METADATA HERE, FILE I/O IN THE SKILL
---------------------------------------------
+ASSETS: METADATA HERE, FILE I/O IN LOCAL PYTHON
+-----------------------------------------------
 The asset surface covers the catalog-state half of the asset
 lifecycle:
 
@@ -978,29 +1065,29 @@ Plus three matching resources:
                                                  -- snapshot of one asset table
 
 What these tools do NOT do: register a new asset from a local file, or
-download asset bytes back to a local path. The MCP server has no
-general way to access the user's local filesystem, so file I/O is
-deliberately out of scope here. For those two flows, use the
-``work-with-assets`` skill in the deriva-skills plugin -- it generates
-the Python the user runs locally (which talks to the catalog directly
-via deriva-ml's ``execution.asset_file_path()`` for upload, and
-``asset.download()`` for fetch).
+download asset bytes to a local path. The MCP server has no general way
+to access the user's local filesystem, so file I/O runs in the user's
+local Python, not over this MCP. The runnable patterns are:
 
-The MCP <-> skill round trip looks like this:
+    upload:   inside ``with ml.create_execution(...) as exe:`` call
+              ``exe.asset_file_path(asset_name, file_name, ...)``,
+              write the file, then ``exe.commit_output_assets()``
+              after the block (asset tagged ``Output_File``).
+    download: ``exe.download_asset(asset_rid, dest_dir)`` for a
+              provenance-tracked input (tagged ``Input_File``), or the
+              bare ``asset.download(dest_dir)`` for a throwaway read
+              with no execution edge.
 
-    1. Inside an execution running in user-local Python (see the
-       MUTATION section above), the user wants to register a new
-       file as an asset. Use the ``work-with-assets`` skill -- it
-       produces a small Python snippet calling
-       ``execution.asset_file_path(...)``, writing the file, and
-       tying it to the running execution.
-    2. The user runs the snippet locally; the file is staged and
-       the asset row is created. The local ``with Execution(...)``
-       context manager handles the upload + commit on exit -- no
-       MCP commit call needed (none exists in v0.5.0+).
-    3. Come back to MCP for ``deriva_ml_lookup_asset`` /
-       ``deriva_ml_update_asset`` follow-ups, or
-       ``deriva_ml_list_assets`` to confirm the new row landed.
+For the full how-to with code, call ``rag_search(query="asset upload
+download", doc_type="ml-docs")`` -- the ``user-guide/assets.md`` doc in
+the deriva-ml repo carries upload, download, and metadata-read patterns
+and is retrievable over this MCP. (Claude Code clients also have the
+deriva-skills ``work-with-assets`` skill; clients WITHOUT skills should
+use the rag_search route -- the doc has the same patterns.)
+
+The round trip: do the local-Python file I/O (above), then come back to
+MCP for ``deriva_ml_lookup_asset`` / ``deriva_ml_update_asset`` /
+``deriva_ml_list_assets`` to confirm and curate the landed rows.
 
 CURATION PATTERN: ONE update_<entity> PER TYPED ENTITY
 ------------------------------------------------------

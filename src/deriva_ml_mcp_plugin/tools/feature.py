@@ -416,6 +416,14 @@ def register(ctx: PluginContext) -> None:
         - ``by_execution`` -- filter to records from one execution.
           Requires ``selector_execution_rid``.
 
+        Exactly one selector strategy applies per call: ``selector`` is a
+        single value. Supply ``selector_workflow`` ONLY with
+        ``selector="by_workflow"`` and ``selector_execution_rid`` ONLY with
+        ``selector="by_execution"`` -- the two companion args are not
+        combinable with each other or with the time-based selectors, and a
+        companion arg passed against a non-matching selector is ignored.
+        Custom callable selectors are Python-API-only (not available here).
+
         See ``deriva_ml_getting_started`` (PAGINATION CONTRACT) for the two-step pagination flow.
 
         Args:
