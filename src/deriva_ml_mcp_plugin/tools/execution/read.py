@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from deriva_mcp_core import deriva_call
 from deriva_ml.execution.execution import ExecutionStatus
@@ -175,6 +175,40 @@ def _dataset_version_str(dataset: Any) -> str | None:
     """
     version = getattr(dataset, "version", None)
     return str(version) if version is not None else None
+
+
+# Cursor key separator for the dataset-scoped path. A single execution
+# can appear TWICE in a ``dataset_role="any"`` result -- once as an
+# "input" row (it consumed version N) and once as an "output" row (it
+# authored version N+1) of the SAME dataset RID. Those two rows share a
+# ``rid`` but differ in ``dataset_role``. Paginating on ``rid`` alone
+# would let ``_paginate``'s strict ``key(it) > after_rid`` skip the
+# second same-rid row whenever the pair straddles a page boundary
+# (silent row loss). So the dataset path keys the cursor on the
+# composite ``f"{rid}\x00{dataset_role}"`` instead. ``\x00`` (NUL) is
+# used as the joiner because it sorts before every printable character
+# and can never occur inside a RID or a role token, so the composite
+# ordering is a clean refinement of RID order and the round-trip cursor
+# is unambiguous.
+_DATASET_CURSOR_SEP = "\x00"
+
+
+def _dataset_cursor_key(row: DatasetExecutionSummary) -> str:
+    """Composite pagination key for a dataset-scoped execution row.
+
+    Returns ``f"{rid}\\x00{dataset_role}"`` so the input and output rows
+    of a dual-role execution occupy distinct cursor positions. The
+    returned string is exactly what flows back to the client as
+    ``next_after_rid`` and is re-supplied as ``after_rid`` on the next
+    call, so the cursor round-trips correctly through ``_paginate``.
+
+    Args:
+        row: A ``DatasetExecutionSummary`` row.
+
+    Returns:
+        The composite cursor key.
+    """
+    return f"{row.rid or ''}{_DATASET_CURSOR_SEP}{row.dataset_role}"
 
 
 def _summarize_dataset_execution(
@@ -349,12 +383,17 @@ def _list_executions_impl(
         if sort:
             rows: list[Any] = tagged
         else:
-            rows = sorted(tagged, key=lambda e: e.rid or "")
+            # Sort on the SAME composite key the cursor uses so the
+            # ascending order and the strict ``> after_rid`` comparison
+            # in _paginate agree (otherwise a dual-role pair could be
+            # ordered by rid but cursored by composite, reintroducing
+            # the skip).
+            rows = sorted(tagged, key=_dataset_cursor_key)
         page, truncated, next_after = _paginate(
             rows,
             after_rid=after_rid,
             limit=limit,
-            key=partial(_read_rid, rid_key="rid"),
+            key=_dataset_cursor_key,
         )
         return ExecutionListResponse(
             executions=page,
@@ -654,7 +693,7 @@ def register(ctx: PluginContext) -> None:
         preflight_count: bool = False,
         sort: bool = False,
         dataset: str | None = None,
-        dataset_role: str = "any",
+        dataset_role: Literal["input", "output", "any"] = "any",
         dataset_version: str | None = None,
     ) -> str:
         """Browse executions in the catalog, optionally filtered by workflow, workflow type, status, or dataset.
@@ -930,7 +969,7 @@ def register(ctx: PluginContext) -> None:
         hostname: str,
         catalog_id: str,
         dataset_rid: str,
-        dataset_role: str = "any",
+        dataset_role: Literal["input", "output", "any"] = "any",
         dataset_version: str | None = None,
         status: str | None = None,
         limit: int = 100,

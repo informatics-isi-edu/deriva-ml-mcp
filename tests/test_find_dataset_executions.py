@@ -251,6 +251,71 @@ async def test_list_executions_dataset_preflight(execution_ctx, capturing_mcp, m
 
 
 # ---------------------------------------------------------------------------
+# Dual-role pagination hazard: same execution RID on BOTH edges
+# ---------------------------------------------------------------------------
+
+
+async def test_find_dataset_executions_dual_role_survives_page_boundary(
+    execution_ctx, capturing_mcp, mock_ml
+):
+    """A dual-role execution's two rows must both survive pagination.
+
+    Scenario: execution ``1-DUAL`` both CONSUMED and PRODUCED the same
+    dataset RID, so it appears once on the input edge and once on the
+    output edge -- two rows sharing ``rid="1-DUAL"`` but differing in
+    ``dataset_role``. With a composite cursor keyed on
+    ``(rid, dataset_role)`` they occupy distinct cursor positions; a
+    naive ``rid``-only cursor would skip the second same-rid row when
+    the pair straddles a page boundary (silent row loss).
+
+    Layout (composite-key ascending order, ``\\x00`` sorts first):
+        1-AAAA / input
+        1-DUAL / input
+        1-DUAL / output
+        1-ZZZZ / output
+    With ``limit=2`` the dual-role pair straddles the page-1/page-2
+    boundary, exercising exactly the hazard.
+    """
+    mock_ml.find_executions.side_effect = _role_partitioned_side_effect(
+        input_rids=["1-AAAA", "1-DUAL"], output_rids=["1-DUAL", "1-ZZZZ"]
+    )
+
+    # Page 1.
+    page1 = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_dataset_executions"](
+            hostname="h", catalog_id="1", dataset_rid="1-DSET", limit=2
+        )
+    )
+    assert page1["count"] == 2
+    assert page1["truncated"] is True
+    assert page1["next_after_rid"] is not None
+
+    # Page 2 (follow the cursor exactly as a client would).
+    page2 = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_dataset_executions"](
+            hostname="h",
+            catalog_id="1",
+            dataset_rid="1-DSET",
+            limit=2,
+            after_rid=page1["next_after_rid"],
+        )
+    )
+
+    # Collect (rid, role) pairs across BOTH pages.
+    seen = [(e["rid"], e["dataset_role"]) for e in page1["executions"] + page2["executions"]]
+
+    # No drop: both 1-DUAL rows present, one per role.
+    assert ("1-DUAL", "input") in seen
+    assert ("1-DUAL", "output") in seen
+    # No duplicate: exactly four rows, all distinct (rid, role).
+    assert len(seen) == 4
+    assert len(set(seen)) == 4
+    # The other two edge rows are present too.
+    assert ("1-AAAA", "input") in seen
+    assert ("1-ZZZZ", "output") in seen
+
+
+# ---------------------------------------------------------------------------
 # Serialization: DatasetExecutionSummary subclass fields survive the wire
 # ---------------------------------------------------------------------------
 
