@@ -1174,4 +1174,40 @@ def register(ctx: PluginContext) -> None:
     def deriva_ml_getting_started() -> str:
         return _GETTING_STARTED_GUIDE
 
+    @ctx.tool(mutates=False)
+    def deriva_ml_primer(hostname: str = "", catalog_id: str = "") -> str:
+        """Load DerivaML agent guidelines and the manifest of available guides.
+
+        Call this FIRST when working with DerivaML in a catalog, before any
+        ``deriva_ml_*`` tool or ``deriva://...deriva-ml/...`` resource. Returns
+        the conceptual frame, the operating contract (hostname/catalog rule,
+        pagination, error envelope), and a one-line manifest of on-demand
+        guides. Call once per session; the content does not change.
+
+        Args:
+            hostname: Optional Deriva server hostname. Advisory only -- the
+                primer content is static and does not vary by catalog.
+            catalog_id: Optional catalog id. Advisory only, as above.
+
+        Returns:
+            The primer text (plain ASCII).
+
+        Example:
+            >>> deriva_ml_primer()  # doctest: +SKIP
+            '=== DERIVA-ML AGENT GUIDELINES ===\\n...'
+        """
+        return _render_primer()
+
+    @ctx.prompt(
+        "deriva_ml_primer",
+        description=(
+            "DerivaML startup primer: agent guidelines (concepts + operating "
+            "contract) plus a manifest of on-demand guides. Invoke first when "
+            "working with DerivaML; the equivalent deriva_ml_primer tool is "
+            "auto-callable by agents that do not surface prompts as commands."
+        ),
+    )
+    def deriva_ml_primer_prompt() -> str:
+        return _render_primer()
+
 

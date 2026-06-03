@@ -30,6 +30,7 @@ _EXPECTED_PROMPT_NAMES = frozenset(
     {
         "deriva_ml_concepts",
         "deriva_ml_getting_started",
+        "deriva_ml_primer",
     }
 )
 
@@ -39,10 +40,57 @@ def test_register_runs_without_error(ctx):
     prompts.register(ctx)
 
 
-def test_two_prompts_registered(ctx, capturing_mcp):
-    """Exactly two prompts land in the capturing MCP after register."""
+def test_three_prompts_registered(ctx, capturing_mcp):
+    """Exactly three prompts land in the capturing MCP after register."""
     prompts.register(ctx)
-    assert len(capturing_mcp.prompts) == 2
+    assert len(capturing_mcp.prompts) == 3
+
+
+def test_primer_prompt_returns_primer_body(ctx, capturing_mcp):
+    """The deriva_ml_primer prompt returns the rendered primer."""
+    prompts.register(ctx)
+    fn = capturing_mcp.prompts["deriva_ml_primer"]
+    assert fn() == prompts._render_primer()
+
+
+def test_primer_tool_registered_read_only(ctx, capturing_mcp):
+    """deriva_ml_primer is registered as a read-only tool.
+
+    ``PluginContext.tool`` consumes ``mutates=`` as a named parameter and
+    strips it before forwarding to the underlying MCP, so it never lands in
+    the capturing fixture's ``tool_kwargs``. To assert the value we wrap
+    ``ctx.tool`` for the duration of ``register(ctx)`` and record the
+    ``mutates`` flag per tool -- the same pattern as
+    ``test_plugin.py::test_all_registered_tools_have_explicit_mutates``.
+    """
+    seen_mutates: dict[str, bool] = {}
+    original_tool = ctx.tool
+
+    def capturing_tool(*args, mutates, **kwargs):
+        decorator = original_tool(*args, mutates=mutates, **kwargs)
+
+        def wrapper(fn):
+            seen_mutates[fn.__name__] = mutates
+            return decorator(fn)
+
+        return wrapper
+
+    ctx.tool = capturing_tool  # type: ignore[method-assign]
+    try:
+        prompts.register(ctx)
+    finally:
+        ctx.tool = original_tool  # type: ignore[method-assign]
+
+    assert "deriva_ml_primer" in capturing_mcp.tools
+    assert seen_mutates["deriva_ml_primer"] is False
+
+
+def test_primer_tool_returns_primer_body(ctx, capturing_mcp):
+    """The deriva_ml_primer tool returns the rendered primer regardless of args."""
+    prompts.register(ctx)
+    fn = capturing_mcp.tools["deriva_ml_primer"]
+    assert fn() == prompts._render_primer()
+    assert fn(hostname="h", catalog_id="1") == prompts._render_primer()
 
 
 def test_prompt_names_exact(ctx, capturing_mcp):

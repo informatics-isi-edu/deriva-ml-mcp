@@ -133,8 +133,20 @@ _VOCABULARY_TOOLS = frozenset(
     }
 )
 
+# Orientation tools registered by ``prompts.py`` (not part of the five ML
+# domains). ``deriva_ml_primer`` returns the startup primer body; it is the
+# tool-shaped counterpart of the ``deriva_ml_primer`` prompt, for agents that
+# do not surface prompts as commands. mutates=False (static text, no catalog
+# I/O).
+_PRIMER_TOOLS = frozenset(
+    {
+        "deriva_ml_primer",
+    }
+)
+
 # Union of all per-domain tool sets. Phase 5 registered dataset + feature
-# + workflow + execution; v1.1 adds vocabulary; v1.2 adds asset.
+# + workflow + execution; v1.1 adds vocabulary; v1.2 adds asset; the primer
+# tool is registered alongside the prompts.
 _ALL_REGISTERED_TOOLS = (
     _DATASET_TOOLS
     | _FEATURE_TOOLS
@@ -142,6 +154,7 @@ _ALL_REGISTERED_TOOLS = (
     | _EXECUTION_TOOLS
     | _VOCABULARY_TOOLS
     | _ASSET_TOOLS
+    | _PRIMER_TOOLS
 )
 
 # All ML-domain MCP resource URIs registered by ``resources/ml.py``.
@@ -188,7 +201,7 @@ _ML_RESOURCE_URIS = frozenset(
     }
 )
 
-# Names of the four MCP prompts registered by ``prompts.py``. The
+# Names of the three MCP prompts registered by ``prompts.py``. The
 # plugin-level test below uses ``>=`` (superset) rather than equality
 # so a future fully-loaded core that registers additional prompts via
 # the same context wouldn't break this assertion -- the contract here
@@ -198,6 +211,7 @@ _ML_PROMPT_NAMES = frozenset(
     {
         "deriva_ml_concepts",
         "deriva_ml_getting_started",
+        "deriva_ml_primer",
     }
 )
 
