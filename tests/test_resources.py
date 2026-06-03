@@ -66,6 +66,7 @@ _VOCABS_IN_SCHEMA_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/voca
 _VOCAB_TERMS_URI = (
     "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/vocabularies/{schema}/{vocab_name}"
 )
+_PRIMER_URI = "deriva://deriva-ml/primer"
 
 
 def _make_dataset_mock(
@@ -164,10 +165,11 @@ def _make_vocab_term_mock(name: str, description: str = "") -> MagicMock:
 def test_register_adds_all_resources(resource_ctx, capturing_mcp):
     """resources/ml.py.register() must register exactly the expected URI set.
 
-    Two static cold-start resources (``deriva://deriva-ml/concepts`` and
-    ``deriva://deriva-ml/getting-started``) plus 15 catalog-scoped ML
-    resource templates. The cold-start resources expose the same content
-    as the matching MCP prompts -- a second discovery channel for
+    Three static cold-start resources (``deriva://deriva-ml/concepts``,
+    ``deriva://deriva-ml/getting-started``, and
+    ``deriva://deriva-ml/primer``) plus 15 catalog-scoped ML resource
+    templates. The cold-start resources expose the same content as the
+    matching MCP prompts -- a second discovery channel for
     resource-walking clients. See ``resources/ml.py`` register() preamble
     for the rationale (closes Section A / C1c of the 2026-05-16 findings).
     """
@@ -175,6 +177,7 @@ def test_register_adds_all_resources(resource_ctx, capturing_mcp):
         # Cold-start orientation -- static URIs, no parameters.
         "deriva://deriva-ml/concepts",
         "deriva://deriva-ml/getting-started",
+        "deriva://deriva-ml/primer",
         # Catalog-scoped ML resource templates.
         "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/datasets",
         "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}",
@@ -220,6 +223,19 @@ async def test_static_resources_return_prompt_constants(resource_ctx, capturing_
 
     assert (await concepts_handler()) == _CONCEPTS_GUIDE
     assert (await getting_started_handler()) == _GETTING_STARTED_GUIDE
+
+
+async def test_primer_resource_registered(resource_ctx, capturing_mcp):
+    """The primer resource is registered under its static URI."""
+    assert _PRIMER_URI in capturing_mcp.resources
+
+
+async def test_primer_resource_matches_render(resource_ctx, capturing_mcp):
+    """The primer resource returns the same text as prompts._render_primer()."""
+    from deriva_ml_mcp_plugin import prompts
+
+    result = await capturing_mcp.resources[_PRIMER_URI]()
+    assert result == prompts._render_primer()
 
 
 # ---------------------------------------------------------------------------

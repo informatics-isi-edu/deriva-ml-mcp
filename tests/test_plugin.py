@@ -196,11 +196,15 @@ _ML_RESOURCE_URIS = frozenset(
         "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}/bag-preview",
         # Static cold-start orientation resources. Same content as the
         # matching MCP prompts (``deriva_ml_getting_started`` /
-        # ``deriva_ml_concepts``); exposed as resources so resource-walking
-        # clients discover the orientation without going through the prompt
-        # subsystem (closes Section A / C1c of the 2026-05-16 findings).
+        # ``deriva_ml_concepts`` / ``deriva_ml_primer``); exposed as
+        # resources so resource-walking clients discover the orientation
+        # without going through the prompt subsystem (closes Section A /
+        # C1c of the 2026-05-16 findings). The primer composes the
+        # concepts + getting-started bodies plus the on-demand guide
+        # manifest; same text as the ``deriva_ml_primer`` tool and prompt.
         "deriva://deriva-ml/getting-started",
         "deriva://deriva-ml/concepts",
+        "deriva://deriva-ml/primer",
     }
 )
 

@@ -339,7 +339,11 @@ def register(ctx: PluginContext) -> None:
     # but keeping the import inside ``register`` mirrors the per-resource
     # import discipline used by the catalog handlers below (no module-
     # level side effects at plugin load time).
-    from deriva_ml_mcp_plugin.prompts import _CONCEPTS_GUIDE, _GETTING_STARTED_GUIDE
+    from deriva_ml_mcp_plugin.prompts import (
+        _CONCEPTS_GUIDE,
+        _GETTING_STARTED_GUIDE,
+        _render_primer,
+    )
 
     @ctx.resource("deriva://deriva-ml/getting-started")
     async def deriva_ml_getting_started_resource() -> str:
@@ -365,6 +369,19 @@ def register(ctx: PluginContext) -> None:
         if you do not already have a DerivaML mental model.
         """
         return _CONCEPTS_GUIDE
+
+    @ctx.resource("deriva://deriva-ml/primer")
+    async def deriva_ml_primer_resource() -> str:
+        """DerivaML startup primer: agent guidelines plus the on-demand guide manifest.
+
+        Same content as the ``deriva_ml_primer`` MCP prompt and tool --
+        exposed here as a resource so clients that consume the primer as
+        resource content (e.g. the deriva-mcp-ui chatbot's first-turn
+        assembly) get the identical text. Composes the concepts and
+        getting-started guide bodies plus a one-line manifest of the
+        generic-catalog tier-1 guides.
+        """
+        return _render_primer()
 
     @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/deriva-ml/datasets")
     async def ml_datasets(hostname: str, catalog_id: str) -> str:
