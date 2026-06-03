@@ -1134,7 +1134,7 @@ def _render_primer() -> str:
 
 
 def register(ctx: PluginContext) -> None:
-    """Register the two deriva-ml MCP prompts with the plugin context.
+    """Register the deriva-ml MCP prompts and the primer tool with the plugin context.
 
     Args:
         ctx: PluginContext supplied by deriva-mcp-core at startup.
@@ -1209,5 +1209,3 @@ def register(ctx: PluginContext) -> None:
     )
     def deriva_ml_primer_prompt() -> str:
         return _render_primer()
-
-
