@@ -27,7 +27,8 @@ environment; executions originate there, not in the MCP server.
 
 Read-side execution tools remain on the MCP surface:
 `deriva_ml_list_executions`, `deriva_ml_get_execution`,
-`deriva_ml_find_workflow_executions`, `deriva_ml_list_execution_children`,
+`deriva_ml_find_workflow_executions`, `deriva_ml_find_dataset_executions`,
+`deriva_ml_list_execution_children`,
 `deriva_ml_list_execution_parents`, `deriva_ml_get_lineage`. Plus the
 three execution-related resources
 (`/ml/executions`, `/ml/execution/{rid}`, `/ml/lineage/{rid}`). These
