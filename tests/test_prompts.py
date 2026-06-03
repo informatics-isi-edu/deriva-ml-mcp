@@ -112,3 +112,31 @@ def test_prompts_are_ascii(ctx, capturing_mcp):
             result.encode("ascii")
         except UnicodeEncodeError as exc:  # pragma: no cover -- regression assertion path
             raise AssertionError(f"{name} contains non-ASCII characters: {exc}") from exc
+
+
+def test_render_primer_contains_both_guide_bodies():
+    """The primer inlines the concepts and getting-started guide bodies."""
+    body = prompts._render_primer()
+    # A distinctive phrase from each guide must be present verbatim.
+    assert "DERIVA-ML GETTING STARTED" in body
+    assert "five core abstractions" in body or "Dataset" in body
+
+
+def test_render_primer_lists_all_core_guide_names():
+    """Every core guide name from the manifest appears in the primer text."""
+    body = prompts._render_primer()
+    for name, source, _ in prompts._GUIDE_MANIFEST:
+        assert name in body, f"{name} missing from primer"
+
+
+def test_render_primer_is_ascii():
+    """The primer body must be plain ASCII (workspace convention)."""
+    prompts._render_primer().encode("ascii")  # raises UnicodeEncodeError on failure
+
+
+def test_render_primer_has_three_blocks():
+    """The primer has a mandatory-core header, a manifest header, and a closing directive."""
+    body = prompts._render_primer()
+    assert "DERIVA-ML AGENT GUIDELINES" in body  # block 1 header
+    assert "ON-DEMAND GUIDES" in body            # block 2 header
+    assert "get_guide" in body                   # block 3 references on-demand fetch

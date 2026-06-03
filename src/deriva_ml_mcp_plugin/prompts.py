@@ -1068,6 +1068,68 @@ _GUIDE_MANIFEST: list[tuple[str, str, str]] = [
 ]
 
 
+def _render_primer() -> str:
+    """Render the DerivaML startup primer body.
+
+    Composes three blocks: (1) the mandatory-core guide bodies
+    (concepts + getting-started), (2) a one-line manifest of on-demand
+    guides grouped by source, and (3) a closing directive on when to
+    fetch a guide and to prefer resources for read-side questions.
+
+    The body is phrased neutrally ("DERIVA-ML AGENT GUIDELINES") rather
+    than "you MUST", so it reads correctly whether it lands in a system
+    prompt or arrives as tool/prompt output in an agent conversation.
+
+    Returns:
+        The full primer text as a single plain-ASCII string.
+
+    Example:
+        >>> text = _render_primer()
+        >>> "DERIVA-ML AGENT GUIDELINES" in text
+        True
+    """
+    ml_guides = [(n, s) for (n, src, s) in _GUIDE_MANIFEST if src == "deriva-ml"]
+    core_guides = [(n, s) for (n, src, s) in _GUIDE_MANIFEST if src == "core"]
+
+    parts: list[str] = []
+
+    # Block 1 -- mandatory core (full bodies).
+    parts.append("=== DERIVA-ML AGENT GUIDELINES ===\n")
+    parts.append(_CONCEPTS_GUIDE)
+    parts.append(_GETTING_STARTED_GUIDE)
+
+    # Block 2 -- manifest of on-demand guides.
+    parts.append("=== ON-DEMAND GUIDES ===")
+    if ml_guides:
+        parts.append(
+            "DerivaML domain guides (this plugin) -- fetch with "
+            "get_guide(name) when you first need them:"
+        )
+        for name, summary in ml_guides:
+            parts.append(f"  - {name}: {summary}")
+    parts.append(
+        "Generic catalog guides (deriva-mcp-core) -- fetch the matching "
+        "/<server>:<name> prompt when you first use that tool group:"
+    )
+    for name, summary in core_guides:
+        parts.append(f"  - {name}: {summary}")
+
+    # Block 3 -- closing directive.
+    parts.append(
+        "When you reach an unfamiliar tool covered by a guide above, fetch "
+        "that guide once (get_guide(name) for the domain guides above, or "
+        "the matching /<server>:<name> prompt for the core guides) and "
+        "proceed; do not re-fetch a guide already loaded "
+        "this conversation. For read-side questions about existing entities "
+        "(show X, what is in Y, what did Z produce), prefer the "
+        "deriva://catalog/<host>/<cat>/deriva-ml/... resources over the "
+        "equivalent list/get tools -- they are cached, page-free, and emit "
+        "no audit entries."
+    )
+
+    return "\n\n".join(parts)
+
+
 # -- Registration ------------------------------------------------------------
 
 
