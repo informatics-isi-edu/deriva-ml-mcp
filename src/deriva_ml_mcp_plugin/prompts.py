@@ -1254,6 +1254,4 @@ def register(ctx: PluginContext) -> None:
             )
 
         valid = sorted(_PLUGIN_GUIDE_BODIES) + sorted(core_names)
-        return json.dumps(
-            {"error": f"Unknown guide '{name}'. Valid guides: {', '.join(valid)}."}
-        )
+        return json.dumps({"error": f"Unknown guide '{name}'. Valid guides: {', '.join(valid)}."})
