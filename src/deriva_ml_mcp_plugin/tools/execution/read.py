@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from deriva_mcp_core import deriva_call
 from deriva_ml.execution.execution import ExecutionStatus
@@ -43,6 +43,7 @@ from deriva_ml_mcp_plugin._helpers import (
     _read_rid,
 )
 from deriva_ml_mcp_plugin._response_models import (
+    DatasetExecutionSummary,
     ExecutionAssetRef,
     ExecutionChildrenResponse,
     ExecutionDetail,
@@ -129,6 +130,113 @@ def _resolve_workflow_rid(record: Any) -> str | None:
         return None
 
 
+def _build_dataset_arg(dataset: str | None, dataset_version: str | None) -> Any | None:
+    """Build the ``dataset`` argument passed to the executions impl.
+
+    Args:
+        dataset: A Dataset RID string, or ``None`` when no dataset filter
+            is requested.
+        dataset_version: A version string to pin via ``DatasetSpec``, or
+            ``None`` for the bare-RID (live/current) query.
+
+    Returns:
+        ``None`` when ``dataset`` is ``None``; a
+        ``deriva_ml.dataset.aux_classes.DatasetSpec`` pinned to
+        ``dataset_version`` when a version is supplied; otherwise the
+        bare RID string.
+    """
+    if dataset is None:
+        return None
+    if dataset_version is not None:
+        # Local import per the plan: keep the DatasetSpec dependency off
+        # the module-import path (the installed deriva-ml may pin a
+        # version whose DatasetSpec import surface differs).
+        from deriva_ml.dataset.aux_classes import DatasetSpec
+
+        return DatasetSpec(rid=dataset, version=dataset_version)
+    return dataset
+
+
+def _dataset_version_str(dataset: Any) -> str | None:
+    """Extract a version string from a dataset filter argument.
+
+    The dataset filter passed to :func:`_list_executions_impl` is either
+    a bare RID string (no pinned version) or a
+    ``deriva_ml.dataset.aux_classes.DatasetSpec`` (version pinned via
+    the tool's ``dataset_version`` arg). When it's a spec carrying a
+    non-null ``version``, return that version stringified; otherwise
+    return ``None`` (bare RID, or spec with no version).
+
+    Args:
+        dataset: A RID string or a ``DatasetSpec``.
+
+    Returns:
+        The pinned version string, or ``None``.
+    """
+    version = getattr(dataset, "version", None)
+    return str(version) if version is not None else None
+
+
+# Cursor key separator for the dataset-scoped path. A single execution
+# can appear TWICE in a ``dataset_role="any"`` result -- once as an
+# "input" row (it consumed version N) and once as an "output" row (it
+# authored version N+1) of the SAME dataset RID. Those two rows share a
+# ``rid`` but differ in ``dataset_role``. Paginating on ``rid`` alone
+# would let ``_paginate``'s strict ``key(it) > after_rid`` skip the
+# second same-rid row whenever the pair straddles a page boundary
+# (silent row loss). So the dataset path keys the cursor on the
+# composite ``f"{rid}\x00{dataset_role}"`` instead. ``\x00`` (NUL) is
+# used as the joiner because it sorts before every printable character
+# and can never occur inside a RID or a role token, so the composite
+# ordering is a clean refinement of RID order and the round-trip cursor
+# is unambiguous.
+_DATASET_CURSOR_SEP = "\x00"
+
+
+def _dataset_cursor_key(row: DatasetExecutionSummary) -> str:
+    """Composite pagination key for a dataset-scoped execution row.
+
+    Returns ``f"{rid}\\x00{dataset_role}"`` so the input and output rows
+    of a dual-role execution occupy distinct cursor positions. The
+    returned string is exactly what flows back to the client as
+    ``next_after_rid`` and is re-supplied as ``after_rid`` on the next
+    call, so the cursor round-trips correctly through ``_paginate``.
+
+    Args:
+        row: A ``DatasetExecutionSummary`` row.
+
+    Returns:
+        The composite cursor key.
+    """
+    return f"{row.rid or ''}{_DATASET_CURSOR_SEP}{row.dataset_role}"
+
+
+def _summarize_dataset_execution(
+    record: Any, *, dataset_role: str, dataset_version: str | None
+) -> DatasetExecutionSummary:
+    """Render an ``ExecutionRecord`` into a dataset-scoped summary row.
+
+    Wraps the plain :func:`_summarize_execution` fields and adds the
+    per-row dataset-edge ``dataset_role`` / ``dataset_version`` so the
+    caller can see how each execution relates to the queried dataset.
+
+    Args:
+        record: An ``ExecutionRecord`` (or ``Execution``) object.
+        dataset_role: ``"input"`` or ``"output"`` for THIS record's edge.
+        dataset_version: The dataset version string for the edge, or
+            ``None`` when unpinned / unresolvable.
+
+    Returns:
+        ``DatasetExecutionSummary`` Pydantic instance.
+    """
+    base = _summarize_execution(record)
+    return DatasetExecutionSummary(
+        **base.model_dump(),
+        dataset_role=dataset_role,
+        dataset_version=dataset_version,
+    )
+
+
 def _summarize_execution(record: Any) -> ExecutionSummary:
     """Render an ``ExecutionRecord`` (or ``Execution``) into the validated summary.
 
@@ -194,6 +302,8 @@ def _list_executions_impl(
     after_rid: str | None,
     limit: int,
     sort: bool = False,
+    dataset: Any | None = None,
+    dataset_role: str = "any",
 ) -> ExecutionListResponse:
     """Fetch + paginate executions. Pure helper -- shared by tool and resource.
 
@@ -220,11 +330,78 @@ def _list_executions_impl(
             cursor still works ("skip up to this RID in the RCT-sorted
             result"), but pagination through very large sorted result
             sets is bounded by the internal fetch cap.
+        dataset: Optional dataset filter -- a Dataset RID string or a
+            ``deriva_ml.dataset.aux_classes.DatasetSpec`` (when the caller
+            pinned a version). When set, the helper returns
+            ``DatasetExecutionSummary`` rows carrying the per-row
+            ``dataset_role`` / ``dataset_version`` instead of plain
+            ``ExecutionSummary``; when ``None`` (the default) the
+            response shape is byte-identical to the non-dataset path.
+        dataset_role: ``"input"`` (executions that consumed the
+            dataset), ``"output"`` (executions that produced the dataset
+            version), or ``"any"`` (both). Only consulted when
+            ``dataset`` is set.
 
     Returns:
         ``ExecutionListResponse`` -- see ``deriva_ml_mcp_plugin._response_models``.
+        Its ``executions`` rows are plain ``ExecutionSummary`` when
+        ``dataset is None`` and ``DatasetExecutionSummary`` otherwise.
+
+    Note (per-row role + version resolution):
+        The library's ``find_executions(dataset=, dataset_role=)`` yields
+        plain ``ExecutionRecord`` objects -- it does NOT tag role or
+        version per row. To attach a role to each execution, this helper
+        partitions the query by edge: when ``dataset_role == "any"`` it
+        issues two ``find_executions`` calls (``dataset_role="input"``
+        and ``dataset_role="output"``) and tags each returned record
+        with the role of the call that produced it; for a specific role
+        it issues one call and tags every row with that role. The
+        ``dataset_version`` is taken from the pinned ``DatasetSpec``
+        version (same for every row in a pinned query), or ``None`` for
+        a bare-RID (unpinned) query.
     """
     status_enum = ExecutionStatus(status) if status else None
+
+    # Dataset-scoped path: partition by edge so each row can carry its
+    # role. See the "per-row role + version resolution" note above.
+    if dataset is not None:
+        version = _dataset_version_str(dataset)
+        roles = ("input", "output") if dataset_role == "any" else (dataset_role,)
+        tagged: list[DatasetExecutionSummary] = []
+        for role in roles:
+            for record in ml.find_executions(
+                workflow=workflow_rid,
+                workflow_type=workflow_type,
+                status=status_enum,
+                sort=True if sort else None,
+                dataset=dataset,
+                dataset_role=role,
+            ):
+                tagged.append(
+                    _summarize_dataset_execution(record, dataset_role=role, dataset_version=version)
+                )
+        if sort:
+            rows: list[Any] = tagged
+        else:
+            # Sort on the SAME composite key the cursor uses so the
+            # ascending order and the strict ``> after_rid`` comparison
+            # in _paginate agree (otherwise a dual-role pair could be
+            # ordered by rid but cursored by composite, reintroducing
+            # the skip).
+            rows = sorted(tagged, key=_dataset_cursor_key)
+        page, truncated, next_after = _paginate(
+            rows,
+            after_rid=after_rid,
+            limit=limit,
+            key=_dataset_cursor_key,
+        )
+        return ExecutionListResponse(
+            executions=page,
+            count=len(page),
+            truncated=truncated,
+            next_after_rid=next_after,
+        )
+
     raw = list(
         ml.find_executions(
             workflow=workflow_rid,
@@ -255,6 +432,50 @@ def _list_executions_impl(
         truncated=truncated,
         next_after_rid=next_after,
     )
+
+
+def _count_dataset_executions(
+    ml: Any,
+    *,
+    dataset: Any,
+    dataset_role: str,
+    workflow_rid: str | None,
+    workflow_type: str | None,
+    status_enum: Any,
+) -> int:
+    """Count executions on the dataset's input/output edge(s).
+
+    Mirrors the partition-by-edge strategy of :func:`_list_executions_impl`
+    so the preflight count matches the page that a non-preflight call
+    would produce: when ``dataset_role == "any"`` it sums the input and
+    output edge counts; otherwise it counts the one requested edge.
+
+    Args:
+        ml: A connected ``deriva_ml.DerivaML`` instance.
+        dataset: A Dataset RID string or ``DatasetSpec``.
+        dataset_role: ``"input"`` / ``"output"`` / ``"any"``.
+        workflow_rid: Optional workflow RID filter.
+        workflow_type: Optional workflow-type filter.
+        status_enum: Optional ``ExecutionStatus`` (already parsed).
+
+    Returns:
+        Total matching execution count across the selected edge(s).
+    """
+    roles = ("input", "output") if dataset_role == "any" else (dataset_role,)
+    total = 0
+    for role in roles:
+        total += len(
+            list(
+                ml.find_executions(
+                    workflow=workflow_rid,
+                    workflow_type=workflow_type,
+                    status=status_enum,
+                    dataset=dataset,
+                    dataset_role=role,
+                )
+            )
+        )
+    return total
 
 
 def _get_execution_detail_impl(ml: Any, execution_rid: str) -> ExecutionDetail:
@@ -471,8 +692,11 @@ def register(ctx: PluginContext) -> None:
         after_rid: str | None = None,
         preflight_count: bool = False,
         sort: bool = False,
+        dataset: str | None = None,
+        dataset_role: Literal["input", "output", "any"] = "any",
+        dataset_version: str | None = None,
     ) -> str:
-        """Browse executions in the catalog, optionally filtered by workflow, workflow type, or status.
+        """Browse executions in the catalog, optionally filtered by workflow, workflow type, status, or dataset.
 
         See ``deriva_ml_getting_started`` (PAGINATION CONTRACT) for the two-step pagination flow.
 
@@ -494,11 +718,28 @@ def register(ctx: PluginContext) -> None:
                 creation time. Recommended for "show me the most
                 recent runs" queries. Default False preserves the
                 stable RID-ascending order used for cursor pagination.
+            dataset: If set (a Dataset RID), restrict to executions that
+                used this dataset. Each returned row gains a
+                ``dataset_role`` (``"input"`` / ``"output"``) and a
+                nullable ``dataset_version``. For the dataset-centric
+                intent, prefer ``deriva_ml_find_dataset_executions``;
+                this parameter exists so the general browse tool can
+                reach the same query. When ``dataset`` is omitted, the
+                response shape is unchanged (no dataset keys).
+            dataset_role: ``"input"`` (executions that consumed the
+                dataset), ``"output"`` (executions that produced the
+                dataset version), or ``"any"`` (both). Only consulted
+                when ``dataset`` is set.
+            dataset_version: If set (with ``dataset``), pin the query to
+                this dataset version via a ``DatasetSpec``; otherwise the
+                bare RID resolves to the current/live state.
 
         Returns:
             Page: ``{"executions": [...], "count",
             "truncated", "next_after_rid"}``. Preflight: ``{"total_count",
-            "entities_fetched": False, "action_required"}``.
+            "entities_fetched": False, "action_required"}``. When a
+            dataset filter is active, each execution row additionally
+            carries ``dataset_role`` and ``dataset_version``.
 
         Raises:
             RuntimeError: Wrapped, propagated from
@@ -520,21 +761,39 @@ def register(ctx: PluginContext) -> None:
                 # not on the event loop. See deriva-mcp-core
                 # plugin-authoring-guide.md §"Synchronous work in threads".
                 ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                # Build the dataset arg: a version-pinned DatasetSpec when
+                # dataset_version is given, else the bare RID. None when
+                # no dataset filter is requested -- the no-dataset path is
+                # byte-identical to before this feature.
+                dataset_arg = _build_dataset_arg(dataset, dataset_version)
                 if preflight_count:
                     status_enum = ExecutionStatus(status) if status else None
 
-                    def _count_executions() -> int:
-                        return len(
-                            list(
-                                ml.find_executions(
-                                    workflow=workflow_rid,
-                                    workflow_type=workflow_type,
-                                    status=status_enum,
+                    if dataset_arg is not None:
+
+                        def _count() -> int:
+                            return _count_dataset_executions(
+                                ml,
+                                dataset=dataset_arg,
+                                dataset_role=dataset_role,
+                                workflow_rid=workflow_rid,
+                                workflow_type=workflow_type,
+                                status_enum=status_enum,
+                            )
+                    else:
+
+                        def _count() -> int:
+                            return len(
+                                list(
+                                    ml.find_executions(
+                                        workflow=workflow_rid,
+                                        workflow_type=workflow_type,
+                                        status=status_enum,
+                                    )
                                 )
                             )
-                        )
 
-                    total = await asyncio.to_thread(_count_executions)
+                    total = await asyncio.to_thread(_count)
                     return PreflightCountResponse(
                         total_count=total,
                         action_required=(
@@ -552,6 +811,8 @@ def register(ctx: PluginContext) -> None:
                     after_rid=after_rid,
                     limit=capped,
                     sort=sort,
+                    dataset=dataset_arg,
+                    dataset_role=dataset_role,
                 )
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:
@@ -698,6 +959,130 @@ def register(ctx: PluginContext) -> None:
             return _error_envelope(
                 exc,
                 operation="find_workflow_executions",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+    @ctx.tool(mutates=False)
+    async def deriva_ml_find_dataset_executions(
+        hostname: str,
+        catalog_id: str,
+        dataset_rid: str,
+        dataset_role: Literal["input", "output", "any"] = "any",
+        dataset_version: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        after_rid: str | None = None,
+        preflight_count: bool = False,
+        sort: bool = False,
+    ) -> str:
+        """Find executions that used a dataset (input, output, or any).
+
+        Distinct from ``deriva_ml_list_executions(dataset=...)`` to surface
+        the dataset-centric query as a first-class tool -- the LLM intent
+        ("which runs used this dataset?") differs from the general
+        "browse executions" intent, mirroring the
+        ``deriva_ml_find_workflow_executions`` precedent.
+
+        The per-row ``dataset_role`` is derived **relationally**, never
+        from a config file: ``"input"`` means the execution consumed the
+        dataset (a ``Dataset_Execution`` edge); ``"output"`` means the
+        execution authored the dataset version (a ``Dataset_Version``
+        authorship). Each returned row also carries ``dataset_version``
+        (the pinned version when ``dataset_version`` is supplied, else
+        null).
+
+        Args:
+            dataset_rid: The RID of the dataset whose executions to find.
+            dataset_role: ``"input"`` (consumed the dataset), ``"output"``
+                (produced the dataset version), or ``"any"`` (both,
+                default).
+            dataset_version: If set, pin the query to this dataset
+                version via a ``DatasetSpec``; otherwise the bare RID
+                resolves to the current/live state.
+            status: Optional ``ExecutionStatus`` filter.
+            limit: Max executions per page (default 100, max 1000).
+            after_rid: RID of last row from previous page to advance cursor.
+            preflight_count: If True, return only total count.
+            sort: If True, return results newest-first by record
+                creation time. Recommended for "show me the most
+                recent runs" queries. Default False preserves the
+                stable RID-ascending order used for cursor pagination.
+
+        Returns:
+            Same shape as ``deriva_ml_list_executions`` with a dataset
+            filter active: each execution row carries ``dataset_role``
+            and ``dataset_version`` in addition to the summary fields.
+            Preflight: ``{"total_count", "entities_fetched": False,
+            "action_required"}``.
+
+        Raises:
+            RuntimeError: Wrapped, propagated from
+                ``deriva_ml.DerivaML.find_executions``.
+
+        Example:
+            ``{"executions": [{"rid": "1-EXEC", "workflow_rid": "1-WF",
+            "status": "Stopped", "dataset_role": "input",
+            "dataset_version": "1.2.0", ...}], "count": 1,
+            "truncated": false, "next_after_rid": null}``.
+        """
+        try:
+            with deriva_call():
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive. ``ml.find_executions``
+                # returns a generator that materializes over the wire, so
+                # the drain (list) must happen inside the worker thread,
+                # not on the event loop. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                # Version-pinned DatasetSpec when a version is given, else
+                # the bare RID. ``dataset_rid`` is always present here so
+                # the result is never None.
+                dataset_arg = _build_dataset_arg(dataset_rid, dataset_version)
+                if preflight_count:
+                    status_enum = ExecutionStatus(status) if status else None
+
+                    def _count() -> int:
+                        return _count_dataset_executions(
+                            ml,
+                            dataset=dataset_arg,
+                            dataset_role=dataset_role,
+                            workflow_rid=None,
+                            workflow_type=None,
+                            status_enum=status_enum,
+                        )
+
+                    total = await asyncio.to_thread(_count)
+                    return PreflightCountResponse(
+                        total_count=total,
+                        action_required=(
+                            f"Found {total} executions for dataset {dataset_rid}. "
+                            "Choose a limit and call again with preflight_count=False."
+                        ),
+                    ).model_dump_json(by_alias=True)
+
+                capped = min(max(limit, 0), _MAX_LIMIT)
+                # workflow_rid / workflow_type are None: this tool is
+                # dataset-scoped by design. Cross-filtering by workflow
+                # belongs in deriva_ml_list_executions.
+                payload = await asyncio.to_thread(
+                    _list_executions_impl,
+                    ml,
+                    workflow_rid=None,
+                    workflow_type=None,
+                    status=status,
+                    after_rid=after_rid,
+                    limit=capped,
+                    sort=sort,
+                    dataset=dataset_arg,
+                    dataset_role=dataset_role,
+                )
+            return payload.model_dump_json(by_alias=True)
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="find_dataset_executions",
                 hostname=hostname,
                 catalog_id=catalog_id,
                 audit=False,

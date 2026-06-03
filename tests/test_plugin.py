@@ -95,6 +95,11 @@ _EXECUTION_TOOLS = frozenset(
         "deriva_ml_list_executions",
         "deriva_ml_get_execution",
         "deriva_ml_find_workflow_executions",
+        # dataset-scoped execution query: mirrors find_workflow_executions
+        # to surface "which runs used this dataset?" as a first-class tool.
+        # Wraps ml.find_executions(dataset=, dataset_role=), the same impl
+        # reachable via deriva_ml_list_executions(dataset=...).
+        "deriva_ml_find_dataset_executions",
         "deriva_ml_list_execution_children",
         "deriva_ml_list_execution_parents",
         # P2 hygiene sweep: experiment-scoped browse (wraps find_experiments).

@@ -4,7 +4,7 @@ These are MCP prompts (registered via ``@ctx.prompt(...)``), not Python
 docstrings. FastMCP surfaces them through the MCP ``prompts/list`` and
 ``prompts/get`` endpoints so an LLM client can pull them up by name at
 the start of a conversation -- they are the cold-start anchor for the
-plugin's 43 tools and 18 resources.
+plugin's 44 tools and 18 resources.
 
 The two prompts complement the four built-in core prompts shipped by
 ``deriva-mcp-core`` (``query_guide``, ``entity_guide``,
@@ -162,6 +162,7 @@ DERIVA-ML DOMAIN OBJECTS, NOT AS RAW TABLES.
              with ``deriva_ml_list_executions`` /
              ``deriva_ml_get_execution`` /
              ``deriva_ml_find_workflow_executions`` /
+             ``deriva_ml_find_dataset_executions`` /
              ``deriva_ml_get_lineage`` after the run lands. The full
              lifecycle (create / start / commit / abort / update /
              add_feature_values / create_execution_dataset /
@@ -673,7 +674,7 @@ you're driving the library directly from a notebook or skill.
 
 THE FIVE ML DOMAINS
 -------------------
-Forty of the 43 tools are organized into five domain modules (the
+Forty-one of the 44 tools are organized into five domain modules (the
 other three are the catalog-maintenance tools
 ``deriva_ml_create_vocabulary``, ``deriva_ml_reindex_vocabularies``,
 and ``deriva_ml_resync_indexes``). Pick the domain first, then the
@@ -703,12 +704,17 @@ for the wire name.
                   URL + checksum + workflow_type). Verbs: list / get /
                   find_workflow_by_url / create / update.
 
-    execution  -- 7 tools (read-only). A single run of a workflow
+    execution  -- 8 tools (read-only). A single run of a workflow
                   against datasets and assets. The MCP surface for
                   executions is observational only: list / get /
-                  find_workflow_executions / list_execution_children /
+                  find_workflow_executions / find_dataset_executions /
+                  list_execution_children /
                   list_execution_parents / find_experiments /
-                  get_lineage. The full
+                  get_lineage. ``find_dataset_executions`` answers
+                  "which runs used this dataset?" -- role is derived
+                  relationally (input = a Dataset_Execution edge,
+                  output = Dataset_Version authorship), never from a
+                  config file. The full
                   lifecycle (create / start / commit / abort / update /
                   add_feature_values / create_execution_dataset /
                   add_nested_execution) is owned by the caller's local
@@ -1033,7 +1039,7 @@ and ``description``. There is no compat shim; update any references.
 
 THE MENU
 --------
-Quick orientation: 43 tools -- 40 across the 5 ML domains (dataset,
+Quick orientation: 44 tools -- 41 across the 5 ML domains (dataset,
 feature, workflow, execution, asset) plus 3 catalog-maintenance tools
 (create_vocabulary, reindex_vocabularies, resync_indexes) -- + 18
 read-only resources under the

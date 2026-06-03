@@ -106,7 +106,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny
 
 # ---------------------------------------------------------------------------
 # Preflight-count response (shared by every paginated tool's
@@ -385,6 +385,38 @@ class ExecutionSummary(BaseModel):
     upload_duration: timedelta | str | None = None
 
 
+class DatasetExecutionSummary(ExecutionSummary):
+    """ExecutionSummary plus the dataset-edge role/version for dataset-scoped queries.
+
+    Returned (in place of plain ``ExecutionSummary``) by
+    ``_list_executions_impl`` whenever a dataset filter is active --
+    i.e. by ``deriva_ml_find_dataset_executions`` and by
+    ``deriva_ml_list_executions(dataset=...)``. The two extra fields
+    answer "how is this execution related to the dataset I asked
+    about?":
+
+    - ``dataset_role`` -- ``"input"`` when the execution *consumed* the
+      dataset (a ``Dataset_Execution`` edge), ``"output"`` when it
+      *produced* the dataset version (authored a ``Dataset_Version``).
+      The role is derived relationally per row, never read from a
+      config file.
+    - ``dataset_version`` -- the version string of the dataset edge for
+      that execution, or ``None`` when no version is pinned/resolvable
+      (e.g. an input edge consumed at the live/unpinned state).
+
+    Serialization note: ``ExecutionListResponse.executions`` is typed
+    ``list[SerializeAsAny[ExecutionSummary]]`` so a list carrying these
+    subclass instances keeps ``dataset_role`` / ``dataset_version`` on
+    the wire (plain Pydantic v2 base-typed serialization would drop
+    subclass-only fields). A list of plain ``ExecutionSummary`` rows
+    serializes byte-identically to before, so the no-dataset path is
+    unaffected.
+    """
+
+    dataset_role: str  # "input" | "output"
+    dataset_version: str | None = None
+
+
 class ExecutionInputDatasetRef(BaseModel):
     """One input dataset on an Execution detail's ``inputs.datasets`` list.
 
@@ -559,9 +591,20 @@ class ExecutionListResponse(_PaginationFields):
     Also returned by ``deriva_ml_find_workflow_executions`` (since v2.3),
     which reuses this shape -- it's a paginated list of executions
     filtered by workflow.
+
+    The ``executions`` field is wrapped in ``SerializeAsAny`` so that
+    when ``_list_executions_impl`` runs with a dataset filter and
+    populates the list with ``DatasetExecutionSummary`` subclass
+    instances, the subclass-only fields (``dataset_role`` /
+    ``dataset_version``) survive ``model_dump_json``. Without
+    ``SerializeAsAny``, Pydantic v2 serializes each row against the
+    declared base type (``ExecutionSummary``) and silently drops the
+    subclass fields. A list of plain ``ExecutionSummary`` rows is
+    unaffected -- it serializes byte-identically to before, so the
+    no-dataset path keeps its exact wire shape.
     """
 
-    executions: list[ExecutionSummary]
+    executions: list[SerializeAsAny[ExecutionSummary]]
 
 
 class ExecutionChildrenResponse(BaseModel):
