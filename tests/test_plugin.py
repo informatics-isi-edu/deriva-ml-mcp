@@ -136,11 +136,14 @@ _VOCABULARY_TOOLS = frozenset(
 # Orientation tools registered by ``prompts.py`` (not part of the five ML
 # domains). ``deriva_ml_primer`` returns the startup primer body; it is the
 # tool-shaped counterpart of the ``deriva_ml_primer`` prompt, for agents that
-# do not surface prompts as commands. mutates=False (static text, no catalog
+# do not surface prompts as commands. ``get_guide`` fetches a single guide by
+# name on demand (plugin-owned guide bodies inline, core guides redirected to
+# their slash-command prompt). Both are mutates=False (static text, no catalog
 # I/O).
 _PRIMER_TOOLS = frozenset(
     {
         "deriva_ml_primer",
+        "get_guide",
     }
 )
 

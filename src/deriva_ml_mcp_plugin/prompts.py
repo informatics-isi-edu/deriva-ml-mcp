@@ -1068,6 +1068,15 @@ _GUIDE_MANIFEST: list[tuple[str, str, str]] = [
 ]
 
 
+# Bodies of guides this plugin owns and can return directly via get_guide.
+# Core guides are intentionally absent -- their bodies live in
+# deriva-mcp-core and are reachable only via their slash-command prompts.
+_PLUGIN_GUIDE_BODIES: dict[str, str] = {
+    "deriva_ml_concepts": _CONCEPTS_GUIDE,
+    "deriva_ml_getting_started": _GETTING_STARTED_GUIDE,
+}
+
+
 def _render_primer() -> str:
     """Render the DerivaML startup primer body.
 
@@ -1209,3 +1218,42 @@ def register(ctx: PluginContext) -> None:
     )
     def deriva_ml_primer_prompt() -> str:
         return _render_primer()
+
+    @ctx.tool(mutates=False)
+    def get_guide(name: str) -> str:
+        """Fetch a DerivaML or generic-catalog guide by name.
+
+        For a guide this plugin owns, returns its full body. For a
+        deriva-mcp-core tier-1 guide, returns a short redirect pointing at
+        the ``/<server>:<name>`` slash-command prompt (core guide bodies are
+        not retrievable through this plugin). For an unknown name, returns a
+        structured error listing valid names.
+
+        Args:
+            name: The guide name, as advertised in the primer manifest.
+
+        Returns:
+            The guide body, a redirect string, or a JSON ``{"error": ...}``
+            payload for an unknown name.
+
+        Example:
+            >>> get_guide("deriva_ml_concepts")  # doctest: +SKIP
+            '...the five core abstractions...'
+        """
+        import json
+
+        if name in _PLUGIN_GUIDE_BODIES:
+            return _PLUGIN_GUIDE_BODIES[name]
+
+        core_names = {n for (n, src, _) in _GUIDE_MANIFEST if src == "core"}
+        if name in core_names:
+            return (
+                f"Guide '{name}' is registered in deriva-mcp-core and is not "
+                f"retrievable through this plugin. Fetch it via the "
+                f"/<server>:{name} slash-command prompt."
+            )
+
+        valid = sorted(_PLUGIN_GUIDE_BODIES) + sorted(core_names)
+        return json.dumps(
+            {"error": f"Unknown guide '{name}'. Valid guides: {', '.join(valid)}."}
+        )
