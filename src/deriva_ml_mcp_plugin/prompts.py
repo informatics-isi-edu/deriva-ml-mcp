@@ -1100,7 +1100,7 @@ def _render_primer() -> str:
 
     # Block 2 -- manifest of on-demand guides.
     parts.append("=== ON-DEMAND GUIDES ===")
-    if ml_guides:
+    if ml_guides:  # empty today; activates when _GUIDE_MANIFEST gains "deriva-ml" rows
         parts.append(
             "DerivaML domain guides (this plugin) -- fetch with "
             "get_guide(name) when you first need them:"

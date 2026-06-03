@@ -122,10 +122,10 @@ def test_render_primer_contains_both_guide_bodies():
     assert "five core abstractions" in body or "Dataset" in body
 
 
-def test_render_primer_lists_all_core_guide_names():
-    """Every core guide name from the manifest appears in the primer text."""
+def test_render_primer_lists_all_guide_names():
+    """Every guide name from the manifest appears in the primer text."""
     body = prompts._render_primer()
-    for name, source, _ in prompts._GUIDE_MANIFEST:
+    for name, _, _ in prompts._GUIDE_MANIFEST:
         assert name in body, f"{name} missing from primer"
 
 
