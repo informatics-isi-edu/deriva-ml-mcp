@@ -3,9 +3,19 @@
 # deployment, picking up new DERIVA_MCP_EXTRA_PACKAGES versions.
 #
 # Usage:
-#   ./scripts/rebuild-deriva-docker-mcp.sh [env-file]
+#   ./scripts/rebuild-deriva-docker-mcp.sh [target|env-file]
 #
-# Default env file: ~/.deriva-docker/env/localhost.env
+# The first argument selects which MCP-server target to (re)build:
+#   localhost  ->  ~/.deriva-docker/env/localhost.env  (deriva-ml plugin
+#                  only; auths against the in-container keycloak)
+#   eye-ai     ->  ~/.deriva-docker/env/eye-ai.env     (eye-ai + deriva-ml
+#                  plugins; auths against dev.eye-ai.org)
+# Both targets rebuild the same shared deriva-mcp-test service -- they
+# differ only in the MCP package set and the auth host. Default: localhost.
+#
+# A first argument that looks like a path (contains '/' or ends in '.env')
+# is used verbatim as the env file instead, preserving direct-path usage.
+#
 # Default deriva-docker compose dir: $DERIVA_DOCKER_DIR, falling back to
 #   $HOME/GitHub/deriva-docker/deriva (the conventional checkout location).
 #
@@ -21,15 +31,38 @@
 
 set -euo pipefail
 
-ENV_FILE="${1:-$HOME/.deriva-docker/env/localhost.env}"
+ENV_DIR="$HOME/.deriva-docker/env"
+VALID_TARGETS=(localhost eye-ai)
+
+# Resolve the first argument into an env file. A value containing '/' or
+# ending in '.env' is treated as a direct path; otherwise it must name one
+# of VALID_TARGETS and resolves to "$ENV_DIR/<target>.env".
+TARGET="${1:-localhost}"
+if [[ "$TARGET" == */* || "$TARGET" == *.env ]]; then
+    ENV_FILE="$TARGET"
+else
+    valid=0
+    for t in "${VALID_TARGETS[@]}"; do
+        [[ "$TARGET" == "$t" ]] && valid=1 && break
+    done
+    if [[ "$valid" -ne 1 ]]; then
+        echo "Error: unknown target '$TARGET'." >&2
+        echo "Valid targets: ${VALID_TARGETS[*]} (or pass a path to an env file)." >&2
+        exit 1
+    fi
+    ENV_FILE="$ENV_DIR/$TARGET.env"
+fi
+
 SERVICE="${DERIVA_MCP_SERVICE:-deriva-mcp-test}"
 DERIVA_DOCKER_DIR="${DERIVA_DOCKER_DIR:-$HOME/GitHub/deriva-docker/deriva}"
 
 if [[ ! -f "$ENV_FILE" ]]; then
     echo "Error: env file not found at $ENV_FILE" >&2
-    echo "Pass a different path as the first argument, or set up the file." >&2
+    echo "Pass a valid target (${VALID_TARGETS[*]}) or a path as the first argument." >&2
     exit 1
 fi
+
+echo ">>> Target env file: $ENV_FILE"
 
 if [[ ! -f "$DERIVA_DOCKER_DIR/docker-compose.yml" ]]; then
     echo "Error: docker-compose.yml not found at $DERIVA_DOCKER_DIR/docker-compose.yml" >&2

@@ -664,7 +664,14 @@ docker-compose --env-file ~/.deriva-docker/env/localhost.env up -d deriva-mcp-te
 wheel layer and your version bump silently doesn't land.
 
 `scripts/rebuild-deriva-docker-mcp.sh` in this repo wraps those three
-commands; pass a non-default env-file path as the first argument if needed.
+commands. Its first argument selects an MCP-server **target**:
+`localhost` (deriva-ml plugin only, auths against the in-container
+keycloak → `~/.deriva-docker/env/localhost.env`) or `eye-ai` (eye-ai +
+deriva-ml plugins, auths against `dev.eye-ai.org` →
+`~/.deriva-docker/env/eye-ai.env`). Default is `localhost`. Both
+targets rebuild the same shared `deriva-mcp-test` service and differ
+only in the MCP package set + auth host. A first argument that looks
+like a path (contains `/` or ends in `.env`) is still honored verbatim.
 The README has the full README context (env-var format, pre-release status
 note). When `deriva-docker` ships final support for this plugin, the
 helper script and this section will be replaced by the canonical

@@ -89,12 +89,25 @@ docker-compose --env-file ~/.deriva-docker/env/localhost.env up -d deriva-mcp-te
 ```
 
 The `scripts/rebuild-deriva-docker-mcp.sh` helper in this repo wraps
-those three commands. From a deriva-docker checkout (where
-`docker-compose.yml` lives):
+those three commands. Its first argument selects which MCP-server
+**target** to (re)build:
+
+- `localhost` &rarr; `~/.deriva-docker/env/localhost.env` --- the
+  deriva-ml plugin only, authenticating against the in-container
+  keycloak.
+- `eye-ai` &rarr; `~/.deriva-docker/env/eye-ai.env` --- the eye-ai
+  **and** deriva-ml plugins, authenticating against `dev.eye-ai.org`.
+
+Both targets rebuild the same shared `deriva-mcp-test` service; they
+differ only in the MCP package set and the auth host. From a
+deriva-docker checkout (where `docker-compose.yml` lives):
 
 ```bash
+# Default target is localhost:
 /path/to/deriva-ml-mcp/scripts/rebuild-deriva-docker-mcp.sh
-# or pass a non-default env file:
+# Rebuild the eye-ai target instead:
+/path/to/deriva-ml-mcp/scripts/rebuild-deriva-docker-mcp.sh eye-ai
+# Or pass a path to a non-default env file directly:
 /path/to/deriva-ml-mcp/scripts/rebuild-deriva-docker-mcp.sh /path/to/env
 ```
 
