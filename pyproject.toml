@@ -99,7 +99,7 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
-deriva-mcp-core = { path = "../deriva-mcp-core", editable = true }
+deriva-mcp-core = { git = "https://github.com/informatics-isi-edu/deriva-mcp-core.git" }
 # deriva-ml is pulled from github main on every `uv sync --upgrade` so
 # this repo always picks up the latest release. Local edits to a
 # sibling ../deriva-ml checkout are NOT picked up automatically; commit
