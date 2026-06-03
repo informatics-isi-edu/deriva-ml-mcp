@@ -203,7 +203,7 @@ def test_register_adds_all_resources(resource_ctx, capturing_mcp):
 
 
 # ---------------------------------------------------------------------------
-# Cold-start static resources (deriva://deriva-ml/{concepts,getting-started})
+# Cold-start static resources (deriva://deriva-ml/{concepts,getting-started,primer})
 # ---------------------------------------------------------------------------
 
 
