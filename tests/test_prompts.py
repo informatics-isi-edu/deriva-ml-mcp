@@ -74,6 +74,29 @@ def test_each_prompt_returns_nonempty_string(ctx, capturing_mcp):
         assert len(result) > 100, f"{name} returned a near-empty body ({len(result)} chars)"
 
 
+def test_guide_manifest_shape():
+    """_GUIDE_MANIFEST is a list of (name, source, summary) triples."""
+    manifest = prompts._GUIDE_MANIFEST
+    assert isinstance(manifest, list)
+    assert len(manifest) >= 4
+    for entry in manifest:
+        name, source, summary = entry  # exactly three fields
+        assert isinstance(name, str) and name
+        assert source in {"deriva-ml", "core"}
+        assert isinstance(summary, str) and summary
+
+
+def test_guide_manifest_names_core_tier1_guides():
+    """The four deriva-mcp-core tier-1 guides are named with source 'core'."""
+    core_names = {n for (n, src, _) in prompts._GUIDE_MANIFEST if src == "core"}
+    assert core_names == {
+        "query_guide",
+        "entity_guide",
+        "annotation_guide",
+        "catalog_guide",
+    }
+
+
 def test_prompts_are_ascii(ctx, capturing_mcp):
     """Every prompt body must be plain ASCII (workspace convention).
 

@@ -1050,6 +1050,24 @@ relevant tool docstrings and RAG-indexed docs.)
 
 
 
+# Manifest of guides advertised by the primer (manifest-as-data). Each entry
+# is (name, source, summary). source is "deriva-ml" for guides owned by this
+# plugin (fetchable via get_guide) or "core" for deriva-mcp-core tier-1 guides
+# (fetchable only via the /<server>:<name> slash-command prompt).
+#
+# SYNC: the "core" rows mirror prompt names registered in
+# deriva-mcp-core/src/deriva_mcp_core/tools/prompts.py. If a core guide is
+# renamed there, update the matching row here. We cannot enumerate core
+# prompts at runtime without reaching into core internals; the names are
+# stable public API. The drift-guard test lives in test_prompts.py.
+_GUIDE_MANIFEST: list[tuple[str, str, str]] = [
+    ("query_guide", "core", "ERMrest query and path syntax, pagination, result interpretation"),
+    ("entity_guide", "core", "entity CRUD, preflight count rule, display rules"),
+    ("annotation_guide", "core", "Chaise annotation patterns, context names, templates"),
+    ("catalog_guide", "core", "catalog create/clone/alias, snaptime format, history"),
+]
+
+
 # -- Registration ------------------------------------------------------------
 
 
