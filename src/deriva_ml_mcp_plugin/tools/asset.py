@@ -16,9 +16,14 @@ metadata (asset_type tags + Description) on an existing asset row.
 File I/O is deliberately out of scope -- registering a new asset from
 a local file or downloading asset bytes back to a local path requires
 filesystem access the MCP server does not (and should not) have. Those
-flows live in the ``deriva-skills`` ``work-with-assets`` skill, which
-generates Python the user runs locally; once the file is staged, this
-module's tools cover the metadata-curation half of the round trip.
+flows run in the user's local Python: ``exe.asset_file_path(...)`` +
+``exe.commit_output_assets()`` for upload, ``exe.download_asset(...)``
+or ``asset.download(...)`` for download. For the runnable how-to, call
+``rag_search(query="asset upload download", doc_type="ml-docs")`` (the
+``user-guide/assets.md`` doc, retrievable over this MCP); Claude Code
+clients also have the ``deriva-skills`` ``work-with-assets`` skill.
+Once a file is staged locally, this module's tools cover the
+metadata-curation half of the round trip.
 
 Every tool wraps DERIVA I/O in ``with deriva_call():`` and routes
 errors through ``_error_envelope`` (mutation tools also emit
