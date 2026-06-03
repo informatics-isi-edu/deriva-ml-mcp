@@ -766,3 +766,88 @@ async def test_create_dataset_reindex_failure_does_not_fail_tool(
     # The success audit fired despite the re-index failure.
     success = _success_calls(mock_audit, "deriva_ml_create_dataset")
     assert success
+
+
+async def test_add_dataset_members_triggers_surgical_reindex(dataset_ctx, capturing_mcp, mock_ml):
+    """``deriva_ml_add_dataset_members`` re-indexes the mutated dataset RID."""
+    from unittest.mock import AsyncMock
+
+    ds = _make_dataset_mock("1-AAAA", current_version="1.1.0")
+    mock_ml.lookup_dataset.return_value = ds
+    fake_reindex = AsyncMock(return_value=1)
+    with (
+        patch("deriva_ml_mcp_plugin.resources.rag._reindex_dataset", new=fake_reindex),
+        _patch_audit(),
+    ):
+        await capturing_mcp.tools["deriva_ml_add_dataset_members"](
+            hostname="h",
+            catalog_id="1",
+            dataset_rid="1-AAAA",
+            member_rids=["r1", "r2"],
+        )
+    fake_reindex.assert_awaited_once_with("h", "1", "1-AAAA")
+
+
+async def test_delete_dataset_members_triggers_surgical_reindex(
+    dataset_ctx, capturing_mcp, mock_ml
+):
+    """``deriva_ml_delete_dataset_members`` re-indexes the mutated dataset RID."""
+    from unittest.mock import AsyncMock
+
+    ds = _make_dataset_mock("1-AAAA", current_version="1.3.0")
+    mock_ml.lookup_dataset.return_value = ds
+    fake_reindex = AsyncMock(return_value=1)
+    with (
+        patch("deriva_ml_mcp_plugin.resources.rag._reindex_dataset", new=fake_reindex),
+        _patch_audit(),
+    ):
+        await capturing_mcp.tools["deriva_ml_delete_dataset_members"](
+            hostname="h",
+            catalog_id="1",
+            dataset_rid="1-AAAA",
+            member_rids=["r1"],
+        )
+    fake_reindex.assert_awaited_once_with("h", "1", "1-AAAA")
+
+
+async def test_update_dataset_triggers_surgical_reindex(dataset_ctx, capturing_mcp, mock_ml):
+    """``deriva_ml_update_dataset`` re-indexes the mutated dataset RID."""
+    from unittest.mock import AsyncMock
+
+    ds = _make_dataset_mock("1-AAAA", dataset_types=["Training"], current_version="1.4.0")
+    mock_ml.lookup_dataset.return_value = ds
+    fake_reindex = AsyncMock(return_value=1)
+    with (
+        patch("deriva_ml_mcp_plugin.resources.rag._reindex_dataset", new=fake_reindex),
+        _patch_audit(),
+    ):
+        await capturing_mcp.tools["deriva_ml_update_dataset"](
+            hostname="h",
+            catalog_id="1",
+            dataset_rid="1-AAAA",
+            description="refreshed description",
+        )
+    fake_reindex.assert_awaited_once_with("h", "1", "1-AAAA")
+
+
+async def test_release_triggers_surgical_reindex(dataset_ctx, capturing_mcp, mock_ml):
+    """``deriva_ml_release`` re-indexes the released dataset RID."""
+    from unittest.mock import AsyncMock
+
+    ds = _make_dataset_mock("1-AAAA", current_version="0.4.0.post1.dev3")
+    new_ver = MagicMock()
+    new_ver.__str__ = lambda self: "0.5.0"
+    ds.release.return_value = new_ver
+    mock_ml.lookup_dataset.return_value = ds
+    fake_reindex = AsyncMock(return_value=1)
+    with (
+        patch("deriva_ml_mcp_plugin.resources.rag._reindex_dataset", new=fake_reindex),
+        _patch_audit(),
+    ):
+        await capturing_mcp.tools["deriva_ml_release"](
+            hostname="h",
+            catalog_id="1",
+            dataset_rid="1-AAAA",
+            bump="minor",
+        )
+    fake_reindex.assert_awaited_once_with("h", "1", "1-AAAA")

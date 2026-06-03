@@ -505,6 +505,26 @@ async def test_create_workflow_triggers_surgical_reindex(workflow_ctx, capturing
     fake_reindex.assert_awaited_once_with("h", "1", "1-NEW")
 
 
+async def test_update_workflow_triggers_surgical_reindex(workflow_ctx, capturing_mcp, mock_ml):
+    """``deriva_ml_update_workflow`` re-indexes the mutated workflow RID."""
+    from unittest.mock import AsyncMock
+
+    wf = _make_workflow_mock(rid="1-WF")
+    mock_ml.lookup_workflow.return_value = wf
+    fake_reindex = AsyncMock(return_value=1)
+    with (
+        patch("deriva_ml_mcp_plugin.resources.rag._reindex_workflow", new=fake_reindex),
+        _patch_workflow_audit(),
+    ):
+        await capturing_mcp.tools["deriva_ml_update_workflow"](
+            hostname="h",
+            catalog_id="1",
+            workflow_rid="1-WF",
+            description="new desc",
+        )
+    fake_reindex.assert_awaited_once_with("h", "1", "1-WF")
+
+
 # ---------------------------------------------------------------------------
 # 2026-05-26 projection audit: workflow_rid recovery on Workflow objects
 # ---------------------------------------------------------------------------

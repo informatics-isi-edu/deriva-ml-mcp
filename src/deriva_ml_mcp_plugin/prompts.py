@@ -6,13 +6,14 @@ docstrings. FastMCP surfaces them through the MCP ``prompts/list`` and
 the start of a conversation -- they are the cold-start anchor for the
 plugin's 43 tools and 18 resources.
 
-The four prompts complement the four built-in core prompts shipped by
+The two prompts complement the four built-in core prompts shipped by
 ``deriva-mcp-core`` (``query_guide``, ``entity_guide``,
 ``annotation_guide``, ``catalog_guide``) -- they do not replace them.
 Core's prompts cover generic ERMrest / annotation / catalog primitives;
-these cover the ML-domain layered on top: dataset / feature / workflow
-/ execution objects, the execution state machine, and the workflow
-dedup contract.
+these cover the ML-domain layered on top: the five abstractions
+(dataset / feature / workflow / execution / asset), the provenance
+principle, and the operational conventions (the (hostname, catalog_id)
+rule, pagination, error envelopes, resource/RAG discovery).
 
 Prompts registered here:
 
@@ -150,9 +151,12 @@ DERIVA-ML DOMAIN OBJECTS, NOT AS RAW TABLES.
 
   Execution  One run of a Workflow against specific input Datasets,
              producing output Datasets / Features / Assets. Executions
-             have a status (``Execution_Status_Type``), inputs / outputs
-             links, and a state machine that advances Created -> Running
-             -> Stopped -> Uploaded. **Executions originate in your
+             have a status (the ``ExecutionStatus`` enum: Created,
+             Running, Stopped, Failed, Pending_Upload, Uploaded,
+             Aborted), inputs / outputs links, and a state machine that
+             advances Created -> Running -> {Stopped, Failed} ->
+             Pending_Upload -> Uploaded (with Created/Running -> Aborted
+             as the cancel path). **Executions originate in your
              local Python environment, not in the MCP server.** The
              MCP surface for executions is observational only: query
              with ``deriva_ml_list_executions`` /
@@ -298,12 +302,14 @@ the Execution that produced it. This is why:
     user-local Python: ``with ml.create_execution(workflow=..., ...) as
     exe:`` opens the Created -> Running transition.
   - You write outputs INSIDE the context manager:
-    ``exe.add_features(records)`` to stage feature values,
-    ``exe.upload_asset(...)`` for asset bytes.
-  - The context manager closes the lifecycle on exit: Running ->
-    Stopped -> Uploaded. The staged values become visible to
-    downstream queries (including the MCP ``deriva_ml_list_*`` /
-    ``deriva_ml_get_*`` read tools) only after the upload completes.
+    ``exe.add_features(records)`` to stage feature values, and
+    ``exe.asset_file_path(...)`` to register asset files for upload.
+  - The context manager closes the lifecycle on exit (Running ->
+    Stopped, or Running -> Failed if the block raised); the separate
+    ``exe.commit_output_assets()`` call then drives Pending_Upload ->
+    Uploaded. The staged values become visible to downstream queries
+    (including the MCP ``deriva_ml_list_*`` / ``deriva_ml_get_*`` read
+    tools) only after the upload completes.
   - The state machine is enforced by the local DerivaML library; the
     MCP server cannot mutate Execution status. A would-be "manual
     status flip" via raw entity CRUD on the underlying Deriva tables
@@ -388,7 +394,7 @@ DerivaML ships four built-in controlled vocabularies:
                              ``Inference``, ``Data_Curation``)
   Asset_Type              -- tag an Asset's file kind (e.g. ``Metrics_File``,
                              ``Model_Weights``, ``Image``)
-  Execution_Status_Type   -- managed automatically by the state machine;
+  Execution_Status        -- managed automatically by the state machine;
                              do NOT extend manually
 
 These are CONTROLLED enumerations: a Dataset's type must be a registered
@@ -534,8 +540,9 @@ Now that you have the conceptual frame, read these in this order:
      fetched via ``rag_search(query="execution state machine",
      doc_type="ml-docs")``) -- before doing any execution work in your
      local Python. This is the cross-cutting state-machine reference;
-     it covers the Created -> Running -> Stopped -> Uploaded
-     transitions, the staged-vs-flushed semantics, and the
+     it covers the Created -> Running -> {Stopped, Failed} ->
+     Pending_Upload -> Uploaded transitions (and the Aborted cancel
+     path), the staged-vs-flushed semantics, and the
      ``with Execution(...) as exe:`` context-manager idiom that
      anchors the lifecycle. The MCP plugin has no execution-mutation
      tools as of v0.5.0; the local Python pattern is the only path.
@@ -666,8 +673,11 @@ you're driving the library directly from a notebook or skill.
 
 THE FIVE ML DOMAINS
 -------------------
-The 43 tools are organized into five domain modules. Pick the domain
-first, then the verb. All actual tool names are prefixed
+Forty of the 43 tools are organized into five domain modules (the
+other three are the catalog-maintenance tools
+``deriva_ml_create_vocabulary``, ``deriva_ml_reindex_vocabularies``,
+and ``deriva_ml_resync_indexes``). Pick the domain first, then the
+verb. All actual tool names are prefixed
 ``deriva_ml_<verb>`` (e.g. the ``create`` verb under ``dataset`` is
 the ``deriva_ml_create_dataset`` tool). The bare verbs below name the
 concept; prepend ``deriva_ml_`` (and append the noun where natural)
@@ -693,11 +703,12 @@ for the wire name.
                   URL + checksum + workflow_type). Verbs: list / get /
                   find_workflow_by_url / create / update.
 
-    execution  -- 6 tools (read-only). A single run of a workflow
+    execution  -- 7 tools (read-only). A single run of a workflow
                   against datasets and assets. The MCP surface for
                   executions is observational only: list / get /
                   find_workflow_executions / list_execution_children /
-                  list_execution_parents / get_lineage. The full
+                  list_execution_parents / find_experiments /
+                  get_lineage. The full
                   lifecycle (create / start / commit / abort / update /
                   add_feature_values / create_execution_dataset /
                   add_nested_execution) is owned by the caller's local
@@ -710,12 +721,12 @@ for the wire name.
                   ``execution-lifecycle`` skill for the local-Python
                   pattern.
 
-    asset      -- 3 tools. File-backed catalog rows (images, model
+    asset      -- 4 tools. File-backed catalog rows (images, model
                   weights, etc.) -- catalog-state operations only.
                   File I/O lives in deriva-skills's work-with-assets
-                  skill. Verbs: list_assets / lookup / update.
-                  For "what asset tables exist in a schema?" use the
-                  ml/assets/{schema} resource (no dedicated tool).
+                  skill. Verbs: list_assets / find_assets / lookup /
+                  update. For "what asset tables exist in a schema?" use
+                  the ml/assets/{schema} resource (no dedicated tool).
 
 READ-SIDE QUESTIONS: FETCH THE RESOURCE FIRST
 ---------------------------------------------
@@ -911,12 +922,14 @@ The canonical chain crosses the MCP <-> local-Python boundary:
     In your local Python:
     2. ``with ml.create_execution(workflow=wf_rid, ...) as exe:``
        opens the execution context (Created -> Running on enter,
-       Stopped -> Uploaded on exit, Abort on exception).
+       Running -> Stopped on clean exit, Running -> Failed if the block
+       raises, Aborted on cancel).
     3. Inside the context: ``exe.add_features(records)`` to stage
-       feature values, ``exe.upload_asset(...)`` for asset bytes,
-       ``exe.create_dataset(...)`` for output datasets.
-    4. The context manager exit drains all staged outputs and
-       commits the upload. No separate "commit" tool call needed.
+       feature values, ``exe.asset_file_path(...)`` to register asset
+       files, ``exe.create_dataset(...)`` for output datasets.
+    4. On exit the execution moves to Stopped; then call
+       ``exe.commit_output_assets()`` to drive Pending_Upload ->
+       Uploaded and flush all staged outputs to the catalog.
 
     Back on MCP:
     5. Query the freshly-landed catalog state via the read tools:
@@ -1020,16 +1033,18 @@ and ``description``. There is no compat shim; update any references.
 
 THE MENU
 --------
-Quick orientation: 43 tools across 5 domains (dataset, feature, workflow,
-execution, asset) + 18 read-only resources under the
+Quick orientation: 43 tools -- 40 across the 5 ML domains (dataset,
+feature, workflow, execution, asset) plus 3 catalog-maintenance tools
+(create_vocabulary, reindex_vocabularies, resync_indexes) -- + 18
+read-only resources under the
 ``deriva://catalog/{h}/{c}/deriva-ml/...`` URI prefix + 1 GitHub doc source
 indexed for RAG (``deriva-ml-docs``) + 3 per-user RAG indexes that
 ingest Dataset / Workflow / Execution rows on first connect to a
-catalog. Plus 4 built-in core prompts and 1 ML prompt (this one --
-v3.x removed ``deriva_ml_execution_lifecycle`` and
-``deriva_ml_workflow_dedup`` and redistributed their content to the
-relevant tool docstrings; ``deriva_ml_concepts`` is the second
-remaining ML prompt).
+catalog. Plus 4 built-in core prompts and 2 ML prompts: this one
+(``deriva_ml_getting_started``) and ``deriva_ml_concepts``. (v3.x
+removed two earlier prompts, ``deriva_ml_execution_lifecycle`` and
+``deriva_ml_workflow_dedup``, and redistributed their content to the
+relevant tool docstrings and RAG-indexed docs.)
 """
 
 
@@ -1039,7 +1054,7 @@ remaining ML prompt).
 
 
 def register(ctx: PluginContext) -> None:
-    """Register the four deriva-ml MCP prompts with the plugin context.
+    """Register the two deriva-ml MCP prompts with the plugin context.
 
     Args:
         ctx: PluginContext supplied by deriva-mcp-core at startup.
@@ -1072,7 +1087,7 @@ def register(ctx: PluginContext) -> None:
         "deriva_ml_getting_started",
         description=(
             "Cold-start orientation for deriva-ml-mcp-plugin: the (hostname, catalog_id) rule, "
-            "the four ML domains, discovery via resources/RAG, the workflow->execution->outputs chain. "
+            "the five ML domains, discovery via resources/RAG, the workflow->execution->outputs chain. "
             "Assumes the conceptual frame from deriva_ml_concepts."
         ),
     )
