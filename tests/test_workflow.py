@@ -157,6 +157,133 @@ async def test_list_workflows_sort_default_preserves_rid_sort(workflow_ctx, capt
     assert rids == ["1-A", "1-Z"]
 
 
+def test_list_workflows_impl_filters_by_workflow_type() -> None:
+    """``workflow_type=`` keeps only workflows whose type list contains it."""
+    from types import SimpleNamespace
+
+    from deriva_ml_mcp_plugin.tools.workflow import _list_workflows_impl
+
+    def _wf(rid, types):
+        return SimpleNamespace(
+            workflow_rid=rid,
+            name="w",
+            url="u",
+            checksum="c",
+            version="1",
+            workflow_type=types,
+            description="d",
+        )
+
+    fake_ml = SimpleNamespace(
+        find_workflows=lambda sort: [
+            _wf("1-TRN", ["Model_Training"]),
+            _wf("1-INF", ["Inference"]),
+        ]
+    )
+    resp = _list_workflows_impl(fake_ml, after_rid=None, limit=100, workflow_type="Model_Training")
+    assert [w.rid for w in resp.workflows] == ["1-TRN"]
+
+
+def test_list_workflows_impl_workflow_type_none_returns_all() -> None:
+    """No filter -> unchanged behavior (all workflows)."""
+    from types import SimpleNamespace
+
+    from deriva_ml_mcp_plugin.tools.workflow import _list_workflows_impl
+
+    def _wf(rid, types):
+        return SimpleNamespace(
+            workflow_rid=rid,
+            name="w",
+            url="u",
+            checksum="c",
+            version="1",
+            workflow_type=types,
+            description="d",
+        )
+
+    fake_ml = SimpleNamespace(
+        find_workflows=lambda sort: [
+            _wf("1-TRN", ["Model_Training"]),
+            _wf("1-INF", ["Inference"]),
+        ]
+    )
+    resp = _list_workflows_impl(fake_ml, after_rid=None, limit=100, workflow_type=None)
+    assert {w.rid for w in resp.workflows} == {"1-TRN", "1-INF"}
+
+
+async def test_list_workflows_tool_forwards_workflow_type(workflow_ctx, capturing_mcp, mock_ml):
+    """``deriva_ml_list_workflows(workflow_type=...)`` forwards the filter to the impl."""
+    from deriva_ml_mcp_plugin._response_models import WorkflowListResponse
+
+    seen: dict = {}
+
+    def spy(ml, **kwargs):
+        seen.update(kwargs)
+        return WorkflowListResponse(workflows=[], count=0, truncated=False, next_after_rid=None)
+
+    with patch(
+        "deriva_ml_mcp_plugin.tools.workflow._list_workflows_impl",
+        side_effect=spy,
+    ):
+        await capturing_mcp.tools["deriva_ml_list_workflows"](
+            hostname="h", catalog_id="1", workflow_type="Model_Training"
+        )
+
+    assert seen.get("workflow_type") == "Model_Training"
+
+
+async def test_list_workflows_tool_schedules_index_on_find(workflow_ctx, capturing_mcp, mock_ml):
+    """``deriva_ml_list_workflows`` warms the returned rows via _index_rows_on_find."""
+    mock_ml.find_workflows.return_value = [
+        _make_workflow_mock(rid="1-AAA", name="A"),
+        _make_workflow_mock(rid="1-BBB", name="B"),
+    ]
+
+    captured: dict = {}
+
+    def fake_warm(hostname, catalog_id, token, rows, **kwargs):
+        captured["token"] = token
+        captured["rids"] = [r.get("rid") for r in rows]
+
+    # The tool does a lazy ``from deriva_ml_mcp_plugin.resources.rag import
+    # _index_rows_on_find`` at call time, so patch the name in its
+    # defining module (the lazy import binds to ``rag._index_rows_on_find``).
+    with patch(
+        "deriva_ml_mcp_plugin.resources.rag._index_rows_on_find",
+        side_effect=fake_warm,
+    ):
+        await capturing_mcp.tools["deriva_ml_list_workflows"](hostname="h", catalog_id="1")
+
+    from deriva_ml_mcp_plugin.resources.rag import _WORKFLOW_TOKEN
+
+    assert captured.get("token") == _WORKFLOW_TOKEN
+    assert set(captured.get("rids") or []) == {"1-AAA", "1-BBB"}
+
+
+async def test_list_workflows_preflight_does_not_index_on_find(
+    workflow_ctx, capturing_mcp, mock_ml
+):
+    """The preflight (count-only) path returns before building rows, so it must
+    NOT schedule a read-through warm."""
+    mock_ml.find_workflows.return_value = [_make_workflow_mock(rid=f"1-{i:03d}") for i in range(3)]
+
+    called = False
+
+    def fake_warm(*args, **kwargs):
+        nonlocal called
+        called = True
+
+    with patch(
+        "deriva_ml_mcp_plugin.resources.rag._index_rows_on_find",
+        side_effect=fake_warm,
+    ):
+        await capturing_mcp.tools["deriva_ml_list_workflows"](
+            hostname="h", catalog_id="1", preflight_count=True
+        )
+
+    assert called is False
+
+
 # ---------------------------------------------------------------------------
 # get_workflow
 # ---------------------------------------------------------------------------
@@ -187,6 +314,32 @@ async def test_get_workflow_error_path(workflow_ctx, capturing_mcp, mock_ml):
     assert "error" in payload
     assert "not found" in payload["error"]
     assert mock_audit.call_count == 0
+
+
+async def test_get_workflow_tool_schedules_index_on_find(workflow_ctx, capturing_mcp, mock_ml):
+    """``deriva_ml_get_workflow`` warms the single returned row via _index_rows_on_find."""
+    mock_ml.lookup_workflow.return_value = _make_workflow_mock(rid="1-WF", name="MyPipeline")
+
+    captured: dict = {}
+
+    def fake_warm(hostname, catalog_id, token, rows, **kwargs):
+        captured["token"] = token
+        captured["rids"] = [r.get("rid") for r in rows]
+
+    # Lazy import in the tool binds to ``rag._index_rows_on_find`` at call
+    # time, so patch the name in its defining module.
+    with patch(
+        "deriva_ml_mcp_plugin.resources.rag._index_rows_on_find",
+        side_effect=fake_warm,
+    ):
+        await capturing_mcp.tools["deriva_ml_get_workflow"](
+            hostname="h", catalog_id="1", workflow_rid="1-WF"
+        )
+
+    from deriva_ml_mcp_plugin.resources.rag import _WORKFLOW_TOKEN
+
+    assert captured.get("token") == _WORKFLOW_TOKEN
+    assert captured.get("rids") == ["1-WF"]
 
 
 # ---------------------------------------------------------------------------

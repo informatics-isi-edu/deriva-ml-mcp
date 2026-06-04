@@ -20,6 +20,7 @@ through ``_error_envelope`` (reads only log on failure, no audit row).
 from __future__ import annotations
 
 import asyncio
+import logging
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -59,6 +60,8 @@ from deriva_ml_mcp_plugin._response_models import (
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_workflow_rid(record: Any) -> str | None:
@@ -645,9 +648,7 @@ def _get_execution_detail_impl(ml: Any, execution_rid: str) -> ExecutionDetail:
                 }
             )
         except Exception as exc:  # noqa: BLE001 -- log but don't break the response
-            import logging
-
-            logging.getLogger(__name__).warning(
+            logger.warning(
                 "ExecutionExperiment serialization failed for %s: %s. "
                 "Returning experiment=None; the underlying Experiment object "
                 "from deriva-ml exists but its fields failed validation. This "
@@ -814,6 +815,28 @@ def register(ctx: PluginContext) -> None:
                     dataset=dataset_arg,
                     dataset_role=dataset_role,
                 )
+                # Read-through indexing: warm the per-user RAG sources for
+                # the rows we just returned so a later rag_search finds
+                # them (in the order the read returned them). Fire-and-forget;
+                # never blocks or fails the read. Lazy import avoids the
+                # rag<->tools cycle.
+                try:
+                    from deriva_ml_mcp_plugin.resources.rag import (
+                        _EXECUTION_TOKEN,
+                        _index_rows_on_find,
+                    )
+
+                    _index_rows_on_find(
+                        hostname,
+                        catalog_id,
+                        _EXECUTION_TOKEN,
+                        [e.model_dump(mode="json") for e in payload.executions],
+                    )
+                except Exception:  # noqa: BLE001 -- warm is best-effort
+                    logger.debug(
+                        "index-on-find scheduling failed for list_executions",
+                        exc_info=True,
+                    )
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
@@ -859,6 +882,24 @@ def register(ctx: PluginContext) -> None:
                 ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
                 record = await asyncio.to_thread(ml.lookup_execution, execution_rid)
                 summary = _summarize_execution(record)
+                # Read-through indexing: warm the per-user RAG source for
+                # the execution we just returned so a later rag_search finds
+                # it. Fire-and-forget; never blocks or fails the read.
+                # Lazy import avoids the rag<->tools cycle.
+                try:
+                    from deriva_ml_mcp_plugin.resources.rag import (
+                        _EXECUTION_TOKEN,
+                        _index_rows_on_find,
+                    )
+
+                    _index_rows_on_find(
+                        hostname, catalog_id, _EXECUTION_TOKEN, [{"rid": execution_rid}]
+                    )
+                except Exception:  # noqa: BLE001 -- warm is best-effort
+                    logger.debug(
+                        "index-on-find scheduling failed for get_execution",
+                        exc_info=True,
+                    )
             return summary.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(

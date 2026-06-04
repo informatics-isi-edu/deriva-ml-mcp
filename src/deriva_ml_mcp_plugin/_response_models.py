@@ -1447,5 +1447,3 @@ class AddDatasetElementTypeResponse(BaseModel):
 # docs/superpowers/notes/2026-05-23-cache-denormalize-deprecation-design.md).
 # Bag materialization is now a user-local Python operation; the
 # response models are no longer needed.
-
-

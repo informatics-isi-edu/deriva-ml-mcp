@@ -214,16 +214,9 @@ def register(ctx: PluginContext) -> None:
                 # Lazy import per the established pattern -- keeps
                 # module import time cheap and lets tests patch
                 # rag._resync_user_sources at the use-site.
-                from deriva_ml_mcp_plugin.resources.rag import (
-                    _clear_user_indexed,
-                    _resync_user_sources,
-                )
+                from deriva_ml_mcp_plugin.resources.rag import _resync_user_sources
 
                 counts = await _resync_user_sources(hostname, catalog_id, target=target)
-                # Drop the per-user first-connect guard entries so the next
-                # on_catalog_connect re-runs the per-user-trio pass too -- an
-                # explicit resync implies the indexed view is stale.
-                _clear_user_indexed(hostname, catalog_id)
             return ResyncIndexesResponse(resynced=counts).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(

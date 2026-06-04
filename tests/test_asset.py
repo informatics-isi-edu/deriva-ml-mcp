@@ -216,9 +216,7 @@ async def test_find_assets_empty_match_returns_empty_list_not_error(
 
 async def test_find_assets_scoped_to_one_table(asset_ctx, capturing_mcp, mock_ml):
     """asset_table without asset_type narrows the scan to one table."""
-    mock_ml.find_assets.return_value = iter(
-        [_make_asset_mock("1-AAAA", asset_table="Image")]
-    )
+    mock_ml.find_assets.return_value = iter([_make_asset_mock("1-AAAA", asset_table="Image")])
     out = json.loads(
         await capturing_mcp.tools["deriva_ml_find_assets"](
             hostname="h", catalog_id="1", asset_table="Image"
@@ -244,21 +242,15 @@ async def test_find_assets_both_scoping_kwargs_are_forwarded(asset_ctx, capturin
         )
     )
     assert out["count"] == 1
-    mock_ml.find_assets.assert_called_with(
-        asset_table="Trained_Model", asset_type="Model_File"
-    )
+    mock_ml.find_assets.assert_called_with(asset_table="Trained_Model", asset_type="Model_File")
 
 
-async def test_find_assets_validation_requires_one_identifier(
-    asset_ctx, capturing_mcp, mock_ml
-):
+async def test_find_assets_validation_requires_one_identifier(asset_ctx, capturing_mcp, mock_ml):
     """Neither asset_type nor asset_table => validation error envelope,
     no catalog call. Unfiltered cross-catalog scans are intentionally
     not exposed."""
     out = json.loads(
-        await capturing_mcp.tools["deriva_ml_find_assets"](
-            hostname="h", catalog_id="1"
-        )
+        await capturing_mcp.tools["deriva_ml_find_assets"](hostname="h", catalog_id="1")
     )
     assert "error" in out
     assert "at least one" in out["error"]

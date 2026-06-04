@@ -38,7 +38,8 @@ src/deriva_ml_mcp_plugin/
 └── resources/           # MCP resources + per-user RAG
     ├── ml.py            #   9 read-only resources under deriva://catalog/{h}/{c}/ml/...
     └── rag.py           #   1 GitHub doc source +
-                         #   3 per-user on_catalog_connect hooks (Dataset/Workflow/Execution)
+                         #   read-through per-user-per-RID writers (Dataset/Workflow/Execution,
+                         #   warmed on list/get/find + surgically on mutate; no on-connect pass)
                          # + 1 catalog-public on_catalog_connect hook (vocabularies)
 ```
 
@@ -55,9 +56,10 @@ into a focused-submodule package.
 `ctx.rag_dataset_indexer(...)` -- that API produces a single global
 enriched source shared across users (`enriched:{host}:{cat}:{schema}:{table}`),
 which leaks data for any catalog table where rows have user-specific
-ACLs. Instead, the plugin uses `ctx.on_catalog_connect(...)` with
-direct `store.delete_source + store.add` writes so each user's chunks
-land under per-RID source names of the shape
+ACLs. Instead, the plugin writes these rows via direct
+`store.delete_source + store.add` calls (from the read-through and
+mutate paths, not an on-connect hook) so each user's chunks land under
+per-RID source names of the shape
 `data:{host}:{cat}:{user_id}:{table}:{rid}` (v1.3) and ACL is applied
 at fetch time using the calling user's credential. The `data:` prefix
 keeps upstream's `rag_search` user-id filter in play (it accepts both
@@ -68,31 +70,39 @@ ban; `test_data_sources_use_per_rid_naming` pins the v1.3 source-name
 shape; future commits accidentally calling the unsafe API or
 regressing the source-name shape will fail CI.
 
-**Surgical per-RID re-index (v1.3).** Each mutating tool that affects
-a Dataset / Workflow / Execution row calls `_reindex_<entity>` (a
-lazy import inside the tool body, mirroring the v1.1 vocab indexer
-pattern) immediately after the catalog mutation succeeds. The
-re-index is best-effort: any failure is logged but does NOT propagate
-to the tool's success path (the catalog mutation already succeeded).
-The audit event for the catalog mutation always fires before the
-re-index call so audit captures the success regardless of cache
-state. Result: a freshly created or modified row is searchable via
-`rag_search` on the very next call from the same user.
+**Read-through (index-on-find) indexing (v1.5).** Dataset / Workflow /
+Execution rows are NO LONGER bulk-indexed on connect (the three
+first-connect passes were removed in v1.5 because they re-fetched and
+re-embedded every visible row on every catalog connect). A row's chunk
+is warmed lazily instead: the list/get/find tools call
+`_index_rows_on_find(...)` after a read to schedule a best-effort
+re-index for each row just seen (in the order the read returned them --
+there is NO newest-first sort), and each mutating tool calls
+`_reindex_<entity>` surgically right after its catalog mutation
+succeeds. Both paths write per-RID sources of the shape
+`data:{host}:{cat}:{user_id}:{table}:{rid}`. The re-index is
+best-effort: any failure is logged but does NOT propagate to the
+tool's success path (the catalog mutation already succeeded). The
+audit event always fires before the re-index call so audit captures
+the success regardless of cache state. Result: a row becomes
+`rag_search`-able once it's been listed/fetched (which warms it) or
+the moment the calling user creates/mutates it.
 
-**Cross-user freshness gap (v1.4 — known limitation).** Per-user
-surgical re-index covers the calling user's OWN mutations. It does
-NOT propagate across users: when user A mutates a dataset visible
-to user B, B's per-user sources remain stale until B reconnects.
-Same gap applies to mutations from non-MCP clients (Chaise UI,
-ERMrest direct). v1.4 ships a manual bridge: the
-`deriva_ml_resync_indexes(hostname, catalog_id, target=None)` tool
-in `tools/maintenance.py` re-runs `_reindex_*` for the calling
-user's per-user sources -- either all (target=None) or one
-(target="dataset:1-AAAA"). The `deriva_ml_getting_started` prompt
-documents the verify-with-`get_*` recovery pattern for shared-visible
-rows. Automatic cross-user fan-out is deferred per the design
-discussion in #9 -- the load profile is deployment-specific and
-no demand signal yet.
+**Cross-user freshness gap (v1.4 — known limitation).** The
+read-through warm and surgical re-index cover only the rows the calling
+user has read or mutated under their OWN credential. They do NOT
+propagate across users: when user A mutates a dataset visible to user
+B, B's per-user sources stay stale until B next lists/fetches that row
+(or resyncs). Same gap applies to mutations from non-MCP clients
+(Chaise UI, ERMrest direct). The manual bridge is
+`deriva_ml_resync_indexes(hostname, catalog_id, target=None)` in
+`tools/maintenance.py` -- the "warm everything for this catalog now"
+button, re-running `_reindex_*` over every visible row for the calling
+user (target=None) or one (target="dataset:1-AAAA"). The
+`deriva_ml_getting_started` prompt documents the verify-with-`get_*`
+recovery pattern for shared-visible rows. Automatic cross-user fan-out
+is deferred per the design discussion in #9 -- the load profile is
+deployment-specific and no demand signal yet.
 
 Vocabularies are the documented exception: vocab content is catalog-
 public (no per-user ACL), so the plugin writes vocab terms directly
