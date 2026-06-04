@@ -1141,8 +1141,6 @@ relevant tool docstrings and RAG-indexed docs.)
 """
 
 
-
-
 # Manifest of guides advertised by the primer (manifest-as-data). Each entry
 # is (name, source, summary). source is "deriva-ml" for guides owned by this
 # plugin (fetchable via get_guide) or "core" for deriva-mcp-core tier-1 guides

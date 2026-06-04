@@ -769,9 +769,7 @@ def register(ctx: PluginContext) -> None:
                 # object only when an execution_rid was supplied.
                 execution_obj = None
                 if execution_rid is not None:
-                    execution_obj = await asyncio.to_thread(
-                        ml.lookup_execution, execution_rid
-                    )
+                    execution_obj = await asyncio.to_thread(ml.lookup_execution, execution_rid)
 
                 new_version = await asyncio.to_thread(
                     ds.release,

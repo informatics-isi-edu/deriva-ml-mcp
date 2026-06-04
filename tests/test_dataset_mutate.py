@@ -198,7 +198,10 @@ async def test_add_dataset_members_with_list(dataset_ctx, capturing_mcp, mock_ml
     assert out["dataset_rid"] == "1-AAAA"
     assert out["new_version"] == "1.1.0"
     ds.add_dataset_members.assert_called_once_with(
-        members=["r1", "r2", "r3"], validate=True, description="adding three", execution_rid="EXEC-1"
+        members=["r1", "r2", "r3"],
+        validate=True,
+        description="adding three",
+        execution_rid="EXEC-1",
     )
     success = _success_calls(mock_audit, "deriva_ml_add_dataset_members")
     assert success
@@ -677,9 +680,7 @@ async def test_release_major(dataset_ctx, capturing_mcp, mock_ml):
 async def test_release_error_no_dev_period(dataset_ctx, capturing_mcp, mock_ml):
     """Releasing a dataset with no dev period surfaces the deriva-ml error."""
     ds = _make_dataset_mock("1-AAAA")
-    ds.release.side_effect = RuntimeError(
-        "Dataset 1-AAAA has no dev period to release"
-    )
+    ds.release.side_effect = RuntimeError("Dataset 1-AAAA has no dev period to release")
     mock_ml.lookup_dataset.return_value = ds
     with _patch_audit() as mock_audit:
         out = json.loads(

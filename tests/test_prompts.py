@@ -186,8 +186,8 @@ def test_render_primer_has_three_blocks():
     """The primer has a mandatory-core header, a manifest header, and a closing directive."""
     body = prompts._render_primer()
     assert "DERIVA-ML AGENT GUIDELINES" in body  # block 1 header
-    assert "ON-DEMAND GUIDES" in body            # block 2 header
-    assert "get_guide" in body                   # block 3 references on-demand fetch
+    assert "ON-DEMAND GUIDES" in body  # block 2 header
+    assert "get_guide" in body  # block 3 references on-demand fetch
 
 
 def test_get_guide_returns_plugin_guide_body(ctx, capturing_mcp):

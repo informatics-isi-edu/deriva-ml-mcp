@@ -35,13 +35,13 @@ def dataset_ctx(ctx, mock_ml):
         dataset_module.register(ctx)
         yield ctx
 
+
 # NOTE: cache_dataset tests were removed in v0.5.0 along with the
 # deriva_ml_cache_dataset tool. The denormalize_dataset tests below
 # transitively exercise cache_dataset via the library call inside
 # get_denormalized_as_dict, but the wire-level tool is gone.
 # See docs/audit-2026-05-23.md and the design note at
 # docs/superpowers/notes/2026-05-23-cache-denormalize-deprecation-design.md.
-
 
 
 # ---------------------------------------------------------------------------
@@ -286,4 +286,3 @@ async def test_denormalize_dataset_islice_bounds_generator_consumption(
     # Returned page is a real page of 5; islice consumed at most 6.
     assert out["returned_count"] == 5
     assert consumed["n"] <= 6, f"generator consumed {consumed['n']} times (expected ≤ 6)"
-

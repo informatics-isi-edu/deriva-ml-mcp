@@ -150,9 +150,7 @@ async def test_create_vocabulary_explicit_schema(vocabulary_ctx, capturing_mcp, 
     )
 
 
-async def test_create_vocabulary_failure_emits_failed_audit(
-    vocabulary_ctx, capturing_mcp, mock_ml
-):
+async def test_create_vocabulary_failure_emits_failed_audit(vocabulary_ctx, capturing_mcp, mock_ml):
     """Failure path: error envelope returned, failed-audit emitted, no success-audit."""
     mock_ml.create_vocabulary.side_effect = RuntimeError("Table Tissue_Type already exist")
 
