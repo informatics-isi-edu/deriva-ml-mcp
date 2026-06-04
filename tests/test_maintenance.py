@@ -259,3 +259,50 @@ async def test_resync_indexes_failure_returns_error_envelope_without_audit(
     assert "error" in payload
     assert "vector store down" in payload["error"]
     mock_audit.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# First-connect guard clearing (2026-06-04 bug report, Note 2)
+# ---------------------------------------------------------------------------
+#
+# The persistent first-connect guard in resources/rag.py would otherwise
+# suppress re-indexing on the next on_catalog_connect even after an explicit
+# manual re-index. These tools must clear the relevant guard entries so the
+# manual request takes effect AND the next connect re-runs.
+
+
+async def test_reindex_vocabularies_clears_vocab_guard(vocab_ctx, capturing_mcp):
+    """deriva_ml_reindex_vocabularies drops the (host, catalog) vocab guard entry."""
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    rag_module._reset_index_state()
+    rag_module._indexed_vocab_catalogs.add(("h.example", "1"))
+
+    with patch.object(rag_module, "_index_vocabularies", return_value={"deriva-ml.X": 1}):
+        await capturing_mcp.tools["deriva_ml_reindex_vocabularies"](
+            hostname="h.example", catalog_id="1"
+        )
+
+    assert ("h.example", "1") not in rag_module._indexed_vocab_catalogs
+
+
+async def test_resync_indexes_clears_user_guard(vocab_ctx, capturing_mcp):
+    """deriva_ml_resync_indexes drops the per-user-trio guard entries for the catalog."""
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    rag_module._reset_index_state()
+    rag_module._indexed_user_catalogs.update(
+        {
+            ("userA", "h.example", "1", "dataset"),
+            ("userA", "h.example", "1", "workflow"),
+            ("userA", "h.example", "2", "dataset"),  # other catalog -- preserved
+        }
+    )
+
+    counts = {"dataset": 1, "workflow": 0, "execution": 0}
+    with patch.object(rag_module, "_resync_user_sources", return_value=counts):
+        await capturing_mcp.tools["deriva_ml_resync_indexes"](hostname="h.example", catalog_id="1")
+
+    remaining = rag_module._indexed_user_catalogs
+    assert not any(k[1] == "h.example" and k[2] == "1" for k in remaining)
+    assert ("userA", "h.example", "2", "dataset") in remaining  # untouched
