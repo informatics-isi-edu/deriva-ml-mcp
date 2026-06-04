@@ -166,6 +166,20 @@ _WORKFLOW_TOKEN = "workflow"
 _EXECUTION_TOKEN = "execution"
 
 
+# Strong references to in-flight index-on-find background tasks. Without
+# this set the event loop may garbage-collect a pending task before it
+# runs (asyncio holds only a weak reference). Mirrors the
+# ``_connect_tasks`` pattern in deriva-mcp-core/tools/catalog.py.
+_on_find_tasks: set[asyncio.Task] = set()
+
+# Maps a per-user-trio table token to the *name* of the surgical
+# re-index coroutine that warms one row of that table. Storing the name
+# (not the function object) lets ``_index_rows_on_find`` resolve the
+# current module-level binding at call time, so ``patch.object`` on a
+# ``_reindex_*`` coroutine is honored. Used by ``_index_rows_on_find``.
+_REINDEX_BY_TOKEN: dict[str, str] = {}
+
+
 # ---------------------------------------------------------------------------
 # Row-rendering helpers
 # ---------------------------------------------------------------------------
@@ -590,6 +604,90 @@ async def _reindex_execution(hostname: str, catalog_id: str, execution_rid: str)
             catalog_id,
         )
         return 0
+
+
+_REINDEX_BY_TOKEN[_DATASET_TOKEN] = _reindex_dataset.__name__
+_REINDEX_BY_TOKEN[_WORKFLOW_TOKEN] = _reindex_workflow.__name__
+_REINDEX_BY_TOKEN[_EXECUTION_TOKEN] = _reindex_execution.__name__
+
+
+def _index_rows_on_find(
+    hostname: str,
+    catalog_id: str,
+    table_token: str,
+    rows: list[dict[str, Any]],
+    *,
+    rct_key: str = "rct",
+) -> None:
+    """Warm the calling user's per-RID RAG sources for rows just read.
+
+    Read-through (index-on-find) indexing: a list/get tool that just
+    fetched ``rows`` calls this to schedule a best-effort background
+    re-index of each row, so a later ``rag_search`` finds them. Rows are
+    warmed **newest-first** (descending ``rct_key``) so the most recently
+    created entities become searchable first.
+
+    Fire-and-forget: schedules one background task per row and returns
+    immediately. Never blocks the caller's response and never raises --
+    a missing event loop (import-time / sync test) is a silent no-op, and
+    each per-row reindex swallows its own errors (see ``_reindex_*``).
+
+    Args:
+        hostname: Deriva hostname.
+        catalog_id: Catalog ID or alias.
+        table_token: One of ``_DATASET_TOKEN`` / ``_WORKFLOW_TOKEN`` /
+            ``_EXECUTION_TOKEN``. Selects the per-row reindex coroutine.
+        rows: Summary-shape row dicts (must carry ``"rid"``). Rows
+            without a RID are skipped.
+        rct_key: Key holding each row's record-creation timestamp, used
+            only to order the warm newest-first. Rows missing the key
+            sort last (treated as oldest).
+
+    Returns:
+        None.
+
+    Example:
+        >>> _index_rows_on_find(  # doctest: +SKIP
+        ...     "host", "1", _DATASET_TOKEN,
+        ...     [{"rid": "1-AAAA", "rct": "2026-06-01T00:00:00+00:00"}],
+        ... )
+    """
+    reindex_name = _REINDEX_BY_TOKEN.get(table_token)
+    if reindex_name is None:
+        return
+    # Resolve the current module-level binding at call time (not the
+    # binding captured at import) so ``patch.object`` on a ``_reindex_*``
+    # coroutine -- as the tests and the per-tool call sites rely on -- is
+    # honored.
+    reindex_fn = globals()[reindex_name]
+    # Newest-first: rows with a later rct warm sooner. Missing/empty rct
+    # sorts last (empty string < any real ISO timestamp).
+    ordered = sorted(rows, key=lambda r: r.get(rct_key) or "", reverse=True)
+
+    async def _do() -> None:
+        for row in ordered:
+            rid = row.get("rid")
+            if not rid:
+                continue
+            try:
+                await reindex_fn(hostname, catalog_id, rid)
+            except Exception:  # noqa: BLE001 -- best-effort warm
+                logger.debug(
+                    "index-on-find reindex failed for %s %s in %s/%s",
+                    table_token,
+                    rid,
+                    hostname,
+                    catalog_id,
+                    exc_info=True,
+                )
+
+    try:
+        task = asyncio.get_running_loop().create_task(_do())
+        _on_find_tasks.add(task)
+        task.add_done_callback(_on_find_tasks.discard)
+    except RuntimeError:
+        # No running event loop (import-time, sync test) -- silent no-op.
+        pass
 
 
 async def _delete_dataset_source(hostname: str, catalog_id: str, dataset_rid: str) -> bool:
