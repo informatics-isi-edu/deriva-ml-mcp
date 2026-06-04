@@ -250,6 +250,7 @@ def register(ctx: PluginContext) -> None:
         after_rid: str | None = None,
         preflight_count: bool = False,
         sort: bool = False,
+        dataset_type: str | None = None,
     ) -> str:
         """Browse all datasets in the catalog with optional pagination.
 
@@ -307,6 +308,11 @@ def register(ctx: PluginContext) -> None:
                 creation time. Recommended for "show me the most
                 recent datasets" queries. Default False preserves the
                 stable RID-ascending order used for cursor pagination.
+            dataset_type: Optional ``Dataset_Type`` term. When set, only
+                datasets tagged with this type are returned (structured
+                filter -- prefer this over fuzzy ``rag_search`` when the
+                user names a type). Combine with a later ``rag_search``
+                for "Training datasets matching <description text>".
 
         Returns:
             Preflight:
@@ -355,6 +361,7 @@ def register(ctx: PluginContext) -> None:
                     limit=capped,
                     include_deleted=include_deleted,
                     sort=sort,
+                    dataset_type=dataset_type,
                 )
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:

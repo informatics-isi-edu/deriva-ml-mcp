@@ -185,6 +185,27 @@ def test_list_datasets_impl_dataset_type_none_returns_all() -> None:
     assert {d.rid for d in resp.datasets} == {"1-A", "1-B"}
 
 
+async def test_list_datasets_tool_forwards_dataset_type(dataset_ctx, capturing_mcp, mock_ml):
+    """``deriva_ml_list_datasets(dataset_type=...)`` forwards the filter to the impl."""
+    from deriva_ml_mcp_plugin._response_models import DatasetListResponse
+
+    seen: dict = {}
+
+    def spy(ml, **kwargs):
+        seen.update(kwargs)
+        return DatasetListResponse(datasets=[], count=0, truncated=False, next_after_rid=None)
+
+    with patch(
+        "deriva_ml_mcp_plugin.tools.dataset.read._list_datasets_impl",
+        side_effect=spy,
+    ):
+        await capturing_mcp.tools["deriva_ml_list_datasets"](
+            hostname="h", catalog_id="1", dataset_type="Training"
+        )
+
+    assert seen.get("dataset_type") == "Training"
+
+
 # ---------------------------------------------------------------------------
 # get_dataset
 # ---------------------------------------------------------------------------
