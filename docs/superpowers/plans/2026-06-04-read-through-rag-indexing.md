@@ -4,7 +4,7 @@
 
 **Goal:** Cut per-connection RAG startup overhead by replacing the three per-user bulk on-connect indexers (Dataset/Workflow/Execution) with read-through (index-on-find) indexing, while keeping vocabulary always-indexed on connect.
 
-**Architecture:** Remove only the `_make_hook` on-connect bulk-pass wiring. Add a fire-and-forget "index-on-find" helper that the dataset/workflow/execution list+get tools call after building their response, warming each returned row's per-user RAG source newest-first. Add client-side `dataset_type`/`workflow_type` filters to the dataset/workflow list helpers for a consistent structured-filter surface. The existing surgical `_reindex_*` writers, the `deriva_ml_resync_indexes` warm-button, and all vocabulary machinery stay.
+**Architecture:** Remove only the `_make_hook` on-connect bulk-pass wiring. Add a fire-and-forget "index-on-find" helper that the dataset/workflow/execution list+get tools call after building their response, warming each returned row's per-user RAG source (in the order the read returned them — see the post-Task-6 simplification that dropped the inert newest-first sort). Add client-side `dataset_type`/`workflow_type` filters to the dataset/workflow list helpers for a consistent structured-filter surface. The existing surgical `_reindex_*` writers, the `deriva_ml_resync_indexes` warm-button, and all vocabulary machinery stay.
 
 **Tech Stack:** Python 3 / asyncio, deriva-ml, deriva-mcp-core plugin API, Pydantic response models, pytest, `uv` for all tooling.
 
@@ -803,7 +803,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - Modify: `src/deriva_ml_mcp_plugin/tools/execution/read.py`
 - Test: `tests/test_execution.py` (the existing execution test module)
 
-Note: `ExecutionSummary` carries **no** creation-timestamp field (its fields are `rid`, `workflow_rid`, etc. — verified in `_response_models.py`). So the warm cannot sort executions newest-first from the summary; it warms them in the page order the tool already returns (which is RCT-desc when the caller passes `sort=True`, RID-asc otherwise). Pass no `rct_key` override — the helper's missing-key fallback ("all equal → stable order") is exactly right here. Newest-first warm ordering is realized at the page level via `sort=True`, not inside the warm.
+Note: the warm indexes rows in the order the read returned them (the `_index_rows_on_find` helper does NOT re-sort — the newest-first heuristic was dropped after Task 6 review as inert dead plumbing). So executions warm in whatever order the tool returned (RCT-desc when the caller passes `sort=True`, RID-asc otherwise). The call passes no ordering argument — just `(hostname, catalog_id, _EXECUTION_TOKEN, rows)`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -838,8 +838,6 @@ Then, after `payload` is built, before returning:
                         catalog_id,
                         _EXECUTION_TOKEN,
                         [e.model_dump(mode="json") for e in payload.executions],
-                        # No rct_key: ExecutionSummary has no timestamp field;
-                        # warm in the tool's returned page order.
                     )
                 except Exception:  # noqa: BLE001 -- warm is best-effort
                     logger.debug("index-on-find scheduling failed for list_executions", exc_info=True)
@@ -898,10 +896,12 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>" || echo "n
 
 ---
 
-## Task 10: Update CLAUDE.md + module docs to describe read-through indexing
+## Task 10: Update CLAUDE.md + module docs + user-facing prompt to describe read-through indexing
 
 **Files:**
 - Modify: `src/deriva_ml_mcp_plugin/resources/rag.py` (module docstring — if not already fully updated in Task 2)
+- Modify: `src/deriva_ml_mcp_plugin/plugin.py` (the `register` docstring around line 42 — describes the on_catalog_connect hooks)
+- Modify: `src/deriva_ml_mcp_plugin/prompts.py` (the RAG/indexing description around lines 974-983 — **user-visible**, ships to the LLM)
 - Modify: `CLAUDE.md` (repo root — the RAG/indexing description, if present)
 
 - [ ] **Step 1: Check CLAUDE.md for indexing claims**
@@ -909,15 +909,30 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>" || echo "n
 Run: `cd /Users/carl/GitHub/DerivaML/deriva-ml-mcp-plugin && grep -n "on_catalog_connect\|on connect\|bulk\|per-user\|index\|rag" CLAUDE.md`
 Identify any sentence stating the plugin bulk-indexes Dataset/Workflow/Execution rows on connect.
 
-- [ ] **Step 2: Update the wording**
+- [ ] **Step 2: Update CLAUDE.md wording**
 
 Edit those sentences to state: schema (core) + vocabulary index on connect; Dataset/Workflow/Execution rows index **read-through** (on create/mutate and on list/get/find), warmed newest-first; `deriva_ml_resync_indexes` remains the manual warm-everything button. Keep it to a few sentences — match CLAUDE.md's existing density.
+
+- [ ] **Step 3: Fix the stale `plugin.py` register docstring**
+
+Run: `cd /Users/carl/GitHub/DerivaML/deriva-ml-mcp-plugin && grep -n "on_catalog_connect\|first connect\|first-connect\|three.*hook\|Dataset, Workflow" src/deriva_ml_mcp_plugin/plugin.py`
+Around line 42 the `register` docstring says something like "three on_catalog_connect hooks for Dataset, Workflow, and Execution rows." Update it to: one vocab on_catalog_connect hook; Dataset/Workflow/Execution rows are indexed read-through (on list/get/find via `_index_rows_on_find` + surgically on create/mutate via `_reindex_*`), not on connect.
+
+- [ ] **Step 4: Fix the stale, user-visible `prompts.py` RAG description**
+
+Run: `cd /Users/carl/GitHub/DerivaML/deriva-ml-mcp-plugin && grep -n "first connect\|first-connect\|on connect\|Fresh on\|surgically refreshed\|RAG\|rag_search\|indexed" src/deriva_ml_mcp_plugin/prompts.py`
+Around lines 974-983 the prompt text describes Workflows/datasets/executions as "Fresh on first connect AND surgically refreshed…" and an execution-creation note pointing to "next first-connect." This text SHIPS TO THE LLM, so it must be accurate. Update it to describe read-through indexing: these rows become rag_search-able once they've been listed/fetched (which warms the index) or surgically on create/mutate; `deriva_ml_resync_indexes` warms everything on demand. Do NOT describe an on-connect bulk pass. Keep the wording concise and in the prompt's existing voice.
+
+- [ ] **Step 5: Verify no stale first-connect/bulk claims remain**
+
+Run: `cd /Users/carl/GitHub/DerivaML/deriva-ml-mcp-plugin && grep -rn "first connect\|first-connect\|bulk path\|bulk index\|on_catalog_connect.*Dataset\|three.*on_catalog_connect" src/deriva_ml_mcp_plugin`
+Expected: no remaining claim that Dataset/Workflow/Execution rows are bulk-indexed on connect. (The vocab hook IS on connect — that's correct and may still be described as such.)
 
 - [ ] **Step 3: Commit**
 
 ```bash
 cd /Users/carl/GitHub/DerivaML/deriva-ml-mcp-plugin
-git add CLAUDE.md src/deriva_ml_mcp_plugin/resources/rag.py
+git add CLAUDE.md src/deriva_ml_mcp_plugin/resources/rag.py src/deriva_ml_mcp_plugin/plugin.py src/deriva_ml_mcp_plugin/prompts.py
 git commit -m "docs: describe read-through RAG indexing model
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
@@ -933,6 +948,6 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ## Self-Review Notes
 
-- **Spec coverage:** drop bulk hooks (Task 2 ✓), keep vocab on connect (untouched ✓), index-on-find helper + newest-first (Task 1 ✓), wire list+get for all three entities (Tasks 6/7/8 ✓), `dataset_type`/`workflow_type` filters (Tasks 3/4/5 ✓), keep `deriva_ml_resync_indexes` + machinery (Task 2 keeps `_fetch_*_rows`/`_resync_*` ✓), keep serializers/`_reindex_*` (Task 2 ✓), docs (Task 10 ✓), skill follow-on flagged out-of-scope ✓.
-- **Type consistency:** `_index_rows_on_find(hostname, catalog_id, table_token, rows, *, rct_key)` used identically in Tasks 1/6/7/8; token constants `_DATASET_TOKEN`/`_WORKFLOW_TOKEN`/`_EXECUTION_TOKEN` referenced consistently; `_REINDEX_BY_TOKEN` maps them to the existing `_reindex_*` coroutines.
+- **Spec coverage:** drop bulk hooks (Task 2 ✓), keep vocab on connect (untouched ✓), index-on-find helper (Task 1 ✓; the newest-first sort was added then removed as inert — warm follows the read's returned order), wire list+get for all three entities (Tasks 6/7/8 ✓), `dataset_type`/`workflow_type` filters (Tasks 3/4/5 ✓), keep `deriva_ml_resync_indexes` + machinery (Task 2 keeps `_fetch_*_rows`/`_resync_*` ✓), keep serializers/`_reindex_*` (Task 2 ✓), docs (Task 10 ✓), skill follow-on flagged out-of-scope ✓.
+- **Type consistency:** `_index_rows_on_find(hostname, catalog_id, table_token, rows)` used identically in Tasks 1/6/7/8 (no `rct_key` — dropped post-Task-6); token constants `_DATASET_TOKEN`/`_WORKFLOW_TOKEN`/`_EXECUTION_TOKEN` referenced consistently; `_REINDEX_BY_TOKEN` maps them to the existing `_reindex_*` coroutines.
 - **Known adaptation points (flagged inline, not placeholders):** exact test-fixture names (`dataset_ctx`/`capturing_mcp`/`mock_ml`) and the execution summary's RCT field name must be read from the existing test files / source at implementation time — each such step says so explicitly and gives the grep to find it.

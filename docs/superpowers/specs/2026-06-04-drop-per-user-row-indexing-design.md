@@ -97,30 +97,34 @@ Re-warming the same rows on every list is acceptable; if profiling shows
 it matters, add a short per-process (host,cat,user,rid) seen-set to skip
 recently-indexed RIDs — deferred until measured.
 
-### Newest-first background warm order
+### Background warm order: follow the read, don't re-sort
 
 The index fills incrementally in the background: `store.add` offloads
 the ONNX embedding via `asyncio.to_thread`
 ([core store.py](../../../../deriva-mcp-core/src/deriva_mcp_core/rag/store.py))
 and the writer adds in batches, so each row becomes `rag_search`-able as
-soon as *its* write lands — not after the whole set finishes. Because
-the warm is a stream of per-row writes, **feed order decides what
-becomes searchable first.**
+soon as *its* write lands — not after the whole set finishes.
 
-The index-on-find path therefore warms **newest-first** (record-creation
-time descending). `_list_executions_impl` already exposes this via its
-`sort=True` mode (forwards to `find_executions(sort=True)`); the
-dataset/workflow impls get the equivalent. Rationale: find-before-create
-and "find that recent run" queries target recent entities, so newest-
-first makes the most-likely-queried rows searchable within the first
-batch while the older backlog trickles in behind.
+The warm indexes rows **in the order the read returned them** — it does
+NOT impose its own sort. An earlier draft of this design had the warm
+re-sort newest-first (record-creation descending) as a heuristic to make
+recently-created rows searchable first during the brief request/index
+overlap window. That heuristic is **dropped**: (1) "most recent = most
+relevant" is false for the dominant use case (find-before-create matches
+*semantic similarity*, where row age is irrelevant); (2) a single list
+page warms in seconds, so the ordering only affects which rows are
+searchable in the first second vs. the next few — a narrow, low-value
+window; and (3) no summary model carries a record-creation timestamp, so
+the sort was inert anyway. Removing it deletes dead plumbing (`rct_key`)
+rather than adding a wire-shape field to honor a questionable heuristic.
 
-Decoupling rule: the read tool's **returned page** keeps its caller-
-requested order and cursor-pagination semantics (default `sort=False`,
-RID-ascending — the stable-cursor contract). The **background index
-write** sorts newest-first independently of what the caller sees. The
-two never interfere: the user's list output is byte-identical to today;
-only the embed order changes.
+If a caller genuinely wants recent-first overlap, the read already
+supports it: `deriva_ml_list_*` exposes `sort=True` (RCT-descending page
+order), and the warm follows whatever order the page came in. So the
+recency preference lives at the call site, where the user's intent
+actually is — not hardcoded in the indexer. The read's default order
+(RID-ascending, the stable-cursor contract) is unchanged; the warm
+simply mirrors the returned page.
 
 ### What is removed
 
