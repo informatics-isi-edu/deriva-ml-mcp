@@ -368,8 +368,9 @@ def register(ctx: PluginContext) -> None:
                 )
                 # Read-through indexing: warm the per-user RAG sources for
                 # the rows we just returned so a later rag_search finds
-                # them (newest-first). Fire-and-forget; never blocks or
-                # fails the read. Lazy import avoids the rag<->tools cycle.
+                # them (in the order the read returned them). Fire-and-forget;
+                # never blocks or fails the read. Lazy import avoids the
+                # rag<->tools cycle.
                 try:
                     from deriva_ml_mcp_plugin.resources.rag import (
                         _DATASET_TOKEN,

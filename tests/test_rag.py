@@ -1160,17 +1160,13 @@ def test_resync_user_sources_skips_rows_with_empty_rid() -> None:
 
 
 def test_index_rows_on_find_schedules_reindex_per_rid() -> None:
-    """``_index_rows_on_find`` fires one reindex coroutine per row, newest-first."""
+    """``_index_rows_on_find`` fires one reindex coroutine per row, in given order."""
     import asyncio
     from unittest.mock import AsyncMock, patch
 
     from deriva_ml_mcp_plugin.resources import rag as rag_module
 
-    # Rows as the list impls produce them (RID + an RCT for sort order).
-    rows = [
-        {"rid": "1-OLD", "rct": "2026-01-01T00:00:00+00:00"},
-        {"rid": "1-NEW", "rct": "2026-06-01T00:00:00+00:00"},
-    ]
+    rows = [{"rid": "1-AAAA"}, {"rid": "1-BBBB"}]
     calls: list[str] = []
 
     async def fake_reindex(hostname, catalog_id, rid):
@@ -1179,14 +1175,13 @@ def test_index_rows_on_find_schedules_reindex_per_rid() -> None:
 
     async def run() -> None:
         with patch.object(rag_module, "_reindex_dataset", new=AsyncMock(side_effect=fake_reindex)):
-            rag_module._index_rows_on_find("h", "1", rag_module._DATASET_TOKEN, rows, rct_key="rct")
-            # Let the scheduled background tasks run to completion.
+            rag_module._index_rows_on_find("h", "1", rag_module._DATASET_TOKEN, rows)
             await asyncio.gather(*rag_module._on_find_tasks)
 
     asyncio.run(run())
 
-    # Both RIDs indexed, newest-first (1-NEW before 1-OLD).
-    assert calls == ["1-NEW", "1-OLD"]
+    # Indexed in the order given (no re-sorting).
+    assert calls == ["1-AAAA", "1-BBBB"]
 
 
 def test_index_rows_on_find_swallows_reindex_errors() -> None:
@@ -1196,12 +1191,12 @@ def test_index_rows_on_find_swallows_reindex_errors() -> None:
 
     from deriva_ml_mcp_plugin.resources import rag as rag_module
 
-    rows = [{"rid": "1-AAAA", "rct": "2026-01-01T00:00:00+00:00"}]
+    rows = [{"rid": "1-AAAA"}]
 
     async def run() -> None:
         boom = AsyncMock(side_effect=RuntimeError("rag boom"))
         with patch.object(rag_module, "_reindex_dataset", new=boom):
-            rag_module._index_rows_on_find("h", "1", rag_module._DATASET_TOKEN, rows, rct_key="rct")
+            rag_module._index_rows_on_find("h", "1", rag_module._DATASET_TOKEN, rows)
             # gather must not raise even though the reindex raised.
             await asyncio.gather(*rag_module._on_find_tasks, return_exceptions=True)
 
@@ -1213,6 +1208,4 @@ def test_index_rows_on_find_no_running_loop_is_noop() -> None:
     from deriva_ml_mcp_plugin.resources import rag as rag_module
 
     # Not inside asyncio.run -> no running loop. Must not raise.
-    rag_module._index_rows_on_find(
-        "h", "1", rag_module._DATASET_TOKEN, [{"rid": "1-AAAA"}], rct_key="rct"
-    )
+    rag_module._index_rows_on_find("h", "1", rag_module._DATASET_TOKEN, [{"rid": "1-AAAA"}])

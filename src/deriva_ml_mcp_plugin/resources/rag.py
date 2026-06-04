@@ -620,16 +620,14 @@ def _index_rows_on_find(
     catalog_id: str,
     table_token: str,
     rows: list[dict[str, Any]],
-    *,
-    rct_key: str = "rct",
 ) -> None:
     """Warm the calling user's per-RID RAG sources for rows just read.
 
     Read-through (index-on-find) indexing: a list/get tool that just
     fetched ``rows`` calls this to schedule a best-effort background
     re-index of each row, so a later ``rag_search`` finds them. Rows are
-    warmed **newest-first** (descending ``rct_key``) so the most recently
-    created entities become searchable first.
+    indexed in the order given (the order the read returned them) -- no
+    re-sorting.
 
     Fire-and-forget: schedules one background task per row and returns
     immediately. Never blocks the caller's response and never raises --
@@ -643,17 +641,13 @@ def _index_rows_on_find(
             ``_EXECUTION_TOKEN``. Selects the per-row reindex coroutine.
         rows: Summary-shape row dicts (must carry ``"rid"``). Rows
             without a RID are skipped.
-        rct_key: Key holding each row's record-creation timestamp, used
-            only to order the warm newest-first. Rows missing the key
-            sort last (treated as oldest).
 
     Returns:
         None.
 
     Example:
         >>> _index_rows_on_find(  # doctest: +SKIP
-        ...     "host", "1", _DATASET_TOKEN,
-        ...     [{"rid": "1-AAAA", "rct": "2026-06-01T00:00:00+00:00"}],
+        ...     "host", "1", _DATASET_TOKEN, [{"rid": "1-AAAA"}],
         ... )
     """
     reindex_name = _REINDEX_BY_TOKEN.get(table_token)
@@ -664,12 +658,9 @@ def _index_rows_on_find(
     # coroutine -- as the tests and the per-tool call sites rely on -- is
     # honored.
     reindex_fn = globals()[reindex_name]
-    # Newest-first: rows with a later rct warm sooner. Missing/empty rct
-    # sorts last (empty string < any real ISO timestamp).
-    ordered = sorted(rows, key=lambda r: r.get(rct_key) or "", reverse=True)
 
     async def _do() -> None:
-        for row in ordered:
+        for row in rows:
             rid = row.get("rid")
             if not rid:
                 continue
