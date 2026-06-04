@@ -259,3 +259,28 @@ async def test_resync_indexes_failure_returns_error_envelope_without_audit(
     assert "error" in payload
     assert "vector store down" in payload["error"]
     mock_audit.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# First-connect guard clearing (2026-06-04 bug report, Note 2)
+# ---------------------------------------------------------------------------
+#
+# The persistent vocab first-connect guard in resources/rag.py would otherwise
+# suppress re-indexing on the next on_catalog_connect even after an explicit
+# manual re-index. The vocab tool must clear the (host, catalog) guard entry so
+# the manual request takes effect AND the next connect re-runs.
+
+
+async def test_reindex_vocabularies_clears_vocab_guard(vocab_ctx, capturing_mcp):
+    """deriva_ml_reindex_vocabularies drops the (host, catalog) vocab guard entry."""
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    rag_module._reset_index_state()
+    rag_module._indexed_vocab_catalogs.add(("h.example", "1"))
+
+    with patch.object(rag_module, "_index_vocabularies", return_value={"deriva-ml.X": 1}):
+        await capturing_mcp.tools["deriva_ml_reindex_vocabularies"](
+            hostname="h.example", catalog_id="1"
+        )
+
+    assert ("h.example", "1") not in rag_module._indexed_vocab_catalogs

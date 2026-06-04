@@ -39,6 +39,24 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_first_connect_guard():
+    """Reset the module-global vocab first-connect guard before every test.
+
+    The persistent vocab guard (``_indexed_vocab_catalogs`` + its locks)
+    lives per-server-lifetime, i.e. module-global. Without a reset, a
+    vocab-hook-firing test leaks an "already indexed" entry into the next
+    test, which would then see its hook skip and fail. Autouse so every
+    test starts from a clean guard regardless of whether it touches the
+    hook.
+    """
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    rag_module._reset_index_state()
+    yield
+    rag_module._reset_index_state()
+
+
 # Hook registration order in register_rag_sources(ctx): the vocabulary
 # hook is the only on_catalog_connect callback (v1.5 removed the three
 # per-user bulk hooks). Tests pull it via index rather than by name
@@ -667,6 +685,219 @@ def test_vocab_hook_swallows_index_exception() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 9b. First-connect guard -- catalog-connect re-firings must not re-index
+# ---------------------------------------------------------------------------
+#
+# Cold-start regression (2026-06-04): a single user's bootstrapping sequence
+# fires several catalog-touching tool calls (get_catalog_info, two get_schema
+# calls), each independently triggering on_catalog_connect. In stateless_http
+# mode core's per-(host, catalog, user) connect dedup does not reliably hold
+# across them (sequential re-fires when the prior schema-fetch errored and
+# discarded the key; concurrent re-fires when calls interleave). Without a
+# guard the full hook set ran on EVERY connect: every vocab + every per-user
+# row re-fetched and re-embedded. The ICD10_Eye vocab (1209 terms) re-embedded
+# each time; the passes fought the GIL with rag_search's own query embedding
+# -- ~60-261s first-turn latency, 97% CPU.
+#
+# The guard (per the 2026-06-04 bug report) has two layers:
+#   1. A per-server-lifetime "already indexed" set: once a work unit has been
+#      indexed it is NOT re-indexed on any later connect until server restart.
+#      This is the documented "first connect per server lifetime" intent.
+#   2. A per-key asyncio.Lock with double-checked membership: concurrent
+#      firings serialize on the lock; the winner indexes and records the unit
+#      in the set; waiters re-check the set after acquiring and skip.
+# Manual re-index tools (deriva_ml_reindex_vocabularies / resync_indexes) clear
+# the relevant set entries so an explicit re-index still runs.
+#
+# Work units:
+#   vocab pass         -> (host, catalog)
+#   per-user-trio hook -> (user_id, host, catalog, table_token)
+
+
+def _make_gate():
+    """Build an awaitable gate the test releases manually.
+
+    Returns (started_event, release_event, body) where ``body`` is an async
+    callable that signals it has started, then blocks until ``release`` is set.
+    Used to hold the first hook run open while a second concurrent run is
+    dispatched, so we can assert the second observes the in-progress lock.
+    """
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def body(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return {}
+
+    return started, release, body
+
+
+def test_vocab_hook_skips_second_sequential_connect() -> None:
+    """A second SEQUENTIAL vocab-hook firing for the same catalog skips re-indexing.
+
+    This is the core of the persistent-guard fix: once a catalog's vocabs are
+    indexed this server lifetime, a later connect (the user re-opening the
+    chatbot, or the next bootstrapping tool call) must NOT re-run the pass.
+    """
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    fake_index = AsyncMock(return_value={})
+    with patch.object(rag_module, "_index_vocabularies", new=fake_index):
+        rag_module._reset_index_state()
+        hook = _hook_at(_VOCAB_HOOK_IDX)
+        _run(hook("h.example", "1", "hash", {}))
+        _run(hook("h.example", "1", "hash", {}))
+        _run(hook("h.example", "1", "hash", {}))
+
+    # Only the first of the three sequential firings ran the pass.
+    assert fake_index.await_count == 1
+
+
+def test_vocab_hook_skips_when_same_catalog_already_indexing() -> None:
+    """A second CONCURRENT vocab-hook firing for the same catalog runs the pass only once.
+
+    The first firing holds the per-catalog lock open mid-pass; while it is in
+    flight a second firing for the SAME (host, catalog) is dispatched. The
+    second serializes on the lock, and after acquiring it re-checks the
+    already-indexed set (now populated by the first) and returns WITHOUT calling
+    _index_vocabularies a second time.
+    """
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    started, release, body = _make_gate()
+    fake_index = AsyncMock(side_effect=body)
+
+    async def scenario() -> None:
+        hook = _hook_at(_VOCAB_HOOK_IDX)
+        first = asyncio.create_task(hook("h.example", "1", "hash", {}))
+        await started.wait()  # first run is now inside the lock, blocked mid-pass
+        # Second concurrent firing for the same catalog -- dispatched as a task
+        # because it will BLOCK on the lock the first run holds (wait-then-skip,
+        # not busy-return). Release the gate so the first finishes and records
+        # the unit; the second then acquires, re-checks the set, and skips.
+        second = asyncio.create_task(hook("h.example", "1", "hash", {}))
+        await asyncio.sleep(0)  # let the second task reach the lock acquire
+        release.set()
+        await asyncio.gather(first, second)
+
+    with patch.object(rag_module, "_index_vocabularies", new=fake_index):
+        rag_module._reset_index_state()  # isolate from other tests' state
+        _run(scenario())
+
+    # Only the first firing ran the index pass; the second skipped post-lock.
+    assert fake_index.await_count == 1
+
+
+def test_vocab_hook_does_not_skip_different_catalog() -> None:
+    """Firings for DIFFERENT catalogs both run (guard is per (host, catalog))."""
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    fake_index = AsyncMock(return_value={})
+    with patch.object(rag_module, "_index_vocabularies", new=fake_index):
+        rag_module._reset_index_state()
+        hook = _hook_at(_VOCAB_HOOK_IDX)
+        _run(hook("h.example", "1", "hash", {}))
+        _run(hook("h.example", "2", "hash", {}))
+
+    assert fake_index.await_count == 2
+
+
+def test_vocab_hook_failed_pass_not_marked_indexed() -> None:
+    """If the index pass raises, the catalog is NOT recorded as indexed.
+
+    A failed first-connect must be retryable on the next connect -- otherwise a
+    transient catalog error would permanently strand the catalog's vocab index
+    until server restart.
+    """
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    fake_index = AsyncMock(side_effect=RuntimeError("boom"))
+    with patch.object(rag_module, "_index_vocabularies", new=fake_index):
+        rag_module._reset_index_state()
+        hook = _hook_at(_VOCAB_HOOK_IDX)
+        _run(hook("h.example", "1", "hash", {}))  # raises internally, swallowed
+        # Second connect must RETRY because the first did not complete.
+        fake_index.side_effect = None
+        fake_index.return_value = {}
+        _run(hook("h.example", "1", "hash", {}))
+
+    assert fake_index.await_count == 2
+
+
+def test_reindex_execution_logs_concise_message_for_legacy_status_valueerror(caplog) -> None:
+    """A ValueError on lookup (legacy/unknown ExecutionStatus) logs concisely.
+
+    Per the 2026-06-04 bug report: an Execution row whose catalog Status is not
+    in deriva-ml's ExecutionStatus enum makes ``lookup_execution`` raise
+    ValueError. In the read-through model this surfaces in ``_reindex_execution``
+    (the execution read/warm path). It must catch the ValueError specifically and
+    log a clear, actionable single line WITHOUT a full traceback (it recurs on
+    every read of the stale row), distinct from the generic ``except Exception``
+    that logs a stack dump. The row is skipped (returns 0), not crashed.
+    """
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    fake_ml = MagicMock()
+    fake_ml.lookup_execution.side_effect = ValueError(
+        "'Completed' is not a valid ExecutionStatus"
+    )
+
+    with (
+        patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
+        patch.object(rag_module, "get_ml", return_value=fake_ml),
+        patch.object(rag_module, "resolve_user_identity", return_value="userA"),
+        caplog.at_level("WARNING", logger="deriva_ml_mcp_plugin.resources.rag"),
+    ):
+        # Must not raise; row is skipped.
+        n = _run(rag_module._reindex_execution("h.example", "1", "1-EXAA"))
+
+    assert n == 0
+
+    # Find the record for this failure.
+    recs = [
+        r
+        for r in caplog.records
+        if "Completed" in r.getMessage() or "status" in r.getMessage().lower()
+    ]
+    assert recs, "expected a log record naming the legacy-status failure"
+    rec = recs[0]
+    # Concise: WARNING level, no traceback attached (logger.exception sets exc_info).
+    assert rec.levelname == "WARNING"
+    assert rec.exc_info is None, "legacy-status failure should NOT log a full traceback"
+    # Actionable: names the legacy status + the cause.
+    msg = rec.getMessage()
+    assert "Execution" in msg
+    assert "Completed" in msg or "ExecutionStatus" in msg
+
+
+# ---------------------------------------------------------------------------
+# 9c. Guard-clearing helper (manual vocab re-index must re-run after the guard)
+# ---------------------------------------------------------------------------
+
+
+def test_clear_vocab_indexed_allows_reconnect_reindex() -> None:
+    """After _clear_vocab_indexed, a subsequent vocab-hook connect re-runs the pass."""
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    fake_index = AsyncMock(return_value={})
+    with patch.object(rag_module, "_index_vocabularies", new=fake_index):
+        rag_module._reset_index_state()
+        hook = _hook_at(_VOCAB_HOOK_IDX)
+        _run(hook("h.example", "1", "hash", {}))  # indexes, sets guard
+        _run(hook("h.example", "1", "hash", {}))  # skipped by guard
+        assert fake_index.await_count == 1
+        rag_module._clear_vocab_indexed("h.example", "1")  # explicit re-index path
+        _run(hook("h.example", "1", "hash", {}))  # guard cleared -> runs again
+
+    assert fake_index.await_count == 2
+
+
+# (Tool-level guard-clearing tests live in test_maintenance.py, alongside the
+# vocab_ctx / capturing_mcp fixtures that drive the maintenance tools.)
+
+
+# ---------------------------------------------------------------------------
 # 10. _write_vocab_chunks delete-then-add semantics
 # ---------------------------------------------------------------------------
 
@@ -1131,6 +1362,49 @@ def test_resync_user_sources_fetcher_failure_skips_table_but_continues_others(ca
     # (The "dataset fetch boom" RuntimeError text lives in the traceback
     # via logger.exception, not in record.message itself.)
     assert any("failed to enumerate datasets" in record.message for record in caplog.records)
+
+
+def test_resync_one_table_legacy_status_valueerror_logs_concise(caplog) -> None:
+    """A ValueError at the bulk fetch boundary logs concisely and skips that table.
+
+    The resync bulk path (``_fetch_execution_rows`` -> ``find_executions()``)
+    materializes lookup_execution per row, so ONE legacy-status row raises
+    ValueError that aborts the whole table fetch. ``_resync_one_table`` must
+    catch the ValueError specifically and log a clear, actionable single line
+    WITHOUT a full traceback (distinct from the generic ``except Exception`` that
+    logs a stack dump), then return 0 -- skipping that table gracefully rather
+    than propagating or spamming a stack dump on every resync.
+    """
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    def boom(host, cat):
+        raise ValueError("'Completed' is not a valid ExecutionStatus")
+
+    fake_reindex = AsyncMock(return_value=1)
+    with caplog.at_level("WARNING", logger="deriva_ml_mcp_plugin.resources.rag"):
+        count = _run(
+            rag_module._resync_one_table("h.example", "1", "execution", boom, fake_reindex)
+        )
+
+    # Table skipped gracefully -- no rows reindexed, no propagation.
+    assert count == 0
+    fake_reindex.assert_not_awaited()
+
+    # Find the record for this failure.
+    recs = [
+        r
+        for r in caplog.records
+        if "Completed" in r.getMessage() or "status" in r.getMessage().lower()
+    ]
+    assert recs, "expected a log record naming the legacy-status failure"
+    rec = recs[0]
+    # Concise: WARNING level, no traceback attached (logger.exception sets exc_info).
+    assert rec.levelname == "WARNING"
+    assert rec.exc_info is None, "legacy-status failure should NOT log a full traceback"
+    # Actionable: names the table + the legacy-status cause.
+    msg = rec.getMessage()
+    assert "execution" in msg
+    assert "Completed" in msg or "ExecutionStatus" in msg
 
 
 def test_resync_user_sources_skips_rows_with_empty_rid() -> None:

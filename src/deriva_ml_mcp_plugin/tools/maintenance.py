@@ -113,9 +113,16 @@ def register(ctx: PluginContext) -> None:
                 # Imported lazily so module import time stays cheap and
                 # so test patches of ``rag._index_vocabularies`` reach
                 # this call site cleanly.
-                from deriva_ml_mcp_plugin.resources.rag import _index_vocabularies
+                from deriva_ml_mcp_plugin.resources.rag import (
+                    _clear_vocab_indexed,
+                    _index_vocabularies,
+                )
 
                 indexed = await _index_vocabularies(hostname, catalog_id, only_vocab=vocab)
+                # Drop the first-connect guard entry so the next
+                # on_catalog_connect re-runs the bulk pass too -- an explicit
+                # re-index implies the indexed content is stale.
+                _clear_vocab_indexed(hostname, catalog_id)
             return ReindexVocabulariesResponse(reindexed=indexed).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(

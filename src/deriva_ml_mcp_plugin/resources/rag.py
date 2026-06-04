@@ -138,6 +138,72 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# First-connect guard (cold-start regression fix, 2026-06-04 bug report)
+# ---------------------------------------------------------------------------
+#
+# The vocab ``on_catalog_connect`` hook fires as a background task
+# (deriva-mcp-core's ``_dispatch_catalog_connect`` schedules one
+# ``asyncio.create_task`` per hook). A single user's bootstrapping sequence
+# fires several catalog-touching tool calls (``get_catalog_info``, then two
+# ``get_schema`` calls), each independently triggering ``on_catalog_connect``.
+# In ``stateless_http`` mode core's per-``(host, catalog, user)`` connect dedup
+# does not reliably hold across them: it re-fires sequentially when a prior
+# schema-fetch errored and discarded the dedup key, and it re-fires concurrently
+# when calls interleave at ``get_catalog()`` before any adds the key. Without a
+# guard the vocab pass ran on EVERY connect, re-fetching and re-embedding every
+# vocab. The ICD10_Eye vocab (1209 terms) re-embedded each time; the passes
+# fought the GIL with ``rag_search``'s own query embedding -- 60-261s first-turn
+# latency, 97% CPU.
+#
+# The fix (per the bug report) is a TWO-LAYER guard, matching the documented
+# "first catalog connect per server lifetime indexes all vocabs in bulk" intent
+# that the code previously failed to enforce:
+#
+#   1. A per-server-lifetime "already indexed" SET. Once a work unit has been
+#      indexed it is NOT re-indexed on any later connect until server restart.
+#      Cleared only by an explicit re-index tool (see _clear_* below) or restart.
+#   2. A per-work-unit ``asyncio.Lock`` with DOUBLE-CHECKED membership.
+#      Concurrent firings serialize on the lock; the winner runs the pass and
+#      records the unit in the set; waiters re-check the set after acquiring the
+#      lock and skip. The check + ``async with`` is race-free under asyncio
+#      cooperative scheduling -- no context switch between them.
+#
+# The guard lives on the vocab HOOK only, never on ``_index_vocabularies``
+# directly: that backs the explicit ``deriva_ml_reindex_vocabularies`` tool,
+# which is a deliberate user request that must always run. That tool instead
+# CLEARS the relevant guard entry (``_clear_vocab_indexed``) so a subsequent
+# connect re-indexes too.
+#
+# A FAILED pass is not recorded in the set, so a transient catalog error stays
+# retryable on the next connect rather than stranding the catalog until restart.
+#
+# Work-unit key:
+#   vocab pass -> ``(host, catalog)``
+_indexed_vocab_catalogs: set[tuple[str, str]] = set()
+_vocab_connect_locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+
+def _reset_index_state() -> None:
+    """Drop all first-connect guard state (set + locks). Test-only isolation hook.
+
+    The guard registries are module-global and per-server-lifetime in
+    production; tests call this to start each scenario from a clean slate.
+    """
+    _indexed_vocab_catalogs.clear()
+    _vocab_connect_locks.clear()
+
+
+def _clear_vocab_indexed(hostname: str, catalog_id: str) -> None:
+    """Forget that ``(hostname, catalog_id)`` vocabs were indexed this lifetime.
+
+    Called by ``deriva_ml_reindex_vocabularies`` so an explicit re-index request
+    is honored AND so the next ``on_catalog_connect`` re-runs the bulk pass
+    (otherwise the persistent guard would suppress it).
+    """
+    _indexed_vocab_catalogs.discard((hostname, catalog_id))
+
+
 _GITHUB_DOCS_NAME = "deriva-ml-docs"
 _GITHUB_DOCS_OWNER = "informatics-isi-edu"
 _GITHUB_DOCS_REPO = "deriva-ml"
@@ -600,6 +666,27 @@ async def _reindex_execution(hostname: str, catalog_id: str, execution_rid: str)
         user_id = await asyncio.to_thread(resolve_user_identity, hostname)
         source = _row_source_name(hostname, catalog_id, user_id, _EXECUTION_TOKEN, execution_rid)
         return await _write_row_chunk(store, source, _EXECUTION_TABLE, row, _ExecutionSerializer())
+    except ValueError as exc:
+        # A ValueError here is almost always a catalog row carrying a value
+        # deriva-ml's enums can't parse -- most commonly a legacy
+        # Execution.Status (e.g. "Completed") that predates the current
+        # ExecutionStatus set. ``lookup_execution`` raises it while parsing the
+        # row, so this single execution can't be indexed. This recurs on every
+        # read of that row, so log a CONCISE, actionable single line (no
+        # traceback) rather than spamming a stack dump. Fix is catalog-data: map
+        # the legacy value to a current enum term. The row is skipped, not
+        # crashed -- it warms once the data is corrected.
+        logger.warning(
+            "deriva-ml RAG: skipping execution %s in %s/%s -- the row holds a "
+            "value deriva-ml cannot parse (likely a legacy Execution.Status / "
+            "ExecutionStatus enum mismatch): %s. Fix the catalog row's value to "
+            "a current enum term.",
+            execution_rid,
+            hostname,
+            catalog_id,
+            exc,
+        )
+        return 0
     except Exception:  # noqa: BLE001 -- best-effort cache refresh
         logger.exception(
             "deriva-ml RAG: surgical re-index failed for execution %s in %s/%s",
@@ -856,6 +943,29 @@ async def _resync_one_table(
         # worker thread so the event loop is not blocked while the
         # full table is enumerated.
         rows = await asyncio.to_thread(fetch_fn, hostname, catalog_id)
+    except ValueError as exc:
+        # A ValueError at the fetch boundary is almost always a catalog row
+        # carrying a value deriva-ml's enums can't parse -- most commonly a
+        # legacy Execution.Status (e.g. "Completed") that predates the current
+        # ExecutionStatus set. ``find_executions()`` materializes lookup_execution
+        # per row, so ONE such row aborts the whole table fetch. (This boundary
+        # is generic across dataset/workflow/execution; only the execution
+        # fetcher realistically raises it.) Log a CONCISE, actionable single line
+        # (no traceback) instead of a stack dump -- the row recurs on every
+        # resync. Fix is catalog-data: map the legacy value to a current enum
+        # term. Skip this table's resync gracefully, like the fetcher-failure
+        # branch below.
+        logger.warning(
+            "deriva-ml RAG: skipping %s resync in %s/%s -- a row holds a value "
+            "deriva-ml cannot parse (likely a legacy Execution.Status / "
+            "ExecutionStatus enum mismatch): %s. Fix the catalog row's value to "
+            "a current enum term.",
+            table_label,
+            hostname,
+            catalog_id,
+            exc,
+        )
+        return 0
     except Exception:  # noqa: BLE001 -- best-effort, log + continue
         logger.exception(
             "deriva-ml RAG: failed to enumerate %ss for resync in %s/%s",
@@ -1054,14 +1164,29 @@ def _make_vocab_hook() -> Callable[[str, str, str, dict], Awaitable[None]]:
         schema_hash: str,  # noqa: ARG001 -- hook signature requires it
         schema_json: dict,  # noqa: ARG001 -- hook signature requires it
     ) -> None:
-        try:
-            await _index_vocabularies(hostname, catalog_id)
-        except Exception:  # noqa: BLE001 -- vocab discovery is best-effort
-            logger.exception(
-                "deriva-ml RAG: vocab index pass failed for %s/%s",
-                hostname,
-                catalog_id,
-            )
+        # Two-layer first-connect guard (see the _indexed_vocab_catalogs comment
+        # block). Vocab content is catalog-public (no per-user partition), so the
+        # work unit is just (host, catalog). This is the single most expensive
+        # cold-start pass -- the ICD10_Eye vocab alone is 1209 embedded terms --
+        # so suppressing redundant re-runs here removes most of the regression.
+        key = (hostname, catalog_id)
+        if key in _indexed_vocab_catalogs:
+            return
+        lock = _vocab_connect_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            if key in _indexed_vocab_catalogs:  # re-check after acquiring the lock
+                return
+            try:
+                await _index_vocabularies(hostname, catalog_id)
+                # Record only after a successful pass so a transient failure
+                # stays retryable on the next connect.
+                _indexed_vocab_catalogs.add(key)
+            except Exception:  # noqa: BLE001 -- vocab discovery is best-effort
+                logger.exception(
+                    "deriva-ml RAG: vocab index pass failed for %s/%s",
+                    hostname,
+                    catalog_id,
+                )
 
     return hook
 
