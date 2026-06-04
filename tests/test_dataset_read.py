@@ -206,6 +206,56 @@ async def test_list_datasets_tool_forwards_dataset_type(dataset_ctx, capturing_m
     assert seen.get("dataset_type") == "Training"
 
 
+async def test_list_datasets_tool_schedules_index_on_find(dataset_ctx, capturing_mcp, mock_ml):
+    """``deriva_ml_list_datasets`` warms the returned rows via _index_rows_on_find."""
+    mock_ml.find_datasets.return_value = [
+        _make_dataset_mock("1-AAAA", "first", ["Training"], "1.0.0"),
+        _make_dataset_mock("1-BBBB", "second", ["Testing"], "1.1.0"),
+    ]
+
+    captured: dict = {}
+
+    def fake_warm(hostname, catalog_id, token, rows, **kwargs):
+        captured["token"] = token
+        captured["rids"] = [r.get("rid") for r in rows]
+
+    # The tool does a lazy ``from deriva_ml_mcp_plugin.resources.rag import
+    # _index_rows_on_find`` at call time, so patch the name in its
+    # defining module (the lazy import binds to ``rag._index_rows_on_find``).
+    with patch(
+        "deriva_ml_mcp_plugin.resources.rag._index_rows_on_find",
+        side_effect=fake_warm,
+    ):
+        await capturing_mcp.tools["deriva_ml_list_datasets"](hostname="h", catalog_id="1")
+
+    from deriva_ml_mcp_plugin.resources.rag import _DATASET_TOKEN
+
+    assert captured.get("token") == _DATASET_TOKEN
+    assert set(captured.get("rids") or []) == {"1-AAAA", "1-BBBB"}
+
+
+async def test_list_datasets_preflight_does_not_index_on_find(dataset_ctx, capturing_mcp, mock_ml):
+    """The preflight (count-only) path returns before building rows, so it must
+    NOT schedule a read-through warm."""
+    mock_ml.find_datasets.return_value = [_make_dataset_mock(f"1-{i:04d}") for i in range(3)]
+
+    called = False
+
+    def fake_warm(*args, **kwargs):
+        nonlocal called
+        called = True
+
+    with patch(
+        "deriva_ml_mcp_plugin.resources.rag._index_rows_on_find",
+        side_effect=fake_warm,
+    ):
+        await capturing_mcp.tools["deriva_ml_list_datasets"](
+            hostname="h", catalog_id="1", preflight_count=True
+        )
+
+    assert called is False
+
+
 # ---------------------------------------------------------------------------
 # get_dataset
 # ---------------------------------------------------------------------------
@@ -273,6 +323,34 @@ async def test_get_dataset_not_found(dataset_ctx, capturing_mcp, mock_ml):
         )
     )
     assert out == {"error": "Dataset not found"}
+
+
+async def test_get_dataset_tool_schedules_index_on_find(dataset_ctx, capturing_mcp, mock_ml):
+    """``deriva_ml_get_dataset`` warms the single returned row via _index_rows_on_find."""
+    mock_ml.lookup_dataset.return_value = _make_dataset_mock(
+        "1-AAAA", "desc", ["Training"], "1.0.0"
+    )
+
+    captured: dict = {}
+
+    def fake_warm(hostname, catalog_id, token, rows, **kwargs):
+        captured["token"] = token
+        captured["rids"] = [r.get("rid") for r in rows]
+
+    # Lazy import in the tool binds to ``rag._index_rows_on_find`` at call
+    # time, so patch the name in its defining module.
+    with patch(
+        "deriva_ml_mcp_plugin.resources.rag._index_rows_on_find",
+        side_effect=fake_warm,
+    ):
+        await capturing_mcp.tools["deriva_ml_get_dataset"](
+            hostname="h", catalog_id="1", dataset_rid="1-AAAA"
+        )
+
+    from deriva_ml_mcp_plugin.resources.rag import _DATASET_TOKEN
+
+    assert captured.get("token") == _DATASET_TOKEN
+    assert captured.get("rids") == ["1-AAAA"]
 
 
 # ---------------------------------------------------------------------------

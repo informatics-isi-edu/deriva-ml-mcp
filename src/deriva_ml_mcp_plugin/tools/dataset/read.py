@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -57,6 +58,8 @@ from deriva_ml_mcp_plugin._response_models import (
 
 if TYPE_CHECKING:
     from deriva_mcp_core.plugin.api import PluginContext
+
+logger = logging.getLogger(__name__)
 
 
 def _summarize_dataset(ds: Any) -> DatasetSummary:
@@ -363,6 +366,27 @@ def register(ctx: PluginContext) -> None:
                     sort=sort,
                     dataset_type=dataset_type,
                 )
+                # Read-through indexing: warm the per-user RAG sources for
+                # the rows we just returned so a later rag_search finds
+                # them (newest-first). Fire-and-forget; never blocks or
+                # fails the read. Lazy import avoids the rag<->tools cycle.
+                try:
+                    from deriva_ml_mcp_plugin.resources.rag import (
+                        _DATASET_TOKEN,
+                        _index_rows_on_find,
+                    )
+
+                    _index_rows_on_find(
+                        hostname,
+                        catalog_id,
+                        _DATASET_TOKEN,
+                        [d.model_dump(mode="json") for d in payload.datasets],
+                    )
+                except Exception:  # noqa: BLE001 -- warm is best-effort
+                    logger.debug(
+                        "index-on-find scheduling failed for list_datasets",
+                        exc_info=True,
+                    )
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             # Read-only tool: log+return without an audit row (I-2 fix).
@@ -441,6 +465,24 @@ def register(ctx: PluginContext) -> None:
                         **summary.model_dump(),
                         cite_url=cite if isinstance(cite, str) else None,
                         version_history=[],
+                    )
+                # Read-through indexing: warm the per-user RAG source for
+                # the dataset we just returned so a later rag_search finds
+                # it. Fire-and-forget; never blocks or fails the read.
+                # Lazy import avoids the rag<->tools cycle.
+                try:
+                    from deriva_ml_mcp_plugin.resources.rag import (
+                        _DATASET_TOKEN,
+                        _index_rows_on_find,
+                    )
+
+                    _index_rows_on_find(
+                        hostname, catalog_id, _DATASET_TOKEN, [{"rid": dataset_rid}]
+                    )
+                except Exception:  # noqa: BLE001 -- warm is best-effort
+                    logger.debug(
+                        "index-on-find scheduling failed for get_dataset",
+                        exc_info=True,
                     )
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:
