@@ -181,6 +181,60 @@ async def test_list_executions_workflow_type_filter_forwarded(
     assert kwargs["workflow_type"] == "Inference"
 
 
+async def test_list_executions_tool_schedules_index_on_find(execution_ctx, capturing_mcp, mock_ml):
+    """``deriva_ml_list_executions`` warms the returned rows via _index_rows_on_find."""
+    mock_ml.find_executions.return_value = [
+        _make_execution_record_mock(rid="1-AAA", workflow_rid="1-WF"),
+        _make_execution_record_mock(rid="1-BBB", workflow_rid="1-WF"),
+    ]
+
+    captured: dict = {}
+
+    def fake_warm(hostname, catalog_id, token, rows, **kwargs):
+        captured["token"] = token
+        captured["rids"] = [r.get("rid") for r in rows]
+
+    # The tool does a lazy ``from deriva_ml_mcp_plugin.resources.rag import
+    # _index_rows_on_find`` at call time, so patch the name in its
+    # defining module (the lazy import binds to ``rag._index_rows_on_find``).
+    with patch(
+        "deriva_ml_mcp_plugin.resources.rag._index_rows_on_find",
+        side_effect=fake_warm,
+    ):
+        await capturing_mcp.tools["deriva_ml_list_executions"](hostname="h", catalog_id="1")
+
+    from deriva_ml_mcp_plugin.resources.rag import _EXECUTION_TOKEN
+
+    assert captured.get("token") == _EXECUTION_TOKEN
+    assert set(captured.get("rids") or []) == {"1-AAA", "1-BBB"}
+
+
+async def test_list_executions_preflight_does_not_index_on_find(
+    execution_ctx, capturing_mcp, mock_ml
+):
+    """The preflight (count-only) path returns before building rows, so it must
+    NOT schedule a read-through warm."""
+    mock_ml.find_executions.return_value = [
+        _make_execution_record_mock(rid=f"1-{i:03d}") for i in range(3)
+    ]
+
+    called = False
+
+    def fake_warm(*args, **kwargs):
+        nonlocal called
+        called = True
+
+    with patch(
+        "deriva_ml_mcp_plugin.resources.rag._index_rows_on_find",
+        side_effect=fake_warm,
+    ):
+        await capturing_mcp.tools["deriva_ml_list_executions"](
+            hostname="h", catalog_id="1", preflight_count=True
+        )
+
+    assert called is False
+
+
 # ---------------------------------------------------------------------------
 # get_execution
 # ---------------------------------------------------------------------------
@@ -214,6 +268,34 @@ async def test_get_execution_error_path(execution_ctx, capturing_mcp, mock_ml):
     assert "error" in payload
     assert "not found" in payload["error"]
     assert mock_audit.call_count == 0
+
+
+async def test_get_execution_tool_schedules_index_on_find(execution_ctx, capturing_mcp, mock_ml):
+    """``deriva_ml_get_execution`` warms the single returned row via _index_rows_on_find."""
+    mock_ml.lookup_execution.return_value = _make_execution_record_mock(
+        rid="1-EXEC", workflow_rid="1-WF"
+    )
+
+    captured: dict = {}
+
+    def fake_warm(hostname, catalog_id, token, rows, **kwargs):
+        captured["token"] = token
+        captured["rids"] = [r.get("rid") for r in rows]
+
+    # Lazy import in the tool binds to ``rag._index_rows_on_find`` at call
+    # time, so patch the name in its defining module.
+    with patch(
+        "deriva_ml_mcp_plugin.resources.rag._index_rows_on_find",
+        side_effect=fake_warm,
+    ):
+        await capturing_mcp.tools["deriva_ml_get_execution"](
+            hostname="h", catalog_id="1", execution_rid="1-EXEC"
+        )
+
+    from deriva_ml_mcp_plugin.resources.rag import _EXECUTION_TOKEN
+
+    assert captured.get("token") == _EXECUTION_TOKEN
+    assert captured.get("rids") == ["1-EXEC"]
 
 
 # ---------------------------------------------------------------------------
