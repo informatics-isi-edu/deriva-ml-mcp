@@ -143,6 +143,7 @@ def _list_workflows_impl(
     after_rid: str | None,
     limit: int,
     sort: bool = False,
+    workflow_type: str | None = None,
 ) -> WorkflowListResponse:
     """Fetch + paginate workflows. Pure helper -- shared by tool and resource.
 
@@ -158,6 +159,11 @@ def _list_workflows_impl(
             cursor still works ("skip up to this RID in the RCT-sorted
             result"), but pagination through very large sorted result
             sets is bounded by the internal fetch cap.
+        workflow_type: Optional ``Workflow_Type`` vocabulary term. When
+            set, keep only workflows whose ``workflow_type`` list
+            contains this term (membership test, applied before
+            pagination so ``limit`` counts filtered rows). When ``None``
+            (default), no type filtering.
 
     Returns:
         ``WorkflowListResponse`` -- see ``deriva_ml_mcp_plugin._response_models``.
@@ -177,6 +183,8 @@ def _list_workflows_impl(
         workflows = raw
     else:
         workflows = sorted(raw, key=lambda w: _resolve_workflow_rid(w) or "")
+    if workflow_type is not None:
+        workflows = [w for w in workflows if workflow_type in (w.workflow_type or [])]
     page, truncated, next_after = _paginate(
         workflows,
         after_rid=after_rid,
@@ -233,6 +241,7 @@ def register(ctx: PluginContext) -> None:
         after_rid: str | None = None,
         preflight_count: bool = False,
         sort: bool = False,
+        workflow_type: str | None = None,
     ) -> str:
         """Browse all workflows registered in the catalog.
 
@@ -246,6 +255,11 @@ def register(ctx: PluginContext) -> None:
                 creation time. Recommended for "show me the most
                 recent workflows" queries. Default False preserves the
                 stable RID-ascending order used for cursor pagination.
+            workflow_type: Optional ``Workflow_Type`` term. When set, only
+                workflows tagged with this type are returned (structured
+                filter -- prefer this over fuzzy ``rag_search`` when the
+                user names a type). Combine with a later ``rag_search``
+                for "Model_Training workflows matching <description text>".
 
         Returns:
             Preflight:
@@ -295,6 +309,7 @@ def register(ctx: PluginContext) -> None:
                     after_rid=after_rid,
                     limit=capped,
                     sort=sort,
+                    workflow_type=workflow_type,
                 )
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:
