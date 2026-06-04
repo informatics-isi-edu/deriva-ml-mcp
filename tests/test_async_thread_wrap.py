@@ -38,9 +38,7 @@ RESOURCES_ROOT = PLUGIN_ROOT / "resources"
 # every sync deriva-ml call inside ``with deriva_call():`` blocks.
 #
 # Resource handlers run on the same asyncio event loop as tool handlers
-# and have the same blocking-call hazard. ``resources/rag.py`` does not
-# use ``with deriva_call():`` (it manages its own retries) so it's not
-# in this list; the rule only fires inside that context manager.
+# and have the same blocking-call hazard.
 TOOL_MODULES: list[Path] = [
     TOOLS_ROOT / "asset.py",
     TOOLS_ROOT / "feature.py",
@@ -54,6 +52,18 @@ TOOL_MODULES: list[Path] = [
     # lifecycle moved to user-local Python per the stateless rule.
     # See docs/audit-2026-05-23.md.
     RESOURCES_ROOT / "ml.py",
+]
+
+# Modules checked with the STRICTER, context-free rule: every sync
+# deriva-ml call inside an ``async def`` must be thread-wrapped, whether
+# or not it sits inside a ``with deriva_call():`` block. ``resources/rag.py``
+# (the on_catalog_connect hooks + surgical re-index helpers) does NOT use
+# ``deriva_call()`` -- it manages its own retries -- so the deriva_call-scoped
+# rule above would never fire for it. The 2026-06-04 cold-start bug report
+# (Note 3) asks for rag.py coverage so a future unwrapped blocking call
+# (which would re-block the event loop during indexing) is caught structurally.
+CONTEXT_FREE_MODULES: list[Path] = [
+    RESOURCES_ROOT / "rag.py",
 ]
 
 # Names whose method calls indicate sync deriva-ml I/O. Any
@@ -266,7 +276,7 @@ def _node_within(node: ast.AST, ancestor: ast.AST) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _violations_in_module(path: Path) -> list[str]:
+def _violations_in_module(path: Path, *, require_deriva_call_context: bool = True) -> list[str]:
     """Return a list of violation strings for one tool module.
 
     Each violation string is a one-line summary identifying the file,
@@ -275,6 +285,14 @@ def _violations_in_module(path: Path) -> list[str]:
 
     Args:
         path: Absolute path to the tool module.
+        require_deriva_call_context: When True (default), only sync
+            deriva-ml calls inside a ``with deriva_call():`` block are
+            flagged -- the convention for the tool/resource modules that
+            manage I/O through that context manager. When False, EVERY
+            sync deriva-ml call inside an ``async def`` is flagged
+            regardless of context -- the stricter rule for modules
+            (e.g. ``resources/rag.py``) that don't use ``deriva_call()``
+            but still run on the event loop.
 
     Returns:
         Sorted list of violation strings (empty when clean).
@@ -295,18 +313,30 @@ def _violations_in_module(path: Path) -> list[str]:
             ):
                 threaded_nodes.append(node)
 
-        # Find every ``with deriva_call():`` block in this async func,
-        # including ``async with`` for completeness.
-        with_blocks: list[ast.With | ast.AsyncWith] = []
-        for node in ast.walk(async_func):
-            if isinstance(node, (ast.With, ast.AsyncWith)) and _is_with_deriva_call(node):
-                with_blocks.append(node)
+        if require_deriva_call_context:
+            # Scope the scan to ``with deriva_call():`` blocks.
+            scan_roots: list[ast.AST] = [
+                node
+                for node in ast.walk(async_func)
+                if isinstance(node, (ast.With, ast.AsyncWith)) and _is_with_deriva_call(node)
+            ]
+            context_note = " inside `with deriva_call():`"
+        else:
+            # Scan the whole async-func body -- no deriva_call() context
+            # required (rag.py convention). Exclude nested async defs'
+            # own bodies? No: _walk_async_funcs already yields each async
+            # def separately, and scanning the outer one's full subtree
+            # would double-flag inner-def calls. Use the func body nodes
+            # directly and let the per-async-def iteration cover nesting.
+            scan_roots = list(async_func.body)
+            context_note = ""
 
-        for with_block in with_blocks:
-            for call in _calls_in_subtree(with_block):
-                # Skip the ``deriva_call()`` context-manager call itself
-                # (it appears in ``with_block.items[*].context_expr``).
-                if any(call is item.context_expr for item in with_block.items):
+        for root in scan_roots:
+            for call in _calls_in_subtree(root):
+                # Skip a ``with deriva_call():`` context-manager call itself.
+                if isinstance(root, (ast.With, ast.AsyncWith)) and any(
+                    call is item.context_expr for item in root.items
+                ):
                     continue
                 # Skip ``asyncio.to_thread(...)`` calls themselves.
                 if _is_asyncio_to_thread(call.func):
@@ -317,15 +347,36 @@ def _violations_in_module(path: Path) -> list[str]:
                 # Allow calls inside a nested helper that's threaded.
                 if any(_node_within(call, helper) for helper in threaded_nodes):
                     continue
+                # In context-free mode, a call that lives inside a nested
+                # async def is that inner def's responsibility (it's
+                # yielded separately by _walk_async_funcs); skip here to
+                # avoid double-counting.
+                if not require_deriva_call_context and _in_nested_async_def(call, async_func):
+                    continue
 
                 snippet = ast.unparse(call)
                 violations.append(
                     f"{path}:{call.lineno}: in `async def {async_func.name}`: "
-                    f"unwrapped sync deriva-ml call `{snippet}` inside "
-                    f"`with deriva_call():` (must be `await asyncio.to_thread(...)`)"
+                    f"unwrapped sync deriva-ml call `{snippet}`{context_note} "
+                    f"(must be `await asyncio.to_thread(...)`)"
                 )
 
-    return sorted(violations)
+    return sorted(set(violations))
+
+
+def _in_nested_async_def(call: ast.Call, outer: ast.AsyncFunctionDef) -> bool:
+    """Return True iff ``call`` lives inside an async def nested within ``outer``.
+
+    Used by the context-free scan to avoid double-flagging: each async def
+    is checked in its own right by the outer loop, so a call belonging to a
+    nested async def should not also be attributed to its enclosing one.
+    """
+    for node in ast.walk(outer):
+        if node is outer:
+            continue
+        if isinstance(node, ast.AsyncFunctionDef) and any(c is call for c in ast.walk(node)):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +400,26 @@ def test_async_tools_thread_wrap_sync_deriva_calls() -> None:
 
     if all_violations:
         msg = "\n".join(["Unwrapped sync deriva-ml calls found:", *all_violations])
+        raise AssertionError(msg)
+
+
+def test_context_free_modules_thread_wrap_all_sync_deriva_calls() -> None:
+    """Every sync deriva-ml call in a context-free module's async fns is thread-wrapped.
+
+    Covers ``resources/rag.py`` (on_catalog_connect hooks + surgical
+    re-index helpers), which does not use ``with deriva_call():`` and so
+    is invisible to the deriva_call-scoped check above. Per the 2026-06-04
+    cold-start bug report (Note 3): a future unwrapped blocking call here
+    would re-block the event loop during indexing, so the rule is enforced
+    structurally over the whole async-function body.
+    """
+    all_violations: list[str] = []
+    for module_path in CONTEXT_FREE_MODULES:
+        assert module_path.is_file(), f"module not found: {module_path}"
+        all_violations.extend(_violations_in_module(module_path, require_deriva_call_context=False))
+
+    if all_violations:
+        msg = "\n".join(["Unwrapped sync deriva-ml calls found (context-free):", *all_violations])
         raise AssertionError(msg)
 
 

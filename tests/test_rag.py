@@ -38,6 +38,24 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_first_connect_guard():
+    """Reset the module-global first-connect guard state before every test.
+
+    The persistent guard (``_indexed_vocab_catalogs`` /
+    ``_indexed_user_catalogs`` + their locks) lives per-server-lifetime, i.e.
+    module-global. Without a reset, a hook-firing test leaks an "already
+    indexed" entry into the next test, which would then see its hook skip and
+    fail. Autouse so every test starts from a clean guard regardless of whether
+    it touches the hooks.
+    """
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    rag_module._reset_index_state()
+    yield
+    rag_module._reset_index_state()
+
+
 # Hook registration order in register_rag_sources(ctx):
 #   0 -> Dataset, 1 -> Workflow, 2 -> Execution, 3 -> Vocabularies.
 # Tests pull hooks via index rather than by name because the factory
@@ -899,6 +917,310 @@ def test_vocab_hook_swallows_index_exception() -> None:
     with patch.object(rag_module, "_index_vocabularies", new=fake):
         # Must not raise.
         _run(_hook_at(_VOCAB_HOOK_IDX)("h.example", "1", "hash", {}))
+
+
+# ---------------------------------------------------------------------------
+# 9b. First-connect guard -- catalog-connect re-firings must not re-index
+# ---------------------------------------------------------------------------
+#
+# Cold-start regression (2026-06-04): a single user's bootstrapping sequence
+# fires several catalog-touching tool calls (get_catalog_info, two get_schema
+# calls), each independently triggering on_catalog_connect. In stateless_http
+# mode core's per-(host, catalog, user) connect dedup does not reliably hold
+# across them (sequential re-fires when the prior schema-fetch errored and
+# discarded the key; concurrent re-fires when calls interleave). Without a
+# guard the full hook set ran on EVERY connect: every vocab + every per-user
+# row re-fetched and re-embedded. The ICD10_Eye vocab (1209 terms) re-embedded
+# each time; the passes fought the GIL with rag_search's own query embedding
+# -- ~60-261s first-turn latency, 97% CPU.
+#
+# The guard (per the 2026-06-04 bug report) has two layers:
+#   1. A per-server-lifetime "already indexed" set: once a work unit has been
+#      indexed it is NOT re-indexed on any later connect until server restart.
+#      This is the documented "first connect per server lifetime" intent.
+#   2. A per-key asyncio.Lock with double-checked membership: concurrent
+#      firings serialize on the lock; the winner indexes and records the unit
+#      in the set; waiters re-check the set after acquiring and skip.
+# Manual re-index tools (deriva_ml_reindex_vocabularies / resync_indexes) clear
+# the relevant set entries so an explicit re-index still runs.
+#
+# Work units:
+#   vocab pass         -> (host, catalog)
+#   per-user-trio hook -> (user_id, host, catalog, table_token)
+
+
+def _make_gate():
+    """Build an awaitable gate the test releases manually.
+
+    Returns (started_event, release_event, body) where ``body`` is an async
+    callable that signals it has started, then blocks until ``release`` is set.
+    Used to hold the first hook run open while a second concurrent run is
+    dispatched, so we can assert the second observes the in-progress lock.
+    """
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def body(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return {}
+
+    return started, release, body
+
+
+def test_vocab_hook_skips_second_sequential_connect() -> None:
+    """A second SEQUENTIAL vocab-hook firing for the same catalog skips re-indexing.
+
+    This is the core of the persistent-guard fix: once a catalog's vocabs are
+    indexed this server lifetime, a later connect (the user re-opening the
+    chatbot, or the next bootstrapping tool call) must NOT re-run the pass.
+    """
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    fake_index = AsyncMock(return_value={})
+    with patch.object(rag_module, "_index_vocabularies", new=fake_index):
+        rag_module._reset_index_state()
+        hook = _hook_at(_VOCAB_HOOK_IDX)
+        _run(hook("h.example", "1", "hash", {}))
+        _run(hook("h.example", "1", "hash", {}))
+        _run(hook("h.example", "1", "hash", {}))
+
+    # Only the first of the three sequential firings ran the pass.
+    assert fake_index.await_count == 1
+
+
+def test_vocab_hook_skips_when_same_catalog_already_indexing() -> None:
+    """A second CONCURRENT vocab-hook firing for the same catalog runs the pass only once.
+
+    The first firing holds the per-catalog lock open mid-pass; while it is in
+    flight a second firing for the SAME (host, catalog) is dispatched. The
+    second serializes on the lock, and after acquiring it re-checks the
+    already-indexed set (now populated by the first) and returns WITHOUT calling
+    _index_vocabularies a second time.
+    """
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    started, release, body = _make_gate()
+    fake_index = AsyncMock(side_effect=body)
+
+    async def scenario() -> None:
+        hook = _hook_at(_VOCAB_HOOK_IDX)
+        first = asyncio.create_task(hook("h.example", "1", "hash", {}))
+        await started.wait()  # first run is now inside the lock, blocked mid-pass
+        # Second concurrent firing for the same catalog -- dispatched as a task
+        # because it will BLOCK on the lock the first run holds (wait-then-skip,
+        # not busy-return). Release the gate so the first finishes and records
+        # the unit; the second then acquires, re-checks the set, and skips.
+        second = asyncio.create_task(hook("h.example", "1", "hash", {}))
+        await asyncio.sleep(0)  # let the second task reach the lock acquire
+        release.set()
+        await asyncio.gather(first, second)
+
+    with patch.object(rag_module, "_index_vocabularies", new=fake_index):
+        rag_module._reset_index_state()  # isolate from other tests' state
+        _run(scenario())
+
+    # Only the first firing ran the index pass; the second skipped post-lock.
+    assert fake_index.await_count == 1
+
+
+def test_vocab_hook_does_not_skip_different_catalog() -> None:
+    """Firings for DIFFERENT catalogs both run (guard is per (host, catalog))."""
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    fake_index = AsyncMock(return_value={})
+    with patch.object(rag_module, "_index_vocabularies", new=fake_index):
+        rag_module._reset_index_state()
+        hook = _hook_at(_VOCAB_HOOK_IDX)
+        _run(hook("h.example", "1", "hash", {}))
+        _run(hook("h.example", "2", "hash", {}))
+
+    assert fake_index.await_count == 2
+
+
+def test_vocab_hook_failed_pass_not_marked_indexed() -> None:
+    """If the index pass raises, the catalog is NOT recorded as indexed.
+
+    A failed first-connect must be retryable on the next connect -- otherwise a
+    transient catalog error would permanently strand the catalog's vocab index
+    until server restart.
+    """
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    fake_index = AsyncMock(side_effect=RuntimeError("boom"))
+    with patch.object(rag_module, "_index_vocabularies", new=fake_index):
+        rag_module._reset_index_state()
+        hook = _hook_at(_VOCAB_HOOK_IDX)
+        _run(hook("h.example", "1", "hash", {}))  # raises internally, swallowed
+        # Second connect must RETRY because the first did not complete.
+        fake_index.side_effect = None
+        fake_index.return_value = {}
+        _run(hook("h.example", "1", "hash", {}))
+
+    assert fake_index.await_count == 2
+
+
+def test_dataset_hook_skips_second_sequential_connect() -> None:
+    """A second SEQUENTIAL per-user-trio firing for the same unit skips re-indexing.
+
+    Persistent guard applied to the Dataset/Workflow/Execution first-connect
+    hooks: work unit is (user_id, host, catalog, table). Once indexed, a later
+    connect for the same unit must not re-walk the rows.
+    """
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    fetch_calls = 0
+
+    def fake_fetch(host, cat):
+        nonlocal fetch_calls
+        fetch_calls += 1
+        return [{"rid": "1-DSAA", "name": "x"}]
+
+    async def fake_write(store, source, table_name, row, serializer):
+        return 1
+
+    with (
+        patch.object(rag_module, "_fetch_dataset_rows", side_effect=fake_fetch),
+        patch.object(rag_module, "resolve_user_identity", return_value=_USER_ID),
+        patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
+        patch.object(rag_module, "_write_row_chunk", side_effect=fake_write),
+    ):
+        rag_module._reset_index_state()
+        hook = _hook_at(_DATASET_HOOK_IDX)
+        _run(hook("h.example", "1", "hash", {}))
+        _run(hook("h.example", "1", "hash", {}))
+
+    # The second firing skipped before fetching rows a second time.
+    assert fetch_calls == 1
+
+
+def test_dataset_hook_partitions_guard_per_user() -> None:
+    """The per-user-trio guard is keyed by user_id: a different user still indexes."""
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    fetch_calls = 0
+
+    def fake_fetch(host, cat):
+        nonlocal fetch_calls
+        fetch_calls += 1
+        return [{"rid": "1-DSAA", "name": "x"}]
+
+    async def fake_write(store, source, table_name, row, serializer):
+        return 1
+
+    with (
+        patch.object(rag_module, "_fetch_dataset_rows", side_effect=fake_fetch),
+        patch.object(rag_module, "resolve_user_identity", side_effect=["userA", "userB"]),
+        patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
+        patch.object(rag_module, "_write_row_chunk", side_effect=fake_write),
+    ):
+        rag_module._reset_index_state()
+        hook = _hook_at(_DATASET_HOOK_IDX)
+        _run(hook("h.example", "1", "hash", {}))  # userA
+        _run(hook("h.example", "1", "hash", {}))  # userB -- distinct unit, runs
+
+    assert fetch_calls == 2
+
+
+def test_hook_logs_concise_message_for_legacy_status_valueerror(caplog) -> None:
+    """A ValueError from the fetch (legacy/unknown ExecutionStatus) logs concisely.
+
+    Per the 2026-06-04 bug report: an Execution row whose catalog Status is not
+    in deriva-ml's ExecutionStatus enum makes lookup_execution raise ValueError,
+    which aborts the whole fetch. The hook must catch it and log a clear,
+    actionable single line WITHOUT a full traceback (it recurs on every connect
+    for a stale catalog), and must not mark the unit indexed (retryable).
+    """
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    err = ValueError("'Completed' is not a valid ExecutionStatus")
+
+    def boom(host, cat):
+        raise err
+
+    with (
+        patch.object(rag_module, "_fetch_execution_rows", side_effect=boom),
+        patch.object(rag_module, "resolve_user_identity", return_value=_USER_ID),
+        patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
+        caplog.at_level("WARNING", logger="deriva_ml_mcp_plugin.resources.rag"),
+    ):
+        rag_module._reset_index_state()
+        # Must not raise.
+        _run(_hook_at(_EXECUTION_HOOK_IDX)("h.example", "1", "hash", {}))
+
+    # Find the record for this failure.
+    recs = [
+        r
+        for r in caplog.records
+        if "Completed" in r.getMessage() or "status" in r.getMessage().lower()
+    ]
+    assert recs, "expected a log record naming the legacy-status failure"
+    rec = recs[0]
+    # Concise: WARNING level, no traceback attached (logger.exception sets exc_info).
+    assert rec.levelname == "WARNING"
+    assert rec.exc_info is None, "legacy-status failure should NOT log a full traceback"
+    # Actionable: names the legacy status + the cause.
+    msg = rec.getMessage()
+    assert "Execution" in msg
+    assert "Completed" in msg or "ExecutionStatus" in msg
+
+    # Not marked indexed -> retryable on next connect.
+    assert (_USER_ID, "h.example", "1", _EXECUTION_TOKEN_FOR_TEST) not in (
+        rag_module._indexed_user_catalogs
+    )
+
+
+# Token used in the Execution hook's guard key (matches rag._EXECUTION_TOKEN).
+_EXECUTION_TOKEN_FOR_TEST = "execution"
+
+
+# ---------------------------------------------------------------------------
+# 9c. Guard-clearing helpers (manual re-index must re-run after persistent guard)
+# ---------------------------------------------------------------------------
+
+
+def test_clear_vocab_indexed_allows_reconnect_reindex() -> None:
+    """After _clear_vocab_indexed, a subsequent vocab-hook connect re-runs the pass."""
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    fake_index = AsyncMock(return_value={})
+    with patch.object(rag_module, "_index_vocabularies", new=fake_index):
+        rag_module._reset_index_state()
+        hook = _hook_at(_VOCAB_HOOK_IDX)
+        _run(hook("h.example", "1", "hash", {}))  # indexes, sets guard
+        _run(hook("h.example", "1", "hash", {}))  # skipped by guard
+        assert fake_index.await_count == 1
+        rag_module._clear_vocab_indexed("h.example", "1")  # explicit re-index path
+        _run(hook("h.example", "1", "hash", {}))  # guard cleared -> runs again
+
+    assert fake_index.await_count == 2
+
+
+def test_clear_user_indexed_clears_all_users_and_tables_for_catalog() -> None:
+    """_clear_user_indexed drops every per-user-trio entry for the catalog."""
+    from deriva_ml_mcp_plugin.resources import rag as rag_module
+
+    rag_module._reset_index_state()
+    # Seed entries for two users, two tables, plus an unrelated catalog.
+    rag_module._indexed_user_catalogs.update(
+        {
+            ("userA", "h.example", "1", "dataset"),
+            ("userA", "h.example", "1", "workflow"),
+            ("userB", "h.example", "1", "execution"),
+            ("userA", "h.example", "2", "dataset"),  # different catalog -- keep
+            ("userA", "other", "1", "dataset"),  # different host -- keep
+        }
+    )
+    rag_module._clear_user_indexed("h.example", "1")
+
+    remaining = rag_module._indexed_user_catalogs
+    assert ("userA", "h.example", "2", "dataset") in remaining
+    assert ("userA", "other", "1", "dataset") in remaining
+    assert not any(k[1] == "h.example" and k[2] == "1" for k in remaining)
+
+
+# (Tool-level guard-clearing tests live in test_maintenance.py, alongside the
+# vocab_ctx / capturing_mcp fixtures that drive the maintenance tools.)
 
 
 # ---------------------------------------------------------------------------
