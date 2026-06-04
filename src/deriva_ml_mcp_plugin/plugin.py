@@ -39,19 +39,27 @@ def register(ctx: PluginContext) -> None:
 
     Phase 5 ships dataset, feature, workflow, and execution domain tools.
     Phase 6 added MCP resources and per-user RAG indexing (one GitHub
-    docs source plus three on_catalog_connect hooks for Dataset,
-    Workflow, and Execution rows). v1.0 polish added 3 MCP prompts
+    docs source plus per-user-per-RID writers for Dataset, Workflow,
+    and Execution rows). v1.0 polish added 3 MCP prompts
     (``deriva_ml_getting_started``, ``deriva_ml_execution_lifecycle``,
     ``deriva_ml_workflow_dedup``) so an LLM connecting cold has an
     anchor for the ML domain.
 
-    v1.1 added vocabulary RAG indexing: a fourth on_catalog_connect
-    hook bulk-indexes all discovered vocabulary tables under a
+    v1.1 added vocabulary RAG indexing: an ``on_catalog_connect`` hook
+    bulk-indexes all discovered vocabulary tables under a
     catalog-public ``vocab:`` source, and a one-tool vocabulary domain
     (``deriva_ml_reindex_vocabularies``) lets callers force a refresh
     after using core's ``add_term`` / ``delete_term`` (which don't
     fire any framework lifecycle hook -- tracked upstream as
     deriva-mcp-core#3).
+
+    v1.5 dropped the on-connect bulk pass for Dataset / Workflow /
+    Execution rows: the vocab hook is now the ONLY
+    ``on_catalog_connect`` hook registered. Those rows are indexed
+    read-through instead -- warmed on list/get/find via
+    ``_index_rows_on_find`` and surgically on create/mutate via
+    ``_reindex_*`` (see ``resources/rag.py``), with
+    ``deriva_ml_resync_indexes`` as the manual warm-everything button.
 
     v1.2 added the asset domain (catalog-state operations -- file
     I/O lives in the deriva-skills ``work-with-assets`` skill) plus

@@ -972,23 +972,25 @@ The picker pattern works for these categories. Freshness varies:
     exists in many tables and need to ask which one.
 
   Workflows, datasets, executions
-    Indexed by this plugin per-user-per-RID. Fresh on first
-    connect AND surgically refreshed on every mutation: each
+    Indexed by this plugin per-user-per-RID, read-through (NOT
+    bulk-indexed on connect). A row becomes rag_search-able once
+    you've listed or fetched it -- each deriva_ml_list_* /
+    deriva_ml_get_* tool warms the index for the rows it just
+    returned -- AND it's surgically refreshed on mutation: each
     deriva_ml_create_* / deriva_ml_update_* / deriva_ml_delete_*
     MCP tool refreshes just the affected source(s) before
     returning. Note that EXECUTION row creation/mutation does NOT
     happen through MCP (executions originate in user-local Python
     per the stateless rule) -- newly-created execution rows
-    surface into RAG via the cross-user refresh path (next
-    first-connect) or via an explicit
+    surface into RAG once you list/get them, or via an explicit
     ``deriva_ml_resync_indexes(target="execution:<rid>")`` call.
 
     Cross-user freshness is best-effort. User A's mutation does
     NOT refresh user B's per-user sources -- B sees A's change only
-    at B's next first-connect to the catalog. Same gap applies to
-    mutations from non-MCP clients (Chaise UI, ERMrest direct,
-    other deriva-ml scripts): they don't propagate to your per-user
-    sources at all.
+    once B next lists/fetches that row (which warms it) or resyncs.
+    Same gap applies to mutations from non-MCP clients (Chaise UI,
+    ERMrest direct, other deriva-ml scripts): they don't propagate
+    to your per-user sources until you next read those rows.
 
     When working on multi-user collaborative catalogs, treat RAG
     hits for shared-visible rows as hints, NOT as ground truth. The
@@ -1131,9 +1133,10 @@ feature, workflow, execution, asset) plus 3 catalog-maintenance tools
 (create_vocabulary, reindex_vocabularies, resync_indexes) -- + 18
 read-only resources under the
 ``deriva://catalog/{h}/{c}/deriva-ml/...`` URI prefix + 1 GitHub doc source
-indexed for RAG (``deriva-ml-docs``) + 3 per-user RAG indexes that
-ingest Dataset / Workflow / Execution rows on first connect to a
-catalog. Plus 4 built-in core prompts and 2 ML prompts: this one
+indexed for RAG (``deriva-ml-docs``) + per-user RAG indexes that
+ingest Dataset / Workflow / Execution rows read-through (warmed when
+you list/get them, surgically refreshed on mutation -- not on
+connect). Plus 4 built-in core prompts and 2 ML prompts: this one
 (``deriva_ml_getting_started``) and ``deriva_ml_concepts``. (v3.x
 removed two earlier prompts, ``deriva_ml_execution_lifecycle`` and
 ``deriva_ml_workflow_dedup``, and redistributed their content to the
