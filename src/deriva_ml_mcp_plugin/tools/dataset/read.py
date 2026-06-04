@@ -90,6 +90,7 @@ def _list_datasets_impl(
     limit: int,
     include_deleted: bool = False,
     sort: bool = False,
+    dataset_type: str | None = None,
 ) -> DatasetListResponse:
     """Fetch + paginate datasets. Pure helper -- shared by tool and resource.
 
@@ -106,6 +107,11 @@ def _list_datasets_impl(
             cursor still works ("skip up to this RID in the RCT-sorted
             result"), but pagination through very large sorted result
             sets is bounded by the internal fetch cap.
+        dataset_type: Optional ``Dataset_Type`` vocabulary term. When
+            set, keep only datasets whose ``dataset_types`` list contains
+            this term (membership test, applied before pagination so
+            ``limit`` counts filtered rows). When ``None`` (default), no
+            type filtering.
 
     Returns:
         ``DatasetListResponse`` -- see ``deriva_ml_mcp_plugin._response_models``.
@@ -123,6 +129,8 @@ def _list_datasets_impl(
         datasets = raw
     else:
         datasets = sorted(raw, key=lambda d: d.dataset_rid)
+    if dataset_type is not None:
+        datasets = [d for d in datasets if dataset_type in (d.dataset_types or [])]
     page, truncated, next_after = _paginate(
         datasets,
         after_rid=after_rid,
@@ -165,9 +173,7 @@ def _get_dataset_detail_impl(ml: Any, dataset_rid: str) -> DatasetDetail:
         )
         for h in ds.dataset_history()
     ]
-    cite = _cite_dataset_version_url(
-        ml, dataset_rid, str(ds.current_version), ds=ds
-    )
+    cite = _cite_dataset_version_url(ml, dataset_rid, str(ds.current_version), ds=ds)
     return DatasetDetail(
         **summary.model_dump(),
         cite_url=cite if isinstance(cite, str) else None,
@@ -412,9 +418,7 @@ def register(ctx: PluginContext) -> None:
                 # §"Synchronous work in threads".
                 ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
                 if include_history:
-                    payload = await asyncio.to_thread(
-                        _get_dataset_detail_impl, ml, dataset_rid
-                    )
+                    payload = await asyncio.to_thread(_get_dataset_detail_impl, ml, dataset_rid)
                 else:
                     # Skip the dataset_history() call entirely when not
                     # requested -- it can be expensive on long-lived
@@ -843,9 +847,7 @@ def register(ctx: PluginContext) -> None:
                 # plugin-authoring-guide.md §"Synchronous work in
                 # threads".
                 ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
-                payload = await asyncio.to_thread(
-                    _get_dataset_spec_impl, ml, dataset_rid, version
-                )
+                payload = await asyncio.to_thread(_get_dataset_spec_impl, ml, dataset_rid, version)
             return json.dumps(payload)
         except Exception as exc:
             # Read-only tool: log+return without an audit row (I-2 fix).
@@ -996,9 +998,7 @@ def register(ctx: PluginContext) -> None:
                 # Pydantic class. Pydantic's ValidationError on bad
                 # input bubbles up through the except below.
                 exec_config = ExecutionConfiguration(**config)
-                payload = await asyncio.to_thread(
-                    ml.validate_execution_configuration, exec_config
-                )
+                payload = await asyncio.to_thread(ml.validate_execution_configuration, exec_config)
             return payload.model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
@@ -1068,15 +1068,12 @@ def register(ctx: PluginContext) -> None:
                 # cleaned up immediately after parsing.
                 import os
                 import tempfile
-                with tempfile.NamedTemporaryFile(
-                    suffix=".py", mode="w", delete=False
-                ) as tmp:
+
+                with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as tmp:
                     tmp.write(file_contents)
                     tmp_path = tmp.name
                 try:
-                    payload = await asyncio.to_thread(
-                        ml.validate_config_file, tmp_path
-                    )
+                    payload = await asyncio.to_thread(ml.validate_config_file, tmp_path)
                 finally:
                     try:
                         os.unlink(tmp_path)
@@ -1208,9 +1205,7 @@ def _bag_info_impl(
         warning = None
     else:
         ds = ml.lookup_dataset(dataset_rid)
-        used_version = (
-            str(ds.current_version) if ds.current_version is not None else "0.1.0"
-        )
+        used_version = str(ds.current_version) if ds.current_version is not None else "0.1.0"
         warning = (
             f"version not specified; using current version "
             f"{used_version}. For reproducibility, pin to an explicit "
@@ -1231,9 +1226,7 @@ def _bag_info_impl(
     return info
 
 
-def _get_dataset_spec_impl(
-    ml: Any, dataset_rid: str, version: str | None
-) -> dict[str, Any]:
+def _get_dataset_spec_impl(ml: Any, dataset_rid: str, version: str | None) -> dict[str, Any]:
     """Shared helper: tool ``deriva_ml_get_dataset_spec`` and resource
     ``deriva://catalog/{h}/{c}/deriva-ml/dataset/{rid}/spec`` both call this so
     their payloads cannot drift.
@@ -1260,9 +1253,7 @@ def _get_dataset_spec_impl(
         used_version = version
         warning = None
     else:
-        used_version = (
-            str(ds.current_version) if ds.current_version is not None else "0.1.0"
-        )
+        used_version = str(ds.current_version) if ds.current_version is not None else "0.1.0"
         warning = (
             f"version not specified; using current version "
             f"{used_version}. For reproducibility, pin to an explicit "

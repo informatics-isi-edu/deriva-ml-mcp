@@ -140,6 +140,51 @@ async def test_list_datasets_sort_default_preserves_rid_sort(dataset_ctx, captur
     assert rids == ["1-A", "1-Z"]
 
 
+def test_list_datasets_impl_filters_by_dataset_type() -> None:
+    """``dataset_type=`` keeps only datasets whose type list contains it."""
+    from types import SimpleNamespace
+
+    from deriva_ml_mcp_plugin.tools.dataset.read import _list_datasets_impl
+
+    def _ds(rid, types):
+        return SimpleNamespace(
+            dataset_rid=rid,
+            description="d",
+            dataset_types=types,
+            current_version=None,
+        )
+
+    fake_ml = SimpleNamespace(
+        find_datasets=lambda deleted, sort: [
+            _ds("1-TRN", ["Training"]),
+            _ds("1-TST", ["Testing"]),
+            _ds("1-BTH", ["Training", "Validation"]),
+        ]
+    )
+
+    resp = _list_datasets_impl(fake_ml, after_rid=None, limit=100, dataset_type="Training")
+    rids = [d.rid for d in resp.datasets]
+    assert rids == ["1-BTH", "1-TRN"]  # RID-ascending of the two Training matches
+
+
+def test_list_datasets_impl_dataset_type_none_returns_all() -> None:
+    """No filter -> unchanged behavior (all datasets)."""
+    from types import SimpleNamespace
+
+    from deriva_ml_mcp_plugin.tools.dataset.read import _list_datasets_impl
+
+    def _ds(rid, types):
+        return SimpleNamespace(
+            dataset_rid=rid, description="d", dataset_types=types, current_version=None
+        )
+
+    fake_ml = SimpleNamespace(
+        find_datasets=lambda deleted, sort: [_ds("1-A", ["Training"]), _ds("1-B", ["Testing"])]
+    )
+    resp = _list_datasets_impl(fake_ml, after_rid=None, limit=100, dataset_type=None)
+    assert {d.rid for d in resp.datasets} == {"1-A", "1-B"}
+
+
 # ---------------------------------------------------------------------------
 # get_dataset
 # ---------------------------------------------------------------------------
@@ -650,9 +695,7 @@ async def test_validate_dataset_specs_error_path(dataset_ctx, capturing_mcp, moc
     assert "error" in out
 
 
-async def test_validate_execution_configuration_success(
-    dataset_ctx, capturing_mcp, mock_ml
-):
+async def test_validate_execution_configuration_success(dataset_ctx, capturing_mcp, mock_ml):
     """The tool coerces the dict to ExecutionConfiguration and serializes
     the validation report. We patch ExecutionConfiguration to bypass
     its full validation here -- the wrapper's only job is wiring; full
@@ -690,9 +733,7 @@ async def test_validate_execution_configuration_success(
         "deriva_ml.execution.execution_configuration.ExecutionConfiguration",
         return_value=fake_config,
     ):
-        result = await capturing_mcp.tools[
-            "deriva_ml_validate_execution_configuration"
-        ](
+        result = await capturing_mcp.tools["deriva_ml_validate_execution_configuration"](
             hostname="h",
             catalog_id="1",
             config={
@@ -709,9 +750,7 @@ async def test_validate_execution_configuration_success(
     mock_ml.validate_execution_configuration.assert_called_once_with(fake_config)
 
 
-async def test_validate_execution_configuration_error_path(
-    dataset_ctx, capturing_mcp, mock_ml
-):
+async def test_validate_execution_configuration_error_path(dataset_ctx, capturing_mcp, mock_ml):
     """Underlying ``ml.validate_execution_configuration`` raising propagates
     as ``{"error": ...}``."""
     fake_config = MagicMock(name="ExecutionConfiguration_instance")
@@ -723,9 +762,7 @@ async def test_validate_execution_configuration_error_path(
         return_value=fake_config,
     ):
         out = json.loads(
-            await capturing_mcp.tools[
-                "deriva_ml_validate_execution_configuration"
-            ](
+            await capturing_mcp.tools["deriva_ml_validate_execution_configuration"](
                 hostname="h",
                 catalog_id="1",
                 config={"workflow": {"rid": "1-WFLW"}},
@@ -750,9 +787,7 @@ async def test_validate_execution_configuration_error_path(
 # ---------------------------------------------------------------------------
 
 
-async def test_validate_config_file_with_file_contents(
-    dataset_ctx, capturing_mcp, mock_ml
-) -> None:
+async def test_validate_config_file_with_file_contents(dataset_ctx, capturing_mcp, mock_ml) -> None:
     """``file_contents`` is the sole accepted input: wrapper writes a
     temp file and calls the ml method with the temp path. The path
     passed to ml ends with ``.py`` and the temp file is cleaned up."""
@@ -766,7 +801,7 @@ async def test_validate_config_file_with_file_contents(
     )
 
     src = (
-        'from deriva_ml.dataset import DatasetSpecConfig\n'
+        "from deriva_ml.dataset import DatasetSpecConfig\n"
         'datasets_store(name="x", spec=DatasetSpecConfig(rid="1-A", version="0.1.0"))\n'
     )
     result = await capturing_mcp.tools["deriva_ml_validate_config_file"](
@@ -779,12 +814,11 @@ async def test_validate_config_file_with_file_contents(
     assert called_path.endswith(".py")
     # Temp file is cleaned up immediately after parsing.
     import os
+
     assert not os.path.exists(called_path)
 
 
-async def test_validate_config_file_error_path(
-    dataset_ctx, capturing_mcp, mock_ml
-) -> None:
+async def test_validate_config_file_error_path(dataset_ctx, capturing_mcp, mock_ml) -> None:
     mock_ml.validate_config_file.side_effect = RuntimeError("AST blew up")
     result = await capturing_mcp.tools["deriva_ml_validate_config_file"](
         hostname="h", catalog_id="1", file_contents="# empty"
@@ -793,9 +827,7 @@ async def test_validate_config_file_error_path(
     assert out == {"error": "AST blew up"}
 
 
-async def test_bootstrap_config_default_kinds(
-    dataset_ctx, capturing_mcp, mock_ml
-) -> None:
+async def test_bootstrap_config_default_kinds(dataset_ctx, capturing_mcp, mock_ml) -> None:
     """Default invocation propagates ``kinds=None`` and
     ``dataset_type_filter=None`` to the ml method."""
     from deriva_ml.config.bootstrap import BootstrapReport, BootstrapSuggestion
@@ -816,16 +848,12 @@ async def test_bootstrap_config_default_kinds(
         skipped=[],
     )
 
-    result = await capturing_mcp.tools["deriva_ml_bootstrap_config"](
-        hostname="h", catalog_id="1"
-    )
+    result = await capturing_mcp.tools["deriva_ml_bootstrap_config"](hostname="h", catalog_id="1")
     out = json.loads(result)
     assert out["catalog"]["hostname"] == "h"
     assert len(out["suggestions"]) == 1
     assert out["suggestions"][0]["spec_string"].startswith("DatasetSpecConfig(")
-    mock_ml.bootstrap_config.assert_called_once_with(
-        kinds=None, dataset_type_filter=None
-    )
+    mock_ml.bootstrap_config.assert_called_once_with(kinds=None, dataset_type_filter=None)
 
 
 async def test_bootstrap_config_kinds_filter_propagates(
@@ -849,12 +877,8 @@ async def test_bootstrap_config_kinds_filter_propagates(
     )
 
 
-async def test_bootstrap_config_error_path(
-    dataset_ctx, capturing_mcp, mock_ml
-) -> None:
+async def test_bootstrap_config_error_path(dataset_ctx, capturing_mcp, mock_ml) -> None:
     mock_ml.bootstrap_config.side_effect = RuntimeError("cannot connect")
-    result = await capturing_mcp.tools["deriva_ml_bootstrap_config"](
-        hostname="h", catalog_id="1"
-    )
+    result = await capturing_mcp.tools["deriva_ml_bootstrap_config"](hostname="h", catalog_id="1")
     out = json.loads(result)
     assert out == {"error": "cannot connect"}
