@@ -1,24 +1,35 @@
 """Per-user RAG indexing + vocab indexing + DerivaML docs source for deriva-ml-mcp-plugin.
 
 Phase 6.3 wired three things into the RAG subsystem; v1.1 added a
-fourth (vocabularies); v1.3 (this file) reshapes the per-user trio into
-per-user-per-RID surgical indexers:
+fourth (vocabularies); v1.3 reshaped the per-user trio into
+per-user-per-RID surgical indexers; v1.5 (this file) drops the
+on-connect bulk pass for those three tables in favor of read-through
+(index-on-find) warming:
 
 1. **One GitHub doc source** -- ``informatics-isi-edu/deriva-ml`` ``docs/``
    (declared synchronously via ``ctx.rag_github_source``). The indexer
    crawls it once when RAG is enabled.
 
-2. **Three per-user-per-RID ``on_catalog_connect`` hooks** -- one each
-   for ``Dataset``, ``Workflow``, and ``Execution`` rows. Each hook
-   resolves the calling user's identity, fetches rows under that user's
-   credential, and writes one source per (user, table, RID) tuple to
-   the vector store under
+2. **Read-through (index-on-find) per-user-per-RID writers** -- one
+   logical path each for ``Dataset``, ``Workflow``, and ``Execution``
+   rows. These are NO LONGER ``on_catalog_connect`` hooks (the three
+   bulk first-connect passes were removed in v1.5 because they re-fetched
+   and re-embedded every visible row on every catalog connect). Instead a
+   row's chunk is warmed lazily: the list/get tools call
+   ``_index_rows_on_find(...)`` after a read to schedule a best-effort
+   background ``_reindex_<entity>(...)`` for each row just seen, and the
+   mutating tools call ``_reindex_<entity>(...)`` surgically right after
+   the catalog mutation. Both write one source per (user, table, RID)
+   tuple to the vector store under
    ``data:{host}:{cat}:{user_id}:{table}:{rid}``. The fetch path goes
-   through the plugin's existing ``_list_*_impl`` helpers, so ACL
-   behavior matches the read tools. The per-RID source naming lets
-   mutating tools surgically refresh just the affected source via
-   ``_reindex_<entity>(...)`` immediately after the catalog mutation,
-   so ``rag_search`` finds the change on the very next call.
+   through the plugin's existing ``_list_*_impl`` / ``lookup_*`` helpers,
+   so ACL behavior matches the read tools, and the per-RID source naming
+   lets a single row be refreshed without touching the rest of the
+   user's index, so ``rag_search`` finds the change on the very next
+   call. The ``deriva_ml_resync_indexes`` tool re-runs the same per-RID
+   re-index loop over every visible row on demand (manual "warm
+   everything" backfill via ``_resync_*`` + ``_fetch_*_rows``) -- the
+   replacement for the removed first-connect bulk pass.
 
 3. **One catalog-public ``on_catalog_connect`` hook for vocabularies**
    (v1.1) -- discovers all vocabulary tables via
@@ -37,7 +48,7 @@ per-user-per-RID surgical indexers:
    (``_VocabSerializer``), each producing rich Markdown sections for
    the LLM (header, fields, subsections; empties omitted FaceBase-style).
 
-Why per-user hooks (not ``ctx.rag_dataset_indexer``)?
+Why per-user writers (not ``ctx.rag_dataset_indexer``)?
 ``rag_dataset_indexer`` produces a single global enriched source shared
 across all users (the enricher fires under whichever credential happens
 to connect first). For ML data with per-user ACLs that would leak rows
@@ -77,20 +88,25 @@ Vocab freshness (v1.1):
     is the bridge until upstream ships ``on_data_change``.
 
 First-connect lag (no startup prewarm):
-    All four hooks here fire lazily on the first tool call that
-    connects to a given catalog, so the first user to touch a catalog
-    after a (re)start pays the indexing cost inline. The per-server
-    GitHub doc sources ARE pre-warmed at startup (core's
-    ``_startup_update``), but there is no startup prewarm for
-    per-catalog indexing. The catalog-public parts (core's schema
-    index + this plugin's vocab hook) COULD be primed at startup from
-    an operator-configured catalog list; the per-user trio cannot
-    (no calling-user credential exists at startup -- correct by
+    The vocab ``on_catalog_connect`` hook fires lazily on the first tool
+    call that connects to a given catalog, so the first user to touch a
+    catalog after a (re)start pays the vocab indexing cost inline. The
+    per-user trio no longer indexes on connect at all (v1.5 removed the
+    three bulk first-connect passes); their per-RID chunks are warmed
+    read-through by the list/get tools via ``_index_rows_on_find`` and
+    surgically on mutate via ``_reindex_<entity>``, so there is no
+    per-user bulk cost on connect. The per-server GitHub doc sources ARE
+    pre-warmed at startup (core's ``_startup_update``), but there is no
+    startup prewarm for per-catalog indexing. The catalog-public parts
+    (core's schema index + this plugin's vocab hook) COULD be primed at
+    startup from an operator-configured catalog list; the per-user trio
+    cannot (no calling-user credential exists at startup -- correct by
     design). Tracked upstream as deriva-mcp-core#10 (startup prewarm
     for catalog-public per-catalog indexing). Workaround until then:
     call ``deriva_ml_reindex_vocabularies(hostname, catalog_id)`` once
     per catalog after a restart to remove the vocab portion of the
-    first-connect lag.
+    first-connect lag, and ``deriva_ml_resync_indexes(hostname,
+    catalog_id)`` to warm the calling user's per-user trio in bulk.
 
 Wiring into ``plugin.py`` is in ``register_rag_sources(ctx)``. This
 module is import-safe and idempotent on its own.
@@ -99,7 +115,6 @@ module is import-safe and idempotent on its own.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
@@ -388,18 +403,6 @@ def _fetch_execution_rows(hostname: str, catalog_id: str) -> list[dict[str, Any]
     return [e.model_dump(mode="json") for e in payload.executions]
 
 
-def _coerce_for_index(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Round-trip rows through JSON to drop non-serializable values.
-
-    The execution summary contains ``datetime`` objects; the serializer
-    renders them directly via ``str()`` but the round-trip leaves
-    everything as plain JSON-compatible scalars before chunking, which
-    keeps the per-row write path simple. Datasets and workflows pass
-    through unchanged.
-    """
-    return [json.loads(json.dumps(r, default=str)) for r in rows]
-
-
 # ---------------------------------------------------------------------------
 # Per-RID source naming + single-row write (v1.3 surgical re-index path)
 # ---------------------------------------------------------------------------
@@ -513,8 +516,9 @@ async def _reindex_dataset(hostname: str, catalog_id: str, dataset_rid: str) -> 
     Best-effort: any failure (fetch, render, store I/O) is logged and
     swallowed -- a re-index hiccup must not propagate to the calling
     tool's success path (the catalog mutation already succeeded). On
-    failure returns 0; the next first-connect for this user picks the
-    row up via the bulk path.
+    failure returns 0; the row is picked up on the next read-through
+    warm (a later list/get of this row via ``_index_rows_on_find``) or
+    via ``deriva_ml_resync_indexes``.
 
     Args:
         hostname: Deriva hostname.
@@ -733,11 +737,13 @@ async def _resync_user_sources(
 
     Wrapping orchestrator for the v1.4 manual cross-user-resync tool.
     The v1.3 surgical re-index covers freshness for the calling user's
-    OWN mutations, but mutations by OTHER users (or by non-MCP clients
-    like Chaise) leave the calling user's per-user sources stale until
-    they reconnect. This helper is the bridge: when called, it re-runs
-    the same per-RID re-index loop that ``_make_hook`` runs at first
-    connect, but on demand instead of on connect.
+    OWN mutations, and read-through warming (``_index_rows_on_find``)
+    covers rows the user reads, but mutations by OTHER users (or by
+    non-MCP clients like Chaise) leave the calling user's per-user
+    sources stale until they read or re-index them. This helper is the
+    bridge -- and the replacement for the removed first-connect bulk
+    pass: when called, it re-runs the per-RID re-index loop over every
+    visible row on demand.
 
     Two modes:
 
@@ -752,8 +758,8 @@ async def _resync_user_sources(
       which RID needs refreshing.
 
     Best-effort throughout: per-RID failures are logged and swallowed
-    (same contract as ``_make_hook``). The returned dict reports the
-    count of sources successfully refreshed per table -- a partial
+    (same contract as ``_reindex_<entity>``). The returned dict reports
+    the count of sources successfully refreshed per table -- a partial
     success is normal (e.g. one RID raised; the rest landed).
 
     Args:
@@ -885,120 +891,6 @@ async def _resync_one_table(
                 catalog_id,
             )
     return count
-
-
-# ---------------------------------------------------------------------------
-# Hook factory (first-connect bulk index, per-RID source naming)
-# ---------------------------------------------------------------------------
-
-
-def _make_hook(
-    fetch_fn: Callable[[str, str], list[dict[str, Any]]],
-    table_name: str,
-    table_token: str,
-    serializer: RowSerializer,
-) -> Callable[[str, str, str, dict], Awaitable[None]]:
-    """Build an ``on_catalog_connect`` hook that indexes ``table_name`` per-user-per-RID.
-
-    The returned coroutine fetches rows under the caller's credential,
-    resolves the calling user's identity, and writes one source per
-    (user, table_token, RID) tuple to the vector store. Same total
-    chunk count as v1.0/v1.1's bulk pattern; the difference is that
-    they land in N sources instead of 1, so individual rows can later
-    be replaced surgically by ``_reindex_<entity>``.
-
-    Behavior contract:
-
-    - Wraps the fetch in ``try/except`` so a deriva-ml read failure is
-      logged with table context but does not propagate.
-    - Skips silently (debug log) when ``get_rag_store()`` returns
-      ``None`` -- i.e. when RAG is disabled in this deployment.
-    - Per-row write failures are isolated: a bad row is logged and the
-      loop continues with the rest, so one degenerate row does not
-      poison the whole user's first-connect index pass.
-    - Logs a debug success line including row count + resolved user_id
-      so an operator can investigate "why isn't user X's data showing up?"
-      by flipping on debug logging without overwhelming production logs.
-
-    Args:
-        fetch_fn: Callable that takes ``(hostname, catalog_id)`` and
-            returns summary-shape row dicts.
-        table_name: Catalog table the rows belong to (ERMrest case).
-            Used as the serializer dispatch key.
-        table_token: URL-safe slug for the source-name routing segment
-            (one of ``_DATASET_TOKEN`` / ``_WORKFLOW_TOKEN`` /
-            ``_EXECUTION_TOKEN``).
-        serializer: The ``RowSerializer`` to render each row.
-
-    Returns:
-        An async hook with the ``on_catalog_connect`` signature
-        ``(hostname, catalog_id, schema_hash, schema_json) -> None``.
-    """
-
-    # schema_hash + schema_json are received because deriva-mcp-core's
-    # _dispatch_catalog_connect signature requires them. We deliberately
-    # ignore both: indexing depends only on (host, catalog_id, user_id,
-    # rows), and re-indexing on schema changes is handled separately by
-    # the framework's TTL gating, not by the schema_hash here.
-    async def hook(
-        hostname: str,
-        catalog_id: str,
-        schema_hash: str,  # noqa: ARG001 -- hook signature requires it
-        schema_json: dict,  # noqa: ARG001 -- hook signature requires it
-    ) -> None:
-        try:
-            # fetch_fn wraps synchronous deriva-py HTTP I/O; run it in a
-            # worker thread so the event loop stays responsive while the
-            # catalog is being indexed.
-            raw_rows = await asyncio.to_thread(fetch_fn, hostname, catalog_id)
-            rows = _coerce_for_index(raw_rows)
-        except Exception:  # noqa: BLE001 -- fetch errors are domain-specific
-            logger.exception(
-                "deriva-ml RAG: failed to fetch %s rows for %s/%s",
-                table_name,
-                hostname,
-                catalog_id,
-            )
-            return
-        store = get_rag_store()
-        if store is None:
-            logger.debug("rag store unavailable, skipping %s first-connect index", table_name)
-            return
-        # resolve_user_identity may issue a sync GET /authn/session in
-        # stdio mode; offload so the loop is not blocked on first call.
-        user_id = await asyncio.to_thread(resolve_user_identity, hostname)
-        for row in rows:
-            rid = row.get("rid")
-            if not rid:
-                # Defensive: a row without a RID can't get a stable
-                # per-RID source name; skip with a debug log rather
-                # than silently dropping it under an empty-RID source.
-                logger.debug(
-                    "skipping %s first-connect row with empty rid: %r",
-                    table_name,
-                    row,
-                )
-                continue
-            source = _row_source_name(hostname, catalog_id, user_id, table_token, rid)
-            try:
-                await _write_row_chunk(store, source, table_name, row, serializer)
-            except Exception:  # noqa: BLE001 -- one bad row should not poison the pass
-                logger.exception(
-                    "deriva-ml RAG: failed to first-connect index %s row %s",
-                    table_name,
-                    rid,
-                )
-                continue
-        logger.debug(
-            "first-connect indexed %d %s rows for user=%s host=%s catalog=%s",
-            len(rows),
-            table_name,
-            user_id,
-            hostname,
-            catalog_id,
-        )
-
-    return hook
 
 
 # ---------------------------------------------------------------------------
@@ -1152,11 +1044,13 @@ async def _index_vocabularies(
 def _make_vocab_hook() -> Callable[[str, str, str, dict], Awaitable[None]]:
     """Build the on_catalog_connect hook that bulk-indexes vocabularies.
 
-    Distinct from ``_make_hook`` because vocab indexing has a different
-    shape: one hook fires N writes (one per discovered vocab) rather
-    than one write. Forcing this into the per-user factory's
-    ``(fetch_fn, table_name, serializer)`` signature would obscure the
-    difference. Two clear factories beat one general one.
+    This is the only ``on_catalog_connect`` hook the plugin registers
+    (v1.5 removed the three per-user bulk row hooks). Vocabularies are
+    catalog-public (no per-user ACL) and small, so a single first-connect
+    bulk pass over all discovered vocab tables -- writing one shared
+    ``vocab:`` source per table -- is the right shape. The per-user row
+    tables, by contrast, are warmed read-through and on mutate rather
+    than on connect; see the module docstring.
 
     Returns:
         An async hook with the ``on_catalog_connect`` signature
@@ -1187,25 +1081,31 @@ def _make_vocab_hook() -> Callable[[str, str, str, dict], Awaitable[None]]:
 
 
 def register_rag_sources(ctx: PluginContext) -> None:
-    """Register the DerivaML docs source and four catalog-connect hooks.
+    """Register the GitHub doc sources and the vocabulary catalog-connect hook.
 
-    Hooks fire in registration order on every catalog connect:
+    Wires:
 
-    1. Dataset (per-user-per-RID, ``data:{host}:{cat}:{user_id}:dataset:{rid}``)
-    2. Workflow (per-user-per-RID, ``data:{host}:{cat}:{user_id}:workflow:{rid}``)
-    3. Execution (per-user-per-RID, ``data:{host}:{cat}:{user_id}:execution:{rid}``)
-    4. Vocabularies (catalog-public, custom ``vocab:`` source prefix --
-       v1.1; bypasses upstream's ``data:`` user-id filter, served to
-       all users in the catalog)
+    - Two ``rag_github_source`` declarations (the deriva-ml library docs
+      and this plugin's own README) -- crawled once when RAG is enabled.
+    - One ``on_catalog_connect`` hook for vocabularies (catalog-public,
+      custom ``vocab:`` source prefix -- v1.1; bypasses upstream's
+      ``data:`` user-id filter, served to all users in the catalog).
 
-    The first three are first-connect bulk indexers but write under
-    per-RID source names so mutating tools can later replace just one
-    affected source via the ``_reindex_<entity>`` helpers.
+    v1.5 removed the three per-user bulk row indexers (Dataset,
+    Workflow, Execution) that used to register as ``on_catalog_connect``
+    hooks here -- they re-fetched and re-embedded every visible row on
+    every catalog connect. Those per-user ``data:`` per-RID sources
+    (``data:{host}:{cat}:{user_id}:{table}:{rid}``) are now warmed
+    read-through by the list/get tools (via ``_index_rows_on_find``) and
+    surgically on mutate (via ``_reindex_<entity>``), with the
+    ``deriva_ml_resync_indexes`` tool (``_resync_*`` + ``_fetch_*_rows``)
+    available for manual bulk backfill. The per-RID ``data:`` source
+    shape is unchanged.
 
     Called from ``plugin.register(ctx)``. Safe to call without any RAG
     config -- ``ctx.rag_github_source`` is a no-op when RAG is
-    disabled, and the hooks are best-effort: they swallow fetch
-    exceptions and short-circuit when the vector store is unavailable.
+    disabled, and the vocab hook is best-effort: it swallows fetch
+    exceptions and short-circuits when the vector store is unavailable.
 
     Args:
         ctx: PluginContext supplied by deriva-mcp-core at startup.
@@ -1233,16 +1133,5 @@ def register_rag_sources(ctx: PluginContext) -> None:
         branch=_GITHUB_MCP_DOCS_BRANCH,
         path_prefix=_GITHUB_MCP_DOCS_PATH_PREFIX,
         doc_type=_GITHUB_MCP_DOCS_DOC_TYPE,
-    )
-    ctx.on_catalog_connect(
-        _make_hook(_fetch_dataset_rows, _DATASET_TABLE, _DATASET_TOKEN, _DatasetSerializer())
-    )
-    ctx.on_catalog_connect(
-        _make_hook(_fetch_workflow_rows, _WORKFLOW_TABLE, _WORKFLOW_TOKEN, _WorkflowSerializer())
-    )
-    ctx.on_catalog_connect(
-        _make_hook(
-            _fetch_execution_rows, _EXECUTION_TABLE, _EXECUTION_TOKEN, _ExecutionSerializer()
-        )
     )
     ctx.on_catalog_connect(_make_vocab_hook())

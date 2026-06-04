@@ -362,17 +362,16 @@ def test_register_wires_rag_github_sources(ctx):
     assert names == {"deriva-ml-docs", "deriva-ml-mcp-plugin-docs"}
 
 
-def test_register_wires_four_catalog_connect_hooks(ctx):
-    """``register(ctx)`` must wire the four RAG catalog hooks.
+def test_register_wires_one_catalog_connect_hook(ctx):
+    """``register(ctx)`` wires exactly the vocab catalog-connect hook.
 
-    Three per-user row indexers (Dataset, Workflow, Execution) plus
-    one catalog-public vocab indexer (added in v1.1). Hook identity
-    is already covered by ``tests/test_rag.py``; this test only pins
-    the count so that dropping one hook from ``register_rag_sources``
-    is also caught at the plugin level.
+    Read-through indexing removed the three per-user bulk row indexers
+    (Dataset/Workflow/Execution). Only the catalog-public vocab indexer
+    fires on connect now. Hook identity is covered in test_rag.py; this
+    pins the count so re-adding a bulk hook is caught at the plugin level.
     """
     register(ctx)
-    assert len(ctx._catalog_connect_hooks) == 4
+    assert len(ctx._catalog_connect_hooks) == 1
 
 
 def test_register_wires_ml_prompts(ctx, capturing_mcp):
@@ -410,7 +409,7 @@ def test_register_does_not_use_rag_dataset_indexer(ctx):
 def test_vocab_hook_writes_to_vocab_prefix_not_data_prefix(ctx):
     """Architectural carve-out pin: vocab chunks land under ``vocab:``, never ``data:``.
 
-    The vocab hook is the fourth ``on_catalog_connect`` hook registered
+    The vocab hook is the only ``on_catalog_connect`` hook registered
     by ``register_rag_sources``. It MUST write to the vector store
     under a ``vocab:`` source prefix (catalog-public, no per-user
     partitioning) and MUST NOT route through ``index_table_data``
@@ -428,7 +427,7 @@ def test_vocab_hook_writes_to_vocab_prefix_not_data_prefix(ctx):
     from unittest.mock import AsyncMock, MagicMock, patch
 
     register(ctx)
-    vocab_hook = ctx._catalog_connect_hooks[3]
+    vocab_hook = ctx._catalog_connect_hooks[0]
 
     # Mock the vocab table the hook iterates over.
     vocab_table = MagicMock()
@@ -470,64 +469,3 @@ def test_vocab_hook_writes_to_vocab_prefix_not_data_prefix(ctx):
             assert not chunk.source.startswith("data:"), (
                 f"vocab hook accidentally routed through data: prefix: {chunk.source!r}"
             )
-
-
-def test_data_sources_use_per_rid_naming(ctx):
-    """v1.3 pin: per-user trio chunks land under ``data:{h}:{c}:{user_id}:{table}:{rid}``.
-
-    The pre-v1.3 source-name shape was ``data:{host}:{cat}:{user_id}``
-    (one source per user, all rows lumped together). v1.3's surgical
-    re-index requires per-RID source naming so a single mutating tool
-    can refresh just one source via ``_reindex_<entity>``. This test
-    pins that source-naming shape end-to-end at the plugin level: fire
-    each hook with mocked fetchers + a captured ``_write_row_chunk``,
-    then assert every captured source name matches the v1.3 shape AND
-    starts with the user-id prefix that upstream's filter gates on.
-    """
-    from unittest.mock import MagicMock, patch
-
-    captured: list[tuple[str, str]] = []
-
-    async def fake_write(store, source, table_name, row, serializer):
-        captured.append((table_name, source))
-        return 1
-
-    from deriva_ml_mcp_plugin.resources import rag as rag_module
-
-    user_id = "https://auth.example.org/sub/u1"
-    user_prefix = f"data:h.example:1:{user_id}"
-
-    # Patch the fetchers BEFORE register(ctx) -- the hook factory
-    # captures the fetch fn at registration time, so any post-register
-    # patch.object on the module-level fetch name has no effect on the
-    # already-captured closure reference.
-    with (
-        patch.object(rag_module, "_fetch_dataset_rows", return_value=[{"rid": "1-DSAA"}]),
-        patch.object(rag_module, "_fetch_workflow_rows", return_value=[{"rid": "1-WFAA"}]),
-        patch.object(rag_module, "_fetch_execution_rows", return_value=[{"rid": "1-EXAA"}]),
-        patch.object(rag_module, "resolve_user_identity", return_value=user_id),
-        patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
-        patch.object(rag_module, "_write_row_chunk", side_effect=fake_write),
-    ):
-        register(ctx)
-        dataset_hook = ctx._catalog_connect_hooks[0]
-        workflow_hook = ctx._catalog_connect_hooks[1]
-        execution_hook = ctx._catalog_connect_hooks[2]
-
-        import asyncio
-
-        asyncio.run(dataset_hook("h.example", "1", "hash", {}))
-        asyncio.run(workflow_hook("h.example", "1", "hash", {}))
-        asyncio.run(execution_hook("h.example", "1", "hash", {}))
-
-    # Every source carries the user-id prefix (so upstream's user-id
-    # filter still gates correctly) AND the per-RID shape.
-    assert captured == [
-        ("Dataset", f"{user_prefix}:dataset:1-DSAA"),
-        ("Workflow", f"{user_prefix}:workflow:1-WFAA"),
-        ("Execution", f"{user_prefix}:execution:1-EXAA"),
-    ]
-    for _, source in captured:
-        assert source.startswith(user_prefix + ":"), (
-            f"per-RID source must extend user-id prefix; got {source!r}"
-        )
