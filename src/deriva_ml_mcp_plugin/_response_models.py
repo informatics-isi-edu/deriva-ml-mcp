@@ -254,6 +254,38 @@ class DatasetListResponse(_PaginationFields):
     datasets: list[DatasetSummary]
 
 
+class DatasetReferenceEntry(BaseModel):
+    """One dataset that references a table.
+
+    Wire mirror of ``deriva_ml.DatasetReference`` (constructed via
+    ``model_dump()`` so library-side field additions fail loudly under
+    ``extra="forbid"`` instead of silently changing the wire shape).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_rid: str
+    element_table: str
+    member_count: int
+
+
+class DatasetReferencesResponse(BaseModel):
+    """Response for ``deriva_ml_find_datasets_referencing``.
+
+    ``column`` echoes the request filter (``null`` when the caller did
+    not narrow to a column). ``count == 0`` with an empty ``references``
+    list is the normal "nothing references this table" answer, not an
+    error.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    table: str
+    column: str | None = None
+    count: int
+    references: list[DatasetReferenceEntry]
+
+
 class DatasetMemberRef(BaseModel):
     """One dataset member: ``{"table": str, "rid": str}`` flat shape."""
 
@@ -670,6 +702,39 @@ class FeatureListResponse(_PaginationFields):
     """Paginated list of Features. Produced by ``_list_features_impl``."""
 
     features: list[FeatureSummary]
+
+
+class FeatureReferenceEntry(BaseModel):
+    """One feature definition that references a table.
+
+    Wire mirror of ``deriva_ml.FeatureReference`` (constructed via
+    ``model_dump()`` so library-side field additions fail loudly under
+    ``extra="forbid"`` instead of silently changing the wire shape).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    feature_name: str
+    target_table: str
+    feature_table: str
+    referencing_columns: list[str]
+
+
+class FeatureReferencesResponse(BaseModel):
+    """Response for ``deriva_ml_find_features_referencing``.
+
+    ``column`` echoes the request filter (``null`` when the caller did
+    not narrow to a column). ``count == 0`` with an empty ``references``
+    list is the normal "no feature references this table" answer, not
+    an error.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    table: str
+    column: str | None = None
+    count: int
+    references: list[FeatureReferenceEntry]
 
 
 class FeatureValueRecord(BaseModel):

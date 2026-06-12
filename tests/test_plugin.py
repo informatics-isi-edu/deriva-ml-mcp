@@ -27,6 +27,9 @@ _DATASET_TOOLS = frozenset(
         "deriva_ml_list_dataset_members",
         "deriva_ml_list_dataset_relations",
         "deriva_ml_list_dataset_element_types",
+        # Round B (plugin#25): reverse-lookup impact analysis over
+        # deriva-ml's find_datasets_referencing.
+        "deriva_ml_find_datasets_referencing",
         "deriva_ml_bag_info",
         "deriva_ml_get_dataset_spec",
         # v3.3: cheap metadata-only pre-flight validators (see deriva-ml ADR-0002).
@@ -61,6 +64,9 @@ _FEATURE_TOOLS = frozenset(
         "deriva_ml_list_features",
         "deriva_ml_get_feature",
         "deriva_ml_list_feature_values",
+        # Round B (plugin#25): reverse-lookup impact analysis over
+        # deriva-ml's find_features_referencing.
+        "deriva_ml_find_features_referencing",
         # Mutation tools (catalog-state only -- feature definition).
         # deriva_ml_add_feature_values was removed in v0.5.0 because
         # feature staging writes to a per-process SQLite manifest; the

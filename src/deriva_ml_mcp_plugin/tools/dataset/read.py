@@ -1,8 +1,9 @@
 """Read-only dataset tools and shared dataset helpers.
 
-This submodule houses the 11 read tools (``deriva_ml_list_datasets``,
+This submodule houses the 12 read tools (``deriva_ml_list_datasets``,
 ``deriva_ml_get_dataset``, ``deriva_ml_list_dataset_members``,
 ``deriva_ml_list_dataset_relations``, ``deriva_ml_list_dataset_element_types``,
+``deriva_ml_find_datasets_referencing``,
 ``deriva_ml_bag_info``, ``deriva_ml_get_dataset_spec``,
 ``deriva_ml_validate_dataset_specs``,
 ``deriva_ml_validate_execution_configuration``,
@@ -54,6 +55,8 @@ from deriva_ml_mcp_plugin._response_models import (
     DatasetListResponse,
     DatasetMemberRef,
     DatasetMembersSummaryResponse,
+    DatasetReferenceEntry,
+    DatasetReferencesResponse,
     DatasetRelationsResponse,
     DatasetSummary,
     DatasetVersionEntry,
@@ -803,6 +806,72 @@ def register(ctx: PluginContext) -> None:
             return _error_envelope(
                 exc,
                 operation="list_dataset_element_types",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+    @ctx.tool(mutates=False)
+    async def deriva_ml_find_datasets_referencing(
+        hostname: str,
+        catalog_id: str,
+        table: str,
+        column: str | None = None,
+    ) -> str:
+        """Find datasets that contain members from a given table.
+
+        Impact analysis for schema evolution: before altering or
+        dropping a table (or one of its columns), ask which datasets
+        would be affected. This is the reverse direction of
+        ``deriva_ml_list_dataset_element_types`` -- that tool says
+        "which tables CAN be dataset members"; this one says "which
+        datasets DO hold members of this table right now".
+
+        Args:
+            table: Name of the table to check (e.g. ``"Image"``).
+            column: Optional column name. When set, only report
+                datasets whose association with ``table`` involves this
+                column. When None (default), any reference counts.
+
+        Returns:
+            JSON string ``{"table", "column", "count", "references":
+            [{"dataset_rid", "element_table", "member_count"}, ...]}``.
+            ``count == 0`` with empty ``references`` means no dataset
+            currently holds members of this table -- a normal answer,
+            not an error.
+
+        Raises:
+            DerivaMLException: Wrapped as ``{"error": ...}`` -- e.g.
+                when ``table`` does not exist in the catalog.
+
+        Example:
+            ``{"table": "Image", "column": null, "count": 2,
+            "references": [{"dataset_rid": "1-AAAA", "element_table":
+            "Image", "member_count": 550}, {"dataset_rid": "1-BBBB",
+            "element_table": "Image", "member_count": 110}]}``
+        """
+        try:
+            with deriva_call():
+                # Run the synchronous deriva-ml calls in a thread pool
+                # so the event loop stays responsive.
+                # ``find_datasets_referencing`` does a bulk fetch over
+                # the association table. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in
+                # threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                refs = await asyncio.to_thread(
+                    partial(ml.find_datasets_referencing, table, column=column)
+                )
+            return DatasetReferencesResponse(
+                table=table,
+                column=column,
+                count=len(refs),
+                references=[DatasetReferenceEntry(**r.model_dump()) for r in refs],
+            ).model_dump_json(by_alias=True)
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="find_datasets_referencing",
                 hostname=hostname,
                 catalog_id=catalog_id,
                 audit=False,

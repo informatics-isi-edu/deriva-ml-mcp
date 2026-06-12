@@ -981,3 +981,54 @@ async def test_bootstrap_config_error_path(dataset_ctx, capturing_mcp, mock_ml) 
     result = await capturing_mcp.tools["deriva_ml_bootstrap_config"](hostname="h", catalog_id="1")
     out = json.loads(result)
     assert out == {"error": "cannot connect", "error_type": "RuntimeError"}
+
+
+# ---------------------------------------------------------------------------
+# find_datasets_referencing (plugin#25 -- Round B wrapper over deriva-ml#294)
+# ---------------------------------------------------------------------------
+
+
+async def test_find_datasets_referencing_success(dataset_ctx, capturing_mcp, mock_ml):
+    """Wrapper maps library DatasetReference models to the wire shape."""
+    from deriva_ml import DatasetReference
+
+    mock_ml.find_datasets_referencing.return_value = [
+        DatasetReference(dataset_rid="1-AAAA", element_table="Image", member_count=550),
+        DatasetReference(dataset_rid="1-BBBB", element_table="Image", member_count=110),
+    ]
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_datasets_referencing"](
+            hostname="h", catalog_id="1", table="Image"
+        )
+    )
+    assert out["table"] == "Image"
+    assert out["column"] is None
+    assert out["count"] == 2
+    assert out["references"][0] == {
+        "dataset_rid": "1-AAAA",
+        "element_table": "Image",
+        "member_count": 550,
+    }
+    mock_ml.find_datasets_referencing.assert_called_once_with("Image", column=None)
+
+
+async def test_find_datasets_referencing_empty(dataset_ctx, capturing_mcp, mock_ml):
+    """Unreferenced table -> count 0, empty references (not an error)."""
+    mock_ml.find_datasets_referencing.return_value = []
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_datasets_referencing"](
+            hostname="h", catalog_id="1", table="Observation", column="URL"
+        )
+    )
+    assert out == {"table": "Observation", "column": "URL", "count": 0, "references": []}
+
+
+async def test_find_datasets_referencing_error_envelope(dataset_ctx, capturing_mcp, mock_ml):
+    """Unknown table propagates as the standard error envelope."""
+    mock_ml.find_datasets_referencing.side_effect = RuntimeError("Table FooBar not found")
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_datasets_referencing"](
+            hostname="h", catalog_id="1", table="FooBar"
+        )
+    )
+    assert out == {"error": "Table FooBar not found", "error_type": "RuntimeError"}
