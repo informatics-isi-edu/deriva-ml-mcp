@@ -1,12 +1,14 @@
 """Read-only execution tools and shared execution helpers.
 
-This submodule houses the 8 read tools (``deriva_ml_list_executions``,
+This submodule houses the 10 read tools (``deriva_ml_list_executions``,
 ``deriva_ml_get_execution``, ``deriva_ml_find_workflow_executions``,
 ``deriva_ml_find_dataset_executions``, ``deriva_ml_find_experiments``,
 ``deriva_ml_list_execution_children``, ``deriva_ml_list_execution_parents``,
-``deriva_ml_get_lineage``) plus the shared helpers
+``deriva_ml_get_lineage``, ``deriva_ml_find_executions_consuming``,
+``deriva_ml_multirun_status``) plus the shared helpers
 (``_summarize_execution``, ``_list_executions_impl``,
-``_get_execution_detail_impl``, ``_get_lineage_impl``) that the
+``_get_execution_detail_impl``, ``_get_lineage_impl``,
+``_find_executions_consuming_impl``, ``_multirun_status_impl``) that the
 read tools and the ``resources/ml.py`` / ``resources/rag.py`` modules
 consume to keep tool / resource shapes in sync.
 
@@ -49,6 +51,7 @@ from deriva_ml_mcp_plugin._response_models import (
     DatasetExecutionSummary,
     ExecutionAssetRef,
     ExecutionChildrenResponse,
+    ExecutionConsumersResponse,
     ExecutionDetail,
     ExecutionExperiment,
     ExecutionInputDatasetRef,
@@ -57,6 +60,7 @@ from deriva_ml_mcp_plugin._response_models import (
     ExecutionOutputs,
     ExecutionParentsResponse,
     ExecutionSummary,
+    MultirunStatusResponse,
     PreflightCountResponse,
 )
 
@@ -1487,6 +1491,168 @@ def register(ctx: PluginContext) -> None:
                 catalog_id=catalog_id,
                 audit=False,
             )
+
+    @ctx.tool(mutates=False)
+    async def deriva_ml_find_executions_consuming(
+        hostname: str,
+        catalog_id: str,
+        rid: str,
+    ) -> str:
+        """Forward lineage: find the executions that CONSUMED an artifact.
+
+        The forward complement of ``deriva_ml_get_lineage`` (which walks
+        backward from an artifact to its producers). Given a Dataset or
+        asset RID, returns the executions that took it as an INPUT --
+        the "is it safe to delete / modify this?" question. An empty
+        result means no RECORDED consumption (producers are not
+        consumers and are excluded).
+
+        Dispatch is by resolved RID kind: Dataset RIDs follow input
+        ``Dataset_Execution`` edges; asset RIDs follow the asset's
+        ``<Asset>_Execution`` association with ``Asset_Role="Input"``.
+        Other RID kinds (workflows, vocabulary terms, plain entities)
+        are not consumption-shaped and return an error envelope.
+
+        Args:
+            rid: RID of a Dataset or an asset-table row.
+
+        Returns:
+            JSON string ``{"rid", "count", "consumers": [execution
+            summary, ...]}`` where each summary carries ``rid`` /
+            ``workflow_rid`` / ``status`` / ``description`` / timing
+            fields. ``count == 0`` with empty ``consumers`` is the
+            normal "nothing consumed this" answer, not an error.
+
+        Raises:
+            DerivaMLException: Wrapped as ``{"error": ...}`` -- e.g.
+                when ``rid`` does not exist or is not a Dataset/asset.
+
+        Example:
+            ``{"rid": "1-DS01", "count": 2, "consumers": [{"rid":
+            "1-EXEC-A", "workflow_rid": "1-WF01", "status": "Uploaded",
+            ...}, ...]}``
+        """
+        try:
+            with deriva_call():
+                # Run the synchronous deriva-ml calls in a thread pool
+                # so the event loop stays responsive.
+                # ``find_executions_consuming`` resolves the RID and
+                # walks association edges. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in
+                # threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(_find_executions_consuming_impl, ml, rid)
+            return payload.model_dump_json(by_alias=True)
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="find_executions_consuming",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+    @ctx.tool(mutates=False)
+    async def deriva_ml_multirun_status(
+        hostname: str,
+        catalog_id: str,
+        workflow_rid: str,
+    ) -> str:
+        """Status counts across all executions of one workflow, in one call.
+
+        The "is the sweep done?" question for multirun experiments:
+        instead of paginating ``deriva_ml_list_executions`` and counting
+        client-side, this aggregates the ``Status`` column server-side
+        and returns one small summary. Null catalog statuses are counted
+        under ``"Created"``, matching ``deriva_ml_get_execution``'s read
+        contract.
+
+        Args:
+            workflow_rid: RID of the workflow to summarize.
+
+        Returns:
+            JSON string ``{"workflow_rid", "counts": {<status>: N, ...},
+            "total"}``. ``total == 0`` with empty ``counts`` means the
+            workflow has no executions yet.
+
+        Raises:
+            DerivaMLException: Wrapped as ``{"error": ...}`` when
+                ``workflow_rid`` is not a workflow.
+
+        Example:
+            ``{"workflow_rid": "1-WF01", "counts": {"Uploaded": 18,
+            "Running": 2, "Failed": 1}, "total": 21}``
+        """
+        try:
+            with deriva_call():
+                # Run the synchronous deriva-ml calls in a thread pool
+                # so the event loop stays responsive.
+                # ``multirun_status_summary`` is a single aggregation
+                # query. See deriva-mcp-core plugin-authoring-guide.md
+                # §"Synchronous work in threads".
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(_multirun_status_impl, ml, workflow_rid)
+            return payload.model_dump_json(by_alias=True)
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="multirun_status",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+
+def _find_executions_consuming_impl(ml: Any, rid: str) -> ExecutionConsumersResponse:
+    """Shared helper: tool ``deriva_ml_find_executions_consuming`` and resource
+    ``deriva://catalog/{h}/{c}/deriva-ml/lineage-forward/{rid}`` both call
+    this so their payloads cannot drift.
+
+    Wraps ``ml.find_executions_consuming(rid)`` and maps each consuming
+    ``ExecutionRecord`` through ``_summarize_execution``.
+
+    Args:
+        ml: The ``DerivaML`` instance bound to the catalog.
+        rid: RID of a Dataset or an asset-table row.
+
+    Returns:
+        ``ExecutionConsumersResponse`` -- see
+        ``deriva_ml_mcp_plugin._response_models``.
+
+    Example:
+        >>> _find_executions_consuming_impl(ml, "1-DS01")  # doctest: +SKIP
+    """
+    records = ml.find_executions_consuming(rid)
+    return ExecutionConsumersResponse(
+        rid=rid,
+        count=len(records),
+        consumers=[_summarize_execution(r) for r in records],
+    )
+
+
+def _multirun_status_impl(ml: Any, workflow_rid: str) -> MultirunStatusResponse:
+    """Shared helper: tool ``deriva_ml_multirun_status`` and resource
+    ``deriva://catalog/{h}/{c}/deriva-ml/workflow/{workflow_rid}/multirun-status``
+    both call this so their payloads cannot drift.
+
+    Wraps ``ml.multirun_status_summary(workflow_rid)`` and re-validates
+    the library's ``MultirunStatusSummary`` into the wire model via
+    ``model_dump()`` (library-side field drift fails loudly under
+    ``extra="forbid"``).
+
+    Args:
+        ml: The ``DerivaML`` instance bound to the catalog.
+        workflow_rid: RID of the workflow to summarize.
+
+    Returns:
+        ``MultirunStatusResponse`` -- see
+        ``deriva_ml_mcp_plugin._response_models``.
+
+    Example:
+        >>> _multirun_status_impl(ml, "1-WF01")  # doctest: +SKIP
+    """
+    summary = ml.multirun_status_summary(workflow_rid)
+    return MultirunStatusResponse(**summary.model_dump())
 
 
 def _get_lineage_impl(ml: Any, rid: str, depth: int | None, max_executions: int) -> Any:

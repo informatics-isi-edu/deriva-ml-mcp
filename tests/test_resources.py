@@ -189,6 +189,9 @@ def test_register_adds_all_resources(resource_ctx, capturing_mcp):
         "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/executions",
         "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/execution/{execution_rid}",
         "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/lineage/{rid}",
+        # Round C (plugin#26) forward-lineage + multirun-status resources.
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/lineage-forward/{rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/workflow/{workflow_rid}/multirun-status",
         "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/features/{table_name}",
         "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/asset/{asset_rid}",
         "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/assets/{schema}",
@@ -1411,3 +1414,74 @@ async def test_ml_asset_detail_omits_no_data(resource_ctx, capturing_mcp, mock_m
     assert out["description"] == ""
     assert out["executions"] == []
     assert out["asset_types"] == []
+
+
+# ---------------------------------------------------------------------------
+# deriva-ml/lineage-forward/{rid}  (plugin#26 -- Round C)
+# ---------------------------------------------------------------------------
+
+_LINEAGE_FORWARD_URI = "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/lineage-forward/{rid}"
+_MULTIRUN_STATUS_URI = (
+    "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/workflow/{workflow_rid}/multirun-status"
+)
+
+
+async def test_ml_lineage_forward_success(resource_ctx, capturing_mcp, mock_ml):
+    """Same wire shape as the deriva_ml_find_executions_consuming tool."""
+    mock_ml.find_executions_consuming.return_value = [
+        _make_execution_record_mock(rid="1-EXEC-A"),
+    ]
+    out = json.loads(
+        await capturing_mcp.resources[_LINEAGE_FORWARD_URI](
+            hostname="h", catalog_id="1", rid="1-DS"
+        )
+    )
+    assert out["rid"] == "1-DS"
+    assert out["count"] == 1
+    assert out["consumers"][0]["rid"] == "1-EXEC-A"
+    mock_ml.find_executions_consuming.assert_called_once_with("1-DS")
+
+
+async def test_ml_lineage_forward_error_path_is_silent(resource_ctx, capturing_mcp, mock_ml):
+    mock_ml.find_executions_consuming.side_effect = RuntimeError("not consumption-shaped")
+    with patch("deriva_ml_mcp_plugin._helpers.audit_event") as mock_audit:
+        out = json.loads(
+            await capturing_mcp.resources[_LINEAGE_FORWARD_URI](
+                hostname="h", catalog_id="1", rid="1-WF"
+            )
+        )
+    assert out == {"error": "not consumption-shaped", "error_type": "RuntimeError"}
+    assert mock_audit.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# deriva-ml/workflow/{workflow_rid}/multirun-status  (plugin#26 -- Round C)
+# ---------------------------------------------------------------------------
+
+
+async def test_ml_multirun_status_success(resource_ctx, capturing_mcp, mock_ml):
+    """Same wire shape as the deriva_ml_multirun_status tool."""
+    from deriva_ml.execution.execution_record import MultirunStatusSummary
+
+    mock_ml.multirun_status_summary.return_value = MultirunStatusSummary(
+        workflow_rid="1-WF01", counts={"Uploaded": 3}, total=3
+    )
+    out = json.loads(
+        await capturing_mcp.resources[_MULTIRUN_STATUS_URI](
+            hostname="h", catalog_id="1", workflow_rid="1-WF01"
+        )
+    )
+    assert out == {"workflow_rid": "1-WF01", "counts": {"Uploaded": 3}, "total": 3}
+    mock_ml.multirun_status_summary.assert_called_once_with("1-WF01")
+
+
+async def test_ml_multirun_status_error_path_is_silent(resource_ctx, capturing_mcp, mock_ml):
+    mock_ml.multirun_status_summary.side_effect = RuntimeError("not a workflow")
+    with patch("deriva_ml_mcp_plugin._helpers.audit_event") as mock_audit:
+        out = json.loads(
+            await capturing_mcp.resources[_MULTIRUN_STATUS_URI](
+                hostname="h", catalog_id="1", workflow_rid="1-XX"
+            )
+        )
+    assert out == {"error": "not a workflow", "error_type": "RuntimeError"}
+    assert mock_audit.call_count == 0

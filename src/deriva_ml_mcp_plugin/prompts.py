@@ -4,7 +4,7 @@ These are MCP prompts (registered via ``@ctx.prompt(...)``), not Python
 docstrings. FastMCP surfaces them through the MCP ``prompts/list`` and
 ``prompts/get`` endpoints so an LLM client can pull them up by name at
 the start of a conversation -- they are the cold-start anchor for the
-plugin's 50 tools and 19 resources.
+plugin's 52 tools and 21 resources.
 
 The two prompts complement the four built-in core prompts shipped by
 ``deriva-mcp-core`` (``query_guide``, ``entity_guide``,
@@ -677,7 +677,7 @@ you're driving the library directly from a notebook or skill.
 
 THE FIVE ML DOMAINS
 -------------------
-Forty-four of the 50 tools are organized into five domain modules. The
+Forty-six of the 52 tools are organized into five domain modules. The
 other six: the catalog-maintenance tools
 ``deriva_ml_create_vocabulary``, ``deriva_ml_reindex_vocabularies``,
 ``deriva_ml_reindex_rows``; the cross-domain
@@ -712,13 +712,19 @@ for the wire name.
                   URL + checksum + workflow_type). Verbs: list / get /
                   find_workflow_by_url / create / update.
 
-    execution  -- 8 tools (read-only). A single run of a workflow
+    execution  -- 10 tools (read-only). A single run of a workflow
                   against datasets and assets. The MCP surface for
                   executions is observational only: list / get /
                   find_workflow_executions / find_dataset_executions /
                   list_execution_children /
                   list_execution_parents / find_experiments /
-                  get_lineage. ``find_dataset_executions`` answers
+                  get_lineage / find_executions_consuming /
+                  multirun_status. ``find_executions_consuming`` is
+                  forward lineage ("what consumed this dataset/asset?"
+                  -- the "safe to delete?" check); ``multirun_status``
+                  aggregates status counts across one workflow's
+                  executions ("is the sweep done?").
+                  ``find_dataset_executions`` answers
                   "which runs used this dataset?" -- role is derived
                   relationally (input = a Dataset_Execution edge,
                   output = Dataset_Version authorship), never from a
@@ -809,6 +815,12 @@ The full read-only resource family:
                                                     ``metadata``) + experiment
     deriva://catalog/{h}/{c}/deriva-ml/lineage/{rid}    -- provenance chain for any artifact
                                                     (Dataset, Asset, Feature value, Execution)
+    deriva://catalog/{h}/{c}/deriva-ml/lineage-forward/{rid}
+                                                 -- forward lineage: executions that CONSUMED
+                                                    this Dataset/asset (empty = safe to delete)
+    deriva://catalog/{h}/{c}/deriva-ml/workflow/{rid}/multirun-status
+                                                 -- status counts across one workflow's
+                                                    executions ("is the sweep done?")
     deriva://catalog/{h}/{c}/deriva-ml/features/{table} -- features defined on one table
     deriva://catalog/{h}/{c}/deriva-ml/asset/{rid}      -- one asset + bundled executions
     deriva://catalog/{h}/{c}/deriva-ml/assets/{schema}  -- asset tables in one schema
@@ -853,6 +865,8 @@ resource cannot express (status, workflow, deleted-only, etc.).
     deriva://catalog/{h}/{c}/deriva-ml/assets/{schema}            deriva_ml_list_assets (schema-scoped)
     deriva://catalog/{h}/{c}/deriva-ml/asset/{rid}                (no list tool -- one-RID only)
     deriva://catalog/{h}/{c}/deriva-ml/lineage/{rid}              deriva_ml_get_lineage
+    deriva://catalog/{h}/{c}/deriva-ml/lineage-forward/{rid}      deriva_ml_find_executions_consuming
+    deriva://catalog/{h}/{c}/deriva-ml/workflow/{rid}/multirun-status  deriva_ml_multirun_status
     deriva://catalog/{h}/{c}/deriva-ml/vocabularies/{schema}      list_vocabulary_terms (core; per-table)
 
 Write tools (create / update / commit / abort / start / add_members /
@@ -976,6 +990,10 @@ start at step 3.
     which runs used / produced a dataset   deriva_ml_find_dataset_executions /
                                            deriva_ml_get_lineage
     executions of a workflow               deriva_ml_find_workflow_executions
+    what CONSUMED this dataset/asset       deriva_ml_find_executions_consuming(rid)
+      ("safe to delete?")                  -- forward complement of get_lineage
+    is the sweep done? (status counts      deriva_ml_multirun_status(workflow_rid)
+      across one workflow's runs)          -- NOT list_executions + count client-side
     feature values a run produced          deriva_ml_list_feature_values(
                                              ..., execution_rids=[rid])
                                            -- NOT a raw query on the feature
@@ -1297,11 +1315,11 @@ and ``description``. There is no compat shim; update any references.
 
 THE MENU
 --------
-Quick orientation: 50 tools -- 44 across the 5 ML domains (dataset,
+Quick orientation: 52 tools -- 46 across the 5 ML domains (dataset,
 feature, workflow, execution, asset) plus 3 catalog-maintenance tools
 (create_vocabulary, reindex_vocabularies, reindex_rows), the
 cross-domain describe_rid, and the orientation pair (primer,
-deriva_ml_get_guide) -- + 19 read-only resources (16 catalog-scoped under the
+deriva_ml_get_guide) -- + 21 read-only resources (18 catalog-scoped under the
 ``deriva://catalog/{h}/{c}/deriva-ml/...`` URI prefix + 3 static
 cold-start) + GitHub doc sources indexed for RAG (``deriva-ml-docs``,
 ``deriva-ml-mcp-plugin-docs``) + per-user RAG indexes that
