@@ -271,6 +271,21 @@ per-server SQLite manifest state from deriva-ml's
 ``Execution._manifest_store``; deprecating that pair and moving it
 to a ``work-with-executions`` skill is the load-bearing fix.
 
+## Out of Scope: Local Storage Management
+
+The deriva-ml 1.46 cache/storage APIs (`list_cached_bags`,
+`list_cached_assets`, `delete_cached_bag`, `delete_cached_asset`,
+`clear_cache`, `clean_execution_dirs`, `get_storage_summary`) are
+**deliberately not exposed** as MCP tools or resources. They operate
+on the filesystem of the machine where the deriva-ml Python library
+runs — the user's machine — and this plugin's server does not share
+that filesystem. Storage management is the `manage-deriva-storage`
+skill's job (it runs Python locally). Do not add `storage/*`
+resources or cache-cleanup tools here; see
+[`docs/adr/0001-local-storage-management-out-of-mcp-scope.md`](docs/adr/0001-local-storage-management-out-of-mcp-scope.md)
+for the full decision, including the recorded tension with the
+pre-existing `deriva_ml_cache_dataset` / `bag_info` cache fields.
+
 ## Tool / Resource Dual-Mode Policy
 
 For every read-only ML domain object (dataset, workflow, execution, feature),
