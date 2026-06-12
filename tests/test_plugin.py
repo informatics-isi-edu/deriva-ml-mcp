@@ -46,7 +46,7 @@ _DATASET_TOOLS = frozenset(
         # widened to take both `dataset_types` and `description`.
         "deriva_ml_update_dataset",
         "deriva_ml_add_dataset_element_type",
-        "deriva_ml_release",
+        "deriva_ml_release_dataset",
         # Complex tools. v0.5.0 retired deriva_ml_cache_dataset per the
         # stateless rule (bag materialization is a user-local Python
         # operation; see docs/audit-2026-05-23.md). denormalize_dataset
@@ -134,7 +134,7 @@ _VOCABULARY_TOOLS = frozenset(
     {
         "deriva_ml_create_vocabulary",
         "deriva_ml_reindex_vocabularies",
-        "deriva_ml_resync_indexes",
+        "deriva_ml_reindex_rows",
     }
 )
 
@@ -152,14 +152,14 @@ _RESOLVE_TOOLS = frozenset(
 # Orientation tools registered by ``prompts.py`` (not part of the five ML
 # domains). ``deriva_ml_primer`` returns the startup primer body; it is the
 # tool-shaped counterpart of the ``deriva_ml_primer`` prompt, for agents that
-# do not surface prompts as commands. ``get_guide`` fetches a single guide by
+# do not surface prompts as commands. ``deriva_ml_get_guide`` fetches a single guide by
 # name on demand (plugin-owned guide bodies inline, core guides redirected to
 # their slash-command prompt). Both are mutates=False (static text, no catalog
 # I/O).
 _PRIMER_TOOLS = frozenset(
     {
         "deriva_ml_primer",
-        "get_guide",
+        "deriva_ml_get_guide",
     }
 )
 

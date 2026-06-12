@@ -1119,17 +1119,17 @@ class ReindexVocabulariesResponse(BaseModel):
     reindexed: dict[str, int]
 
 
-class ResyncIndexesResponse(BaseModel):
-    """Per-table source counts after a resync pass.
+class ReindexRowsResponse(BaseModel):
+    """Per-table source counts after a row re-index pass.
 
-    Produced by ``deriva_ml_resync_indexes``. The dict maps each ML
+    Produced by ``deriva_ml_reindex_rows``. The dict maps each ML
     domain (``"dataset"``, ``"workflow"``, ``"execution"``) to the
     count of per-user RAG sources successfully refreshed.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    resynced: dict[str, int]
+    reindexed: dict[str, int]
 
 
 # ---------------------------------------------------------------------------
@@ -1311,7 +1311,7 @@ class AddDatasetMembersResponse(_DatasetVersionBumpMixin):
     Per ADR-0003 (deriva-ml 1.34+), the returned ``new_version`` is
     a dev label (``<last_release>.post1.devN``) — adding members
     flips the dataset to dev, not to a released version. Call
-    ``deriva_ml_release`` afterward to mint a released version.
+    ``deriva_ml_release_dataset`` afterward to mint a released version.
 
     v3.0: ``status`` was renamed from ``"success"`` to ``"added"`` to
     match the v3.0 status vocabulary (operation-specific verbs).
@@ -1327,7 +1327,7 @@ class DeleteDatasetMembersResponse(_DatasetVersionBumpMixin):
     Per ADR-0003 (deriva-ml 1.34+), the returned ``new_version`` is
     a dev label (``<last_release>.post1.devN``) — deleting members
     flips the dataset to dev, not to a released version. Call
-    ``deriva_ml_release`` afterward to mint a released version.
+    ``deriva_ml_release_dataset`` afterward to mint a released version.
 
     v3.0: ``status`` was renamed from ``"success"`` to ``"removed"``.
     """
@@ -1337,7 +1337,7 @@ class DeleteDatasetMembersResponse(_DatasetVersionBumpMixin):
 
 
 class ReleaseDatasetResponse(_DatasetVersionBumpMixin):
-    """Response from ``deriva_ml_release``.
+    """Response from ``deriva_ml_release_dataset``.
 
     Per ADR-0003 (deriva-ml 1.34+), ``release`` promotes a dev
     period to a released version. The returned ``new_version`` is

@@ -131,10 +131,10 @@ DERIVA-ML DOMAIN OBJECTS, NOT AS RAW TABLES.
              version history, and can be downloaded as bags. Versions
              are two-state per ADR-0003: every member-mutation flips
              the dataset to a *dev* version
-             (``<last_release>.post1.devN``); ``deriva_ml_release`` is
+             (``<last_release>.post1.devN``); ``deriva_ml_release_dataset`` is
              the only operation that produces a released version.
              Use ``deriva_ml_create_dataset``,
-             ``deriva_ml_add_dataset_members``, ``deriva_ml_release``.
+             ``deriva_ml_add_dataset_members``, ``deriva_ml_release_dataset``.
              For local bag materialization, run ``ml.cache_dataset(spec)``
              in your own Python -- the MCP server has no per-user
              filesystem (v0.5.0 stateless rule). Use the
@@ -364,7 +364,7 @@ or Asset rows -- bypasses real machinery:
     Execution; raw inserts have no Execution context).
   - Version management (``deriva_ml_add_dataset_members`` and
     siblings flip the dataset to a dev version;
-    ``deriva_ml_release`` promotes that dev period to a released
+    ``deriva_ml_release_dataset`` promotes that dev period to a released
     snapshot. Raw inserts skip the version flip entirely and leave
     consumers pointed at stale data).
   - RAG re-indexing (the ``deriva_ml_*`` tools fire surgical re-index
@@ -680,10 +680,10 @@ THE FIVE ML DOMAINS
 Forty-one of the 47 tools are organized into five domain modules. The
 other six: the catalog-maintenance tools
 ``deriva_ml_create_vocabulary``, ``deriva_ml_reindex_vocabularies``,
-``deriva_ml_resync_indexes``; the cross-domain
+``deriva_ml_reindex_rows``; the cross-domain
 ``deriva_ml_describe_rid`` (resolve a bare RID to its table and the
 right next tool); and the orientation pair ``deriva_ml_primer`` /
-``get_guide`` (static text, no catalog I/O). Pick the domain first,
+``deriva_ml_get_guide`` (static text, no catalog I/O). Pick the domain first,
 then the verb. All actual tool names are prefixed
 ``deriva_ml_<verb>`` (e.g. the ``create`` verb under ``dataset`` is
 the ``deriva_ml_create_dataset`` tool). The bare verbs below name the
@@ -1139,7 +1139,7 @@ The picker pattern works for these categories. Freshness varies:
     happen through MCP (executions originate in user-local Python
     per the stateless rule) -- newly-created execution rows
     surface into RAG once you list/get them, or via an explicit
-    ``deriva_ml_resync_indexes(target="execution:<rid>")`` call.
+    ``deriva_ml_reindex_rows(target="execution:<rid>")`` call.
 
     Cross-user freshness is best-effort. User A's mutation does
     NOT refresh user B's per-user sources -- B sees A's change only
@@ -1154,7 +1154,7 @@ The picker pattern works for these categories. Freshness varies:
     corresponding deriva_ml_get_<entity> tool, which always reads
     live catalog state. If you have reason to believe your view is
     significantly stale (e.g., a colleague just released a dataset),
-    call deriva_ml_resync_indexes(hostname, catalog_id) first to
+    call deriva_ml_reindex_rows(hostname, catalog_id) first to
     refresh your per-user sources -- or pass target="<table>:<rid>"
     to refresh just one source surgically.
 
@@ -1286,9 +1286,9 @@ THE MENU
 --------
 Quick orientation: 47 tools -- 41 across the 5 ML domains (dataset,
 feature, workflow, execution, asset) plus 3 catalog-maintenance tools
-(create_vocabulary, reindex_vocabularies, resync_indexes), the
+(create_vocabulary, reindex_vocabularies, reindex_rows), the
 cross-domain describe_rid, and the orientation pair (primer,
-get_guide) -- + 19 read-only resources (16 catalog-scoped under the
+deriva_ml_get_guide) -- + 19 read-only resources (16 catalog-scoped under the
 ``deriva://catalog/{h}/{c}/deriva-ml/...`` URI prefix + 3 static
 cold-start) + GitHub doc sources indexed for RAG (``deriva-ml-docs``,
 ``deriva-ml-mcp-plugin-docs``) + per-user RAG indexes that
@@ -1302,7 +1302,7 @@ connect). Plus 4 built-in core prompts and 3 ML prompts: this one
 
 # Manifest of guides advertised by the primer (manifest-as-data). Each entry
 # is (name, source, summary). source is "deriva-ml" for guides owned by this
-# plugin (fetchable via get_guide) or "core" for deriva-mcp-core tier-1 guides
+# plugin (fetchable via deriva_ml_get_guide) or "core" for deriva-mcp-core tier-1 guides
 # (fetchable only via the /<server>:<name> slash-command prompt).
 #
 # SYNC: the "core" rows mirror prompt names registered in
@@ -1335,7 +1335,7 @@ _GUIDE_MANIFEST: list[tuple[str, str, str]] = [
 # load-bearing subset a cold-start client must see WITHOUT fetching
 # anything (the tiering decision from the 2026-06-12 review: the old
 # primer concatenated both full guides, ~17K tokens; the full texts are
-# now on-demand via get_guide and listed in the manifest).
+# now on-demand via deriva_ml_get_guide and listed in the manifest).
 _PRIMER_CONTRACT = """\
 WHAT THIS IS. DerivaML runs reproducible ML workflows on Deriva
 catalogs. Five abstractions, all carrying RIDs (permanent record IDs):
@@ -1355,7 +1355,7 @@ catalogs. Five abstractions, all carrying RIDs (permanent record IDs):
 CALL RULE. The server is stateless: EVERY tool takes hostname= and
 catalog_id=. There is no connect step.
 
-QUERY STRATEGY (full ladder + anti-patterns: get_guide
+QUERY STRATEGY (full ladder + anti-patterns: deriva_ml_get_guide
 "deriva_ml_getting_started").
   0. Bare RID of unknown type? deriva_ml_describe_rid(rid) FIRST --
      never guess by trying typed get-tools in turn.
@@ -1393,10 +1393,10 @@ route users to rag_search(query="execution lifecycle",
 doc_type="ml-docs") for the pattern. Vocabulary terms: use core's
 add_term -- check for an existing term first; add_term does not
 auto-reindex RAG (call deriva_ml_reindex_vocabularies after bulk term
-edits; deriva_ml_resync_indexes refreshes your per-user row indexes)."""
+edits; deriva_ml_reindex_rows refreshes your per-user row indexes)."""
 
 
-# Bodies of guides this plugin owns and can return directly via get_guide.
+# Bodies of guides this plugin owns and can return directly via deriva_ml_get_guide.
 # Core guides are intentionally absent -- their bodies live in
 # deriva-mcp-core and are reachable only via their slash-command prompts.
 _PLUGIN_GUIDE_BODIES: dict[str, str] = {
@@ -1412,7 +1412,7 @@ def _render_primer() -> str:
     (``_PRIMER_CONTRACT`` -- the load-bearing facts a cold-start client
     needs without fetching anything), (2) a one-line manifest of
     on-demand guides grouped by source (including the two full plugin
-    guides, fetchable via ``get_guide``), and (3) a closing directive
+    guides, fetchable via ``deriva_ml_get_guide``), and (3) a closing directive
     on when to fetch a guide and to prefer resources for read-side
     questions.
 
@@ -1447,7 +1447,7 @@ def _render_primer() -> str:
     if ml_guides:  # empty today; activates when _GUIDE_MANIFEST gains "deriva-ml" rows
         parts.append(
             "DerivaML domain guides (this plugin) -- fetch with "
-            "get_guide(name) when you first need them:"
+            "deriva_ml_get_guide(name) when you first need them:"
         )
         for name, summary in ml_guides:
             parts.append(f"  - {name}: {summary}")
@@ -1461,7 +1461,7 @@ def _render_primer() -> str:
     # Block 3 -- closing directive.
     parts.append(
         "When you reach an unfamiliar tool covered by a guide above, fetch "
-        "that guide once (get_guide(name) for the domain guides above, or "
+        "that guide once (deriva_ml_get_guide(name) for the domain guides above, or "
         "the matching /<server>:<name> prompt for the core guides) and "
         "proceed; do not re-fetch a guide already loaded "
         "this conversation. For read-side questions about existing entities "
@@ -1555,7 +1555,7 @@ def register(ctx: PluginContext) -> None:
         return _render_primer()
 
     @ctx.tool(mutates=False)
-    def get_guide(name: str) -> str:
+    def deriva_ml_get_guide(name: str) -> str:
         """Fetch a DerivaML or generic-catalog guide by name.
 
         For a guide this plugin owns, returns its full body. For a
@@ -1572,7 +1572,7 @@ def register(ctx: PluginContext) -> None:
             payload for an unknown name.
 
         Example:
-            >>> get_guide("deriva_ml_concepts")  # doctest: +SKIP
+            >>> deriva_ml_get_guide("deriva_ml_concepts")  # doctest: +SKIP
             '...the five core abstractions...'
         """
         import json

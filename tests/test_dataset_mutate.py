@@ -3,7 +3,7 @@
 Covers ``deriva_ml_create_dataset``, ``deriva_ml_delete_dataset``,
 ``deriva_ml_add_dataset_members``, ``deriva_ml_delete_dataset_members``,
 ``deriva_ml_update_dataset``, ``deriva_ml_add_dataset_element_type``,
-``deriva_ml_release``, plus the v1.3 surgical
+``deriva_ml_release_dataset``, plus the v1.3 surgical
 RAG re-index wiring on the create / delete paths.
 
 The split mirrors the source-side ``tools/dataset/{read,mutate,complex}.py``
@@ -624,7 +624,7 @@ async def test_release_success(dataset_ctx, capturing_mcp, mock_ml):
 
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["deriva_ml_release"](
+            await capturing_mcp.tools["deriva_ml_release_dataset"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
@@ -648,7 +648,7 @@ async def test_release_success(dataset_ctx, capturing_mcp, mock_ml):
     assert forwarded["description"] == "Add training images for v0.5.0"
     assert forwarded["execution"] is exec_obj
 
-    success = _success_calls(mock_audit, "deriva_ml_release")
+    success = _success_calls(mock_audit, "deriva_ml_release_dataset")
     assert success
     assert success[0].kwargs["bump"] == "minor"
     assert success[0].kwargs["previous_version"] == "0.4.0.post1.dev3"
@@ -664,7 +664,7 @@ async def test_release_major(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.return_value = ds
     with patch("deriva_ml_mcp_plugin.tools.dataset.audit_event"):
         out = json.loads(
-            await capturing_mcp.tools["deriva_ml_release"](
+            await capturing_mcp.tools["deriva_ml_release_dataset"](
                 hostname="h", catalog_id="1", dataset_rid="1-AAAA", bump="major"
             )
         )
@@ -684,7 +684,7 @@ async def test_release_error_no_dev_period(dataset_ctx, capturing_mcp, mock_ml):
     mock_ml.lookup_dataset.return_value = ds
     with _patch_audit() as mock_audit:
         out = json.loads(
-            await capturing_mcp.tools["deriva_ml_release"](
+            await capturing_mcp.tools["deriva_ml_release_dataset"](
                 hostname="h",
                 catalog_id="1",
                 dataset_rid="1-AAAA",
@@ -692,7 +692,7 @@ async def test_release_error_no_dev_period(dataset_ctx, capturing_mcp, mock_ml):
             )
         )
     assert "no dev period" in out["error"]
-    failed = _success_calls(mock_audit, "deriva_ml_release_failed")
+    failed = _success_calls(mock_audit, "deriva_ml_release_dataset_failed")
     assert failed
     assert failed[0].kwargs["bump"] == "patch"
 
@@ -832,7 +832,7 @@ async def test_update_dataset_triggers_surgical_reindex(dataset_ctx, capturing_m
 
 
 async def test_release_triggers_surgical_reindex(dataset_ctx, capturing_mcp, mock_ml):
-    """``deriva_ml_release`` re-indexes the released dataset RID."""
+    """``deriva_ml_release_dataset`` re-indexes the released dataset RID."""
     from unittest.mock import AsyncMock
 
     ds = _make_dataset_mock("1-AAAA", current_version="0.4.0.post1.dev3")
@@ -845,7 +845,7 @@ async def test_release_triggers_surgical_reindex(dataset_ctx, capturing_mcp, moc
         patch("deriva_ml_mcp_plugin.resources.rag._reindex_dataset", new=fake_reindex),
         _patch_audit(),
     ):
-        await capturing_mcp.tools["deriva_ml_release"](
+        await capturing_mcp.tools["deriva_ml_release_dataset"](
             hostname="h",
             catalog_id="1",
             dataset_rid="1-AAAA",
