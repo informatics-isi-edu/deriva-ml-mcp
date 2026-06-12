@@ -42,8 +42,12 @@ dependencies = [
     # `commit_pending_executions` surface. The MCP plugin does not expose
     # execution lifecycle (stateless rule, v0.5.0); this pin protects
     # against any future code path that depends on the v1.39 method names
-    # in the underlying library.
-    "deriva-ml>=1.39,<2.0",
+    # in the underlying library. Raised to >=1.47 for the Round A/B/C
+    # surface the v0.7.0 wrappers call directly: create_asset_table
+    # (deriva-ml #292), find_datasets_referencing /
+    # find_features_referencing (#294), find_executions_consuming /
+    # multirun_status_summary (#296).
+    "deriva-ml>=1.47,<2.0",
     # Pin deriva-py to the `deriva-ml` branch in the built wheel metadata --
     # not just in [tool.uv] (which is local-only and does not ship). Installers
     # other than uv (pip, plain build envs) would otherwise resolve whatever
