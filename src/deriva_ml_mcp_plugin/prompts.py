@@ -4,7 +4,7 @@ These are MCP prompts (registered via ``@ctx.prompt(...)``), not Python
 docstrings. FastMCP surfaces them through the MCP ``prompts/list`` and
 ``prompts/get`` endpoints so an LLM client can pull them up by name at
 the start of a conversation -- they are the cold-start anchor for the
-plugin's 48 tools and 19 resources.
+plugin's 50 tools and 19 resources.
 
 The two prompts complement the four built-in core prompts shipped by
 ``deriva-mcp-core`` (``query_guide``, ``entity_guide``,
@@ -677,7 +677,7 @@ you're driving the library directly from a notebook or skill.
 
 THE FIVE ML DOMAINS
 -------------------
-Forty-two of the 48 tools are organized into five domain modules. The
+Forty-four of the 50 tools are organized into five domain modules. The
 other six: the catalog-maintenance tools
 ``deriva_ml_create_vocabulary``, ``deriva_ml_reindex_vocabularies``,
 ``deriva_ml_reindex_rows``; the cross-domain
@@ -690,18 +690,20 @@ the ``deriva_ml_create_dataset`` tool). The bare verbs below name the
 concept; prepend ``deriva_ml_`` (and append the noun where natural)
 for the wire name.
 
-    dataset    -- 19 tools. Curated bundles of catalog rows (image
+    dataset    -- 20 tools. Curated bundles of catalog rows (image
                   collections, training subsets, splits). Verbs:
                   list / get / list_members / list_relations /
-                  list_element_types / create / delete / add_members /
+                  list_element_types / find_datasets_referencing /
+                  create / delete / add_members /
                   delete_members / update / add_element_type / release /
                   get_dataset_spec / bag_info / denormalize /
                   validate_dataset_specs / validate_execution_configuration /
                   validate_config_file / bootstrap_config.
 
-    feature    -- 5 tools. Per-row labels, scores, and asset attachments
+    feature    -- 6 tools. Per-row labels, scores, and asset attachments
                   attached to a target table. Verbs: list / get /
-                  list_feature_values / create / delete.
+                  list_feature_values / find_features_referencing /
+                  create / delete.
                   Writing feature VALUES (add_feature_values) is a
                   user-local Python operation -- see the execution
                   domain note below.
@@ -934,6 +936,9 @@ COMMON TASKS -> WHERE TO LOOK
     "upload / fetch a file"        exe.asset_file_path / exe.download_asset
                                    (local); rag_search "asset upload download"
     "which runs used dataset X?"   find_dataset_executions / get_lineage
+    "will changing table X break   find_datasets_referencing +
+     anything?"                    find_features_referencing (impact
+                                   analysis before schema evolution)
     "why is my run failing?"       rag_search "troubleshoot execution",
                                    doc_type="ml-docs"
 
@@ -1292,7 +1297,7 @@ and ``description``. There is no compat shim; update any references.
 
 THE MENU
 --------
-Quick orientation: 48 tools -- 42 across the 5 ML domains (dataset,
+Quick orientation: 50 tools -- 44 across the 5 ML domains (dataset,
 feature, workflow, execution, asset) plus 3 catalog-maintenance tools
 (create_vocabulary, reindex_vocabularies, reindex_rows), the
 cross-domain describe_rid, and the orientation pair (primer,

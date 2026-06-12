@@ -26,13 +26,13 @@ src/deriva_ml_mcp_plugin/
 ├── prompts.py           # 3 MCP prompts (deriva_ml_concepts /
 │                        #   _getting_started / _primer) + the
 │                        #   deriva_ml_primer + deriva_ml_get_guide orientation tools
-├── tools/               # Per-domain tool modules (48 tools total)
-│   ├── dataset/         #   19 tools, split into focused submodules:
+├── tools/               # Per-domain tool modules (50 tools total)
+│   ├── dataset/         #   20 tools, split into focused submodules:
 │   │   ├── __init__.py  #     register aggregator + helper re-exports
-│   │   ├── read.py      #     11 read tools + shared helpers
+│   │   ├── read.py      #     12 read tools + shared helpers
 │   │   ├── mutate.py    #     7 mutation tools
 │   │   └── complex.py   #     1 complex tool (denormalize)
-│   ├── feature.py       #    5 tools
+│   ├── feature.py       #    6 tools
 │   ├── workflow.py      #    5 tools
 │   ├── execution/       #    8 read-only tools (lifecycle is local Python)
 │   ├── asset.py         #    5 tools

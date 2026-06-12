@@ -1,6 +1,7 @@
 """Feature domain tools for deriva-ml-mcp-plugin.
 
-Read tools: ``deriva_ml_list_features``, ``deriva_ml_get_feature``, ``deriva_ml_list_feature_values``.
+Read tools: ``deriva_ml_list_features``, ``deriva_ml_get_feature``,
+``deriva_ml_list_feature_values``, ``deriva_ml_find_features_referencing``.
 Mutation tools: ``deriva_ml_create_feature``, ``deriva_ml_delete_feature``.
 
 v0.5.0 removed ``deriva_ml_add_feature_values`` -- writing feature
@@ -23,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from functools import partial
 from typing import TYPE_CHECKING, Any, Literal
 
 from deriva_mcp_core import deriva_call
@@ -47,6 +49,8 @@ from deriva_ml_mcp_plugin._response_models import (
     CreateFeatureResponse,
     DeleteFeatureResponse,
     FeatureListResponse,
+    FeatureReferenceEntry,
+    FeatureReferencesResponse,
     FeatureSummary,
     FeatureValueListResponse,
     FeatureValueRecord,
@@ -301,6 +305,77 @@ def register(ctx: PluginContext) -> None:
             return _error_envelope(
                 exc,
                 operation="list_features",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+    @ctx.tool(mutates=False)
+    async def deriva_ml_find_features_referencing(
+        hostname: str,
+        catalog_id: str,
+        table: str,
+        column: str | None = None,
+    ) -> str:
+        """Find feature definitions whose association table references a table.
+
+        Impact analysis for schema evolution: a feature's association
+        table carries foreign keys to its target table, its vocabulary
+        (term) tables, and its asset tables. Before altering or
+        dropping any of those tables (or one of their columns), ask
+        which feature definitions would be affected. This is the
+        reverse direction of ``deriva_ml_list_features`` -- that tool
+        says "which features are defined ON this target table"; this
+        one says "which features REFER TO this table from any FK role
+        (target, vocabulary, or asset)".
+
+        Args:
+            table: Name of the table to check (e.g. a vocabulary table
+                like ``"ImageQuality"`` or an asset table).
+            column: Optional column name on ``table``. When set, only
+                report features whose FK references this specific
+                column. When None (default), any referenced column
+                counts.
+
+        Returns:
+            JSON string ``{"table", "column", "count", "references":
+            [{"feature_name", "target_table", "feature_table",
+            "referencing_columns"}, ...]}``. ``count == 0`` with empty
+            ``references`` means no feature references this table -- a
+            normal answer, not an error.
+
+        Raises:
+            DerivaMLException: Wrapped as ``{"error": ...}`` -- e.g.
+                when ``table`` does not exist in the catalog.
+
+        Example:
+            ``{"table": "ImageQuality", "column": null, "count": 1,
+            "references": [{"feature_name": "Quality", "target_table":
+            "Image", "feature_table": "Execution_Image_Quality",
+            "referencing_columns": ["ImageQuality"]}]}``
+        """
+        try:
+            with deriva_call():
+                # Run the synchronous deriva-ml calls in a thread pool
+                # so the event loop stays responsive.
+                # ``find_features_referencing`` walks every feature
+                # definition's FK set. See deriva-mcp-core
+                # plugin-authoring-guide.md §"Synchronous work in
+                # threads".
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
+                refs = await asyncio.to_thread(
+                    partial(ml.find_features_referencing, table, column=column)
+                )
+            return FeatureReferencesResponse(
+                table=table,
+                column=column,
+                count=len(refs),
+                references=[FeatureReferenceEntry(**r.model_dump()) for r in refs],
+            ).model_dump_json(by_alias=True)
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="find_features_referencing",
                 hostname=hostname,
                 catalog_id=catalog_id,
                 audit=False,

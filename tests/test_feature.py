@@ -747,3 +747,55 @@ async def test_delete_feature_failure_emits_failed_audit(feature_ctx, capturing_
     failed = _success_calls(mock_audit, "deriva_ml_delete_feature_failed")
     assert failed
     assert failed[0].kwargs["error_type"] == "RuntimeError"
+
+
+# ---------------------------------------------------------------------------
+# find_features_referencing (plugin#25 -- Round B wrapper over deriva-ml#294)
+# ---------------------------------------------------------------------------
+
+
+async def test_find_features_referencing_success(feature_ctx, capturing_mcp, mock_ml):
+    """Wrapper maps library FeatureReference models to the wire shape."""
+    from deriva_ml import FeatureReference
+
+    mock_ml.find_features_referencing.return_value = [
+        FeatureReference(
+            feature_name="Quality",
+            target_table="Image",
+            feature_table="Execution_Image_Quality",
+            referencing_columns=["ImageQuality"],
+        ),
+    ]
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_features_referencing"](
+            hostname="h", catalog_id="1", table="ImageQuality"
+        )
+    )
+    assert out["table"] == "ImageQuality"
+    assert out["count"] == 1
+    assert out["references"][0]["feature_name"] == "Quality"
+    assert out["references"][0]["referencing_columns"] == ["ImageQuality"]
+    mock_ml.find_features_referencing.assert_called_once_with("ImageQuality", column=None)
+
+
+async def test_find_features_referencing_column_narrows(feature_ctx, capturing_mcp, mock_ml):
+    """column= is forwarded to the library method."""
+    mock_ml.find_features_referencing.return_value = []
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_features_referencing"](
+            hostname="h", catalog_id="1", table="Image", column="RID"
+        )
+    )
+    assert out == {"table": "Image", "column": "RID", "count": 0, "references": []}
+    mock_ml.find_features_referencing.assert_called_once_with("Image", column="RID")
+
+
+async def test_find_features_referencing_error_envelope(feature_ctx, capturing_mcp, mock_ml):
+    """Unknown table propagates as the standard error envelope."""
+    mock_ml.find_features_referencing.side_effect = RuntimeError("Table FooBar not found")
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_features_referencing"](
+            hostname="h", catalog_id="1", table="FooBar"
+        )
+    )
+    assert out == {"error": "Table FooBar not found", "error_type": "RuntimeError"}
