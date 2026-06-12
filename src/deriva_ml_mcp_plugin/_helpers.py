@@ -89,8 +89,10 @@ def _error_envelope(
             ``audit=False``.
 
     Returns:
-        JSON string. Default shape is ``{"error": str(exc)}``; with
-        ``response_fields`` it becomes ``{"error": ..., **response_fields}``.
+        JSON string. Default shape is ``{"error": str(exc),
+        "error_type": type(exc).__name__}``; with ``response_fields``
+        it becomes ``{"error": ..., "error_type": ...,
+        **response_fields}``.
 
     Example (illustrative -- runs only inside an except block):
         >>> # return _error_envelope(exc, operation="create_dataset",
@@ -111,7 +113,10 @@ def _error_envelope(
             error_type=type(exc).__name__,
             **audit_fields,
         )
-    payload: dict[str, Any] = {"error": str(exc)}
+    # error_type gives LLM callers a machine-readable discriminator
+    # (not-found vs permission vs validation) without parsing the
+    # human-oriented message; same value the audit row already carries.
+    payload: dict[str, Any] = {"error": str(exc), "error_type": type(exc).__name__}
     if response_fields:
         payload.update(response_fields)
     # Structured-error uplift (audit T2.3): when the underlying

@@ -166,7 +166,7 @@ async def test_create_vocabulary_failure_emits_failed_audit(vocabulary_ctx, capt
             )
         )
 
-    assert out == {"error": "Table Tissue_Type already exist"}
+    assert out == {"error": "Table Tissue_Type already exist", "error_type": "RuntimeError"}
 
     failed = _success_calls(mock_audit, "deriva_ml_create_vocabulary_failed")
     assert failed, "expected deriva_ml_create_vocabulary_failed audit event"

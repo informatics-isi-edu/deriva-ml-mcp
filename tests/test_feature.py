@@ -137,7 +137,7 @@ async def test_list_features_error_path(feature_ctx, capturing_mcp, mock_ml):
         out = json.loads(
             await capturing_mcp.tools["deriva_ml_list_features"](hostname="h", catalog_id="1")
         )
-    assert out == {"error": "schema down"}
+    assert out == {"error": "schema down", "error_type": "RuntimeError"}
     # Read tool: no audit on failure.
     assert mock_audit.call_count == 0
 
@@ -188,7 +188,7 @@ async def test_get_feature_error_path(feature_ctx, capturing_mcp, mock_ml):
                 hostname="h", catalog_id="1", table="Image", feature_name="Missing"
             )
         )
-    assert out == {"error": "no such feature"}
+    assert out == {"error": "no such feature", "error_type": "RuntimeError"}
     assert mock_audit.call_count == 0
 
 
@@ -359,7 +359,7 @@ async def test_list_feature_values_error_path(feature_ctx, capturing_mcp, mock_m
                 hostname="h", catalog_id="1", table="Image", feature_name="Quality"
             )
         )
-    assert out == {"error": "ermrest down"}
+    assert out == {"error": "ermrest down", "error_type": "RuntimeError"}
     assert mock_audit.call_count == 0
 
 
@@ -685,7 +685,7 @@ async def test_create_feature_failure_emits_failed_audit(feature_ctx, capturing_
                 terms=["BadTerm"],
             )
         )
-    assert out == {"error": "invalid term table"}
+    assert out == {"error": "invalid term table", "error_type": "RuntimeError"}
 
     failed = _success_calls(mock_audit, "deriva_ml_create_feature_failed")
     assert failed, "expected deriva_ml_create_feature_failed audit event"
@@ -743,7 +743,7 @@ async def test_delete_feature_failure_emits_failed_audit(feature_ctx, capturing_
                 hostname="h", catalog_id="1", table="Image", feature_name="Quality"
             )
         )
-    assert out == {"error": "permission denied"}
+    assert out == {"error": "permission denied", "error_type": "RuntimeError"}
     failed = _success_calls(mock_audit, "deriva_ml_delete_feature_failed")
     assert failed
     assert failed[0].kwargs["error_type"] == "RuntimeError"

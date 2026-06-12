@@ -247,6 +247,10 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """List the rows in one asset table, with cursor pagination.
 
+        Use this when you know WHICH asset table to read. To search by
+        an identifying value (filename, MD5, URL, or Asset_Type term)
+        across tables, use ``deriva_ml_find_assets`` instead.
+
         See ``deriva_ml_getting_started`` (PAGINATION CONTRACT) for the two-step pagination flow.
 
         ``asset_types`` field note: execution-linked assets carry an
@@ -608,7 +612,7 @@ def register(ctx: PluginContext) -> None:
             RuntimeError: Wrapped, propagated from
                 ``deriva_ml.DerivaML.lookup_asset``,
                 ``Asset.add_asset_type`` / ``remove_asset_type``, or
-                the Description pathBuilder write (e.g. unknown
+                the ``description`` setter's catalog write (e.g. unknown
                 Asset_Type term, missing asset RID, read-only catalog).
 
         Example:

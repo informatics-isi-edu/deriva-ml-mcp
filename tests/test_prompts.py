@@ -162,12 +162,22 @@ def test_prompts_are_ascii(ctx, capturing_mcp):
             raise AssertionError(f"{name} contains non-ASCII characters: {exc}") from exc
 
 
-def test_render_primer_contains_both_guide_bodies():
-    """The primer inlines the concepts and getting-started guide bodies."""
+def test_render_primer_carries_operating_contract():
+    """The primer carries the compact operating contract (tiered, 2026-06-12).
+
+    The full guide bodies are no longer inlined (see
+    test_primer_is_tiered_not_concatenated); the contract's load-bearing
+    sections must be present.
+    """
     body = prompts._render_primer()
-    # A distinctive phrase from each guide must be present verbatim.
-    assert "DERIVA-ML GETTING STARTED" in body
-    assert "five core abstractions" in body or "Dataset" in body
+    for marker in (
+        "CALL RULE",
+        "QUERY STRATEGY",
+        "PAGINATION",
+        "MUTATION BOUNDARY",
+        "Dataset",
+    ):
+        assert marker in body, f"{marker} missing from primer contract"
 
 
 def test_render_primer_lists_all_guide_names():
@@ -224,3 +234,42 @@ def test_get_guide_registered_read_only(ctx, capturing_mcp):
     """get_guide is a read-only tool."""
     prompts.register(ctx)
     assert "get_guide" in capturing_mcp.tools
+
+
+# ---------------------------------------------------------------------------
+# Tiered primer (review sweep): compact contract + manifest, not full guides
+# ---------------------------------------------------------------------------
+
+
+def test_primer_is_tiered_not_concatenated():
+    """The primer returns a compact operating contract, NOT both full guides.
+
+    Cold-start cost: the old primer concatenated _CONCEPTS_GUIDE +
+    _GETTING_STARTED_GUIDE (~17K tokens). The tiered primer carries the
+    load-bearing operating contract only; the full guides are fetched
+    on demand via get_guide (they appear in the manifest instead).
+    """
+    body = prompts._render_primer()
+    # Deep-guide-only markers must NOT be inlined any more.
+    assert "ANTI-PATTERNS (observed failures" not in body
+    assert "THE ENTITY RESOLUTION WORKFLOW" not in body
+    # The compact contract's load-bearing facts ARE present.
+    assert "DERIVA-ML AGENT GUIDELINES" in body
+    assert "hostname" in body and "catalog_id" in body
+    assert "deriva_ml_describe_rid" in body  # step-0 routing survives tiering
+    # Both full guides are offered on demand in the manifest.
+    assert "deriva_ml_concepts" in body
+    assert "deriva_ml_getting_started" in body
+    assert "get_guide" in body
+    # And the primer is actually compact: well under a third of the
+    # combined full-guide length.
+    combined = len(prompts._CONCEPTS_GUIDE) + len(prompts._GETTING_STARTED_GUIDE)
+    assert len(body) < combined / 3, (
+        f"primer is {len(body)} chars; expected < {combined // 3} (1/3 of full guides)"
+    )
+
+
+def test_guide_manifest_lists_both_plugin_guides():
+    """The manifest carries deriva-ml rows for concepts + getting_started."""
+    ml_rows = {n for (n, src, _s) in prompts._GUIDE_MANIFEST if src == "deriva-ml"}
+    assert {"deriva_ml_concepts", "deriva_ml_getting_started"} <= ml_rows

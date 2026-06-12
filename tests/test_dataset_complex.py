@@ -215,7 +215,7 @@ async def test_denormalize_dataset_error_path(dataset_ctx, capturing_mcp, mock_m
             include_tables=["Image"],
         )
     )
-    assert out == {"error": "schema error"}
+    assert out == {"error": "schema error", "error_type": "RuntimeError"}
 
 
 async def test_denormalize_dataset_refuses_oversize_fetch_without_preflight(

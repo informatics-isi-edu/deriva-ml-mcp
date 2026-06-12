@@ -268,7 +268,7 @@ async def test_ml_datasets_error_path_is_silent(resource_ctx, capturing_mcp, moc
     mock_ml.find_datasets.side_effect = RuntimeError("kaboom")
     with patch("deriva_ml_mcp_plugin._helpers.audit_event") as mock_audit:
         out = json.loads(await capturing_mcp.resources[_DATASETS_URI](hostname="h", catalog_id="1"))
-    assert out == {"error": "kaboom"}
+    assert out == {"error": "kaboom", "error_type": "RuntimeError"}
     assert mock_audit.call_count == 0
 
 
@@ -322,7 +322,7 @@ async def test_ml_dataset_detail_not_found(resource_ctx, capturing_mcp, mock_ml)
                 hostname="h", catalog_id="1", dataset_rid="missing"
             )
         )
-    assert out == {"error": "Dataset not found"}
+    assert out == {"error": "Dataset not found", "error_type": "RuntimeError"}
     assert mock_audit.call_count == 0
 
 
@@ -377,7 +377,7 @@ async def test_ml_dataset_members_error_path(resource_ctx, capturing_mcp, mock_m
                 hostname="h", catalog_id="1", dataset_rid="bad"
             )
         )
-    assert out == {"error": "nope"}
+    assert out == {"error": "nope", "error_type": "RuntimeError"}
     assert mock_audit.call_count == 0
 
 
@@ -419,7 +419,7 @@ async def test_ml_dataset_spec_error_path_is_silent(resource_ctx, capturing_mcp,
                 hostname="h", catalog_id="1", dataset_rid="missing"
             )
         )
-    assert out == {"error": "Dataset not found"}
+    assert out == {"error": "Dataset not found", "error_type": "RuntimeError"}
     assert mock_audit.call_count == 0
 
 
@@ -482,7 +482,7 @@ async def test_ml_dataset_bag_preview_error_path_is_silent(resource_ctx, capturi
                 hostname="h", catalog_id="1", dataset_rid="missing"
             )
         )
-    assert out == {"error": "Dataset not found"}
+    assert out == {"error": "Dataset not found", "error_type": "RuntimeError"}
     assert mock_audit.call_count == 0
 
 
@@ -508,7 +508,7 @@ async def test_ml_workflows_error_path(resource_ctx, capturing_mcp, mock_ml):
         out = json.loads(
             await capturing_mcp.resources[_WORKFLOWS_URI](hostname="h", catalog_id="1")
         )
-    assert out == {"error": "kaboom"}
+    assert out == {"error": "kaboom", "error_type": "RuntimeError"}
     assert mock_audit.call_count == 0
 
 
@@ -538,7 +538,7 @@ async def test_ml_workflow_detail_not_found(resource_ctx, capturing_mcp, mock_ml
                 hostname="h", catalog_id="1", workflow_rid="missing"
             )
         )
-    assert out == {"error": "Workflow not found"}
+    assert out == {"error": "Workflow not found", "error_type": "RuntimeError"}
     assert mock_audit.call_count == 0
 
 
@@ -564,7 +564,7 @@ async def test_ml_executions_error_path(resource_ctx, capturing_mcp, mock_ml):
         out = json.loads(
             await capturing_mcp.resources[_EXECUTIONS_URI](hostname="h", catalog_id="1")
         )
-    assert out == {"error": "boom"}
+    assert out == {"error": "boom", "error_type": "RuntimeError"}
     assert mock_audit.call_count == 0
 
 
@@ -948,7 +948,7 @@ async def test_ml_execution_detail_not_found(resource_ctx, capturing_mcp, mock_m
                 hostname="h", catalog_id="1", execution_rid="missing"
             )
         )
-    assert out == {"error": "Execution not found"}
+    assert out == {"error": "Execution not found", "error_type": "RuntimeError"}
     assert mock_audit.call_count == 0
 
 
@@ -1019,7 +1019,7 @@ async def test_ml_lineage_error_path_is_silent(resource_ctx, capturing_mcp, mock
         out = json.loads(
             await capturing_mcp.resources[_LINEAGE_URI](hostname="h", catalog_id="1", rid="1-WF")
         )
-    assert out == {"error": "Workflow RIDs are not lineage-shaped"}
+    assert out == {"error": "Workflow RIDs are not lineage-shaped", "error_type": "RuntimeError"}
     assert mock_audit.call_count == 0
 
 
@@ -1053,7 +1053,7 @@ async def test_ml_features_for_table_error_path(resource_ctx, capturing_mcp, moc
                 hostname="h", catalog_id="1", table_name="Image"
             )
         )
-    assert out == {"error": "nope"}
+    assert out == {"error": "nope", "error_type": "RuntimeError"}
     assert mock_audit.call_count == 0
 
 

@@ -23,20 +23,25 @@ src/deriva_ml_mcp_plugin/
 ├── ml_context.py        # The single helper that builds a DerivaML from core's credential
 ├── _helpers.py          # _error_envelope, _paginate, _read_rid, _table_qname,
 │                        # _table_to_dict, _MAX_LIMIT (shared)
-├── prompts.py           # 3 MCP prompts: deriva_ml_getting_started /
-│                        #   _execution_lifecycle / _workflow_dedup
-├── tools/               # Per-domain tool modules (40 tools across 5 domains)
-│   ├── dataset/         #   17 tools, split into focused submodules:
+├── prompts.py           # 3 MCP prompts (deriva_ml_concepts /
+│                        #   _getting_started / _primer) + the
+│                        #   deriva_ml_primer + get_guide orientation tools
+├── tools/               # Per-domain tool modules (47 tools total)
+│   ├── dataset/         #   19 tools, split into focused submodules:
 │   │   ├── __init__.py  #     register aggregator + helper re-exports
-│   │   ├── read.py      #     7 read tools + 4 shared helpers
-│   │   ├── mutate.py    #     7 simple mutation tools
-│   │   └── complex.py   #     3 complex tools (cache, denormalize, split)
-│   ├── feature.py       #    6 tools
+│   │   ├── read.py      #     11 read tools + shared helpers
+│   │   ├── mutate.py    #     7 mutation tools
+│   │   └── complex.py   #     1 complex tool (denormalize)
+│   ├── feature.py       #    5 tools
 │   ├── workflow.py      #    5 tools
-│   ├── execution.py     #   11 tools
-│   └── vocabulary.py    #    1 tool (deriva_ml_reindex_vocabularies)
+│   ├── execution/       #    8 read-only tools (lifecycle is local Python)
+│   ├── asset.py         #    4 tools
+│   ├── vocabulary.py    #    1 tool (deriva_ml_create_vocabulary)
+│   ├── maintenance.py   #    2 tools (reindex_vocabularies, resync_indexes)
+│   └── resolve.py       #    1 tool (deriva_ml_describe_rid -- RID -> kind + routing)
 └── resources/           # MCP resources + per-user RAG
-    ├── ml.py            #   9 read-only resources under deriva://catalog/{h}/{c}/ml/...
+    ├── ml.py            #   19 resources (16 catalog-scoped under
+    │                    #   deriva://catalog/{h}/{c}/deriva-ml/... + 3 static)
     └── rag.py           #   1 GitHub doc source +
                          #   read-through per-user-per-RID writers (Dataset/Workflow/Execution,
                          #   warmed on list/get/find + surgically on mutate; no on-connect pass)

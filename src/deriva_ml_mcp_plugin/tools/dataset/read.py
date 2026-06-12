@@ -1,11 +1,15 @@
 """Read-only dataset tools and shared dataset helpers.
 
-This submodule houses the 7 read tools (``deriva_ml_list_datasets``,
+This submodule houses the 11 read tools (``deriva_ml_list_datasets``,
 ``deriva_ml_get_dataset``, ``deriva_ml_list_dataset_members``,
 ``deriva_ml_list_dataset_relations``, ``deriva_ml_list_dataset_element_types``,
-``deriva_ml_bag_info``, ``deriva_ml_get_dataset_spec``) plus the four
-helpers (``_summarize_dataset``, ``_list_datasets_impl``,
-``_get_dataset_detail_impl``, ``_list_dataset_members_summary_impl``)
+``deriva_ml_bag_info``, ``deriva_ml_get_dataset_spec``,
+``deriva_ml_validate_dataset_specs``,
+``deriva_ml_validate_execution_configuration``,
+``deriva_ml_validate_config_file``, ``deriva_ml_bootstrap_config``)
+plus the shared helpers (``_summarize_dataset``, ``_list_datasets_impl``,
+``_get_dataset_detail_impl``, ``_list_dataset_members_summary_impl``,
+``_get_dataset_spec_impl``, ``_bag_info_impl``)
 that the read tools and the ``resources/ml.py`` / ``resources/rag.py``
 modules consume to keep tool / resource shapes in sync.
 
@@ -644,7 +648,11 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """Walk a dataset's nesting hierarchy in either direction.
 
-        See ``deriva_ml_getting_started`` (PAGINATION CONTRACT) for the two-step pagination flow.
+        Pagination here is simpler than the standard preflight contract:
+        there is no ``preflight_count`` and the response carries no
+        ``next_after_rid``. To page a single-direction walk, pass the
+        RID of the last relation in the previous page as ``after_rid``;
+        a ``*_truncated: true`` flag tells you another page exists.
 
         Args:
             dataset_rid: The RID of the dataset whose relations to list.
@@ -653,7 +661,8 @@ def register(ctx: PluginContext) -> None:
             recurse: If True, also include indirect ancestors/descendants.
             limit: Max relations per side (default 100, max 1000).
             after_rid: RID cursor; skip relations with RID <= after_rid.
-                Ignored when ``direction="both"`` (see above).
+                Single-direction only -- ignored (with a ``warning``)
+                when ``direction="both"``.
             version: Optional dataset version to query.
 
         Returns:
@@ -817,11 +826,18 @@ def register(ctx: PluginContext) -> None:
                 tables).
 
         Returns:
-            JSON string ``{"tables": {<name>: {"row_count", "is_asset",
-            "asset_bytes"}}, "total_rows", "total_asset_bytes",
-            "total_asset_size", "cache_status", "cache_path"}``. Fields are
-            shaped by ``deriva_ml.DerivaML.bag_info``; non-JSON-serializable
-            values (e.g. ``Path``) are stringified.
+            JSON string ``{"dataset_rid", "version", "tables": {<name>:
+            {"row_count", "is_asset", "asset_bytes"}}, "total_rows",
+            "total_asset_bytes", "total_asset_size", "cache_status",
+            "cache_path", "warning"?}``. Fields are shaped by
+            ``deriva_ml.DerivaML.bag_info``; non-JSON-serializable
+            values (e.g. ``Path``) are stringified. CAVEAT:
+            ``cache_status`` / ``cache_path`` describe the MCP
+            **server's** local bag cache, NOT the caller's machine --
+            do not present them to the user as their own cache state;
+            a bag the server has cached still needs a local
+            ``ml.cache_dataset(...)`` on the user's machine before
+            local code can read it.
 
         Raises:
             RuntimeError: Wrapped as ``{"error": ...}``, propagated from
@@ -1192,6 +1208,11 @@ def register(ctx: PluginContext) -> None:
             [...]}``. Each suggestion carries ``{kind, config_name,
             rid, version?, spec_string, description?, rationale}``.
             Each skipped entry carries ``{kind, rid, reason}``.
+
+        Raises:
+            RuntimeError: Wrapped as ``{"error": ...}``, propagated
+                from the catalog scan (e.g. connection or permission
+                failure).
 
         Example:
             ``{"catalog": {"hostname": "data.example.org",
