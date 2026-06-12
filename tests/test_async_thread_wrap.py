@@ -48,6 +48,7 @@ TOOL_MODULES: list[Path] = [
     TOOLS_ROOT / "dataset" / "mutate.py",
     TOOLS_ROOT / "dataset" / "complex.py",
     TOOLS_ROOT / "execution" / "read.py",
+    TOOLS_ROOT / "resolve.py",
     # NOTE: execution/mutate.py was removed in v0.5.0 -- the execution
     # lifecycle moved to user-local Python per the stateless rule.
     # See docs/audit-2026-05-23.md.

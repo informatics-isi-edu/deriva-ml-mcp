@@ -677,10 +677,12 @@ you're driving the library directly from a notebook or skill.
 
 THE FIVE ML DOMAINS
 -------------------
-Forty-one of the 44 tools are organized into five domain modules (the
-other three are the catalog-maintenance tools
+Forty-one of the 45 tools are organized into five domain modules (the
+other four are the catalog-maintenance tools
 ``deriva_ml_create_vocabulary``, ``deriva_ml_reindex_vocabularies``,
-and ``deriva_ml_resync_indexes``). Pick the domain first, then the
+``deriva_ml_resync_indexes``, and the cross-domain
+``deriva_ml_describe_rid`` -- resolve a bare RID to its table and the
+right next tool). Pick the domain first, then the
 verb. All actual tool names are prefixed
 ``deriva_ml_<verb>`` (e.g. the ``create`` verb under ``dataset`` is
 the ``deriva_ml_create_dataset`` tool). The bare verbs below name the
@@ -928,6 +930,14 @@ duration / inputs / outputs), which datasets a run consumed or
 produced, asset provenance, a lineage walk, dataset membership --
 recognize the pattern EARLY and run this escalation ladder. Do not
 start at step 3.
+
+0. UNKNOWN RID? DESCRIBE IT FIRST. If the user hands you a bare RID
+   and you don't know what it identifies, call
+   ``deriva_ml_describe_rid(hostname, catalog_id, rid)`` -- one call
+   resolves it catalog-wide, classifies it (dataset / workflow /
+   execution / vocabulary_term / asset / association / entity), and
+   names the right next tool. Do NOT guess by trying get_dataset then
+   get_execution in turn, and do not schema-spelunk to find the table.
 
 1. TYPED DERIVA-ML SURFACE FIRST. If your client reads MCP resources,
    the ``ml/<kind>/{rid}`` resource is the preferred one-fetch form for
@@ -1268,9 +1278,10 @@ and ``description``. There is no compat shim; update any references.
 
 THE MENU
 --------
-Quick orientation: 44 tools -- 41 across the 5 ML domains (dataset,
+Quick orientation: 45 tools -- 41 across the 5 ML domains (dataset,
 feature, workflow, execution, asset) plus 3 catalog-maintenance tools
-(create_vocabulary, reindex_vocabularies, resync_indexes) -- + 18
+(create_vocabulary, reindex_vocabularies, resync_indexes) plus the
+cross-domain describe_rid -- + 18
 read-only resources under the
 ``deriva://catalog/{h}/{c}/deriva-ml/...`` URI prefix + 1 GitHub doc source
 indexed for RAG (``deriva-ml-docs``) + per-user RAG indexes that

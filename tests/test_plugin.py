@@ -138,6 +138,17 @@ _VOCABULARY_TOOLS = frozenset(
     }
 )
 
+# Cross-domain RID description tool (tools/resolve.py): "step 0" of the
+# ordered query strategy -- resolve a bare RID catalog-wide, classify it
+# into the DerivaML abstractions, route to the right typed tool. The
+# generic resolve primitive is tracked upstream (deriva-mcp-core); this
+# tool owns the ML classification layer.
+_RESOLVE_TOOLS = frozenset(
+    {
+        "deriva_ml_describe_rid",
+    }
+)
+
 # Orientation tools registered by ``prompts.py`` (not part of the five ML
 # domains). ``deriva_ml_primer`` returns the startup primer body; it is the
 # tool-shaped counterpart of the ``deriva_ml_primer`` prompt, for agents that
@@ -162,6 +173,7 @@ _ALL_REGISTERED_TOOLS = (
     | _EXECUTION_TOOLS
     | _VOCABULARY_TOOLS
     | _ASSET_TOOLS
+    | _RESOLVE_TOOLS
     | _PRIMER_TOOLS
 )
 
