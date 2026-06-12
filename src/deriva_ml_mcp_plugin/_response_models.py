@@ -1217,6 +1217,22 @@ class UpdateAssetResponse(BaseModel):
     updated_fields: list[str]
 
 
+class CreateAssetTableResponse(BaseModel):
+    """Response from ``deriva_ml_create_asset_table``.
+
+    ``columns`` is the final column-name list of the created table
+    (system + standard hatrac + any additional domain columns), so the
+    caller can confirm the shape without a follow-up read.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    status: Literal["created"]
+    schema_: str = Field(alias="schema")
+    asset_table: str
+    columns: list[str]
+
+
 class CreateWorkflowResponse(BaseModel):
     """Response from ``deriva_ml_create_workflow``.
 

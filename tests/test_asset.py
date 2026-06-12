@@ -678,3 +678,94 @@ async def test_update_asset_partial_remove_failure_surfaces_progress(
     assert failed
     assert failed[0].kwargs["added_done"] == ["NewTag"]
     assert failed[0].kwargs["removed_done"] == ["A"]
+
+
+# ---------------------------------------------------------------------------
+# create_asset_table (plugin#15 -- thin wrapper over deriva-ml#292)
+# ---------------------------------------------------------------------------
+
+
+def _make_created_table_mock(name="Scan_File", schema="domain"):
+    t = MagicMock()
+    t.name = name
+    t.schema.name = schema
+    cols = []
+    for cname in ("RID", "URL", "Filename", "Length", "MD5", "Description", "Scanner_Model"):
+        c = MagicMock()
+        c.name = cname
+        cols.append(c)
+    t.columns = cols
+    return t
+
+
+async def test_create_asset_table_success_maps_columns_and_audits(
+    asset_ctx, capturing_mcp, mock_ml
+):
+    """Success: additional_columns dicts map to ColumnDefinition; audit fires."""
+    mock_ml.create_asset_table.return_value = _make_created_table_mock()
+
+    with _patch_asset_audit() as mock_audit:
+        out = json.loads(
+            await capturing_mcp.tools["deriva_ml_create_asset_table"](
+                hostname="h",
+                catalog_id="1",
+                asset_name="Scan_File",
+                additional_columns=[
+                    {"name": "Scanner_Model", "type": "text", "comment": "Device model"},
+                ],
+                comment="Raw scanner output files.",
+            )
+        )
+
+    assert out["status"] == "created"
+    assert out["asset_table"] == "Scan_File"
+    assert out["schema"] == "domain"
+    assert "Scanner_Model" in out["columns"]
+    assert "URL" in out["columns"]
+
+    mock_ml.create_asset_table.assert_called_once()
+    kwargs = mock_ml.create_asset_table.call_args.kwargs
+    assert kwargs["comment"] == "Raw scanner output files."
+    (coldef,) = kwargs["additional_columns"]
+    assert coldef.name == "Scanner_Model"
+    assert coldef.type.name == "text"
+    assert coldef.comment == "Device model"
+
+    success = _success_calls(mock_audit, "deriva_ml_create_asset_table")
+    assert success
+    assert success[0].kwargs["asset_name"] == "Scan_File"
+
+
+async def test_create_asset_table_invalid_column_type_returns_error(
+    asset_ctx, capturing_mcp, mock_ml
+):
+    """A bad additional_columns type name errors WITHOUT touching the catalog."""
+    out = json.loads(
+        await capturing_mcp.tools["deriva_ml_create_asset_table"](
+            hostname="h",
+            catalog_id="1",
+            asset_name="Scan_File",
+            additional_columns=[{"name": "X", "type": "varchar"}],
+        )
+    )
+    assert "error" in out
+    assert "varchar" in out["error"]
+    mock_ml.create_asset_table.assert_not_called()
+
+
+async def test_create_asset_table_failure_emits_failed_audit(asset_ctx, capturing_mcp, mock_ml):
+    """A deriva-ml failure lands as the error envelope + failed audit event."""
+    mock_ml.create_asset_table.side_effect = RuntimeError("Table Scan_File already exist")
+
+    with _patch_asset_audit() as mock_audit:
+        out = json.loads(
+            await capturing_mcp.tools["deriva_ml_create_asset_table"](
+                hostname="h", catalog_id="1", asset_name="Scan_File"
+            )
+        )
+    assert out == {
+        "error": "Table Scan_File already exist",
+        "error_type": "RuntimeError",
+    }
+    failed = _success_calls(mock_audit, "deriva_ml_create_asset_table_failed")
+    assert failed

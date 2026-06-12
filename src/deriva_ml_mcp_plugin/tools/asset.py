@@ -2,7 +2,7 @@
 
 Read tools: ``deriva_ml_list_assets``, ``deriva_ml_find_assets``,
 ``deriva_ml_lookup_asset``.
-Mutation tools: ``deriva_ml_update_asset``.
+Mutation tools: ``deriva_ml_update_asset``, ``deriva_ml_create_asset_table``.
 
 Asset table discovery is exposed through the
 ``deriva://catalog/{h}/{c}/deriva-ml/assets/{schema}`` resource (in
@@ -79,6 +79,7 @@ from deriva_ml_mcp_plugin._response_models import (
     AssetExecutionRef,
     AssetListResponse,
     AssetSummary,
+    CreateAssetTableResponse,
     PreflightCountResponse,
     UpdateAssetResponse,
 )
@@ -698,4 +699,143 @@ def register(ctx: PluginContext) -> None:
                     "removed_done": removed_done,
                     "updated_fields": updated_fields,
                 },
+            )
+
+    @ctx.tool(mutates=True)
+    async def deriva_ml_create_asset_table(
+        hostname: str,
+        catalog_id: str,
+        asset_name: str,
+        additional_columns: list[dict[str, Any]] | None = None,
+        comment: str | None = None,
+        schema: str | None = None,
+        use_hatrac: bool = True,
+        update_navbar: bool = True,
+    ) -> str:
+        """Create a new asset table with the canonical DerivaML asset shape.
+
+        One call builds everything an asset table needs, so the shape can
+        never drift from the canonical form (the result always satisfies
+        ``model.is_asset``): the five standard hatrac columns (``URL``,
+        ``Filename``, ``Length``, ``MD5``, ``Description``), the
+        ``<name>_Asset_Type`` tag association, the ``<name>_Execution``
+        association carrying the ``Asset_Role`` FK that the execution
+        upload machinery writes, and the standard Chaise display
+        annotations. Use THIS (not the generic ``create_table``) for any
+        file-backed table -- the manual hatrac recipe is verbose and easy
+        to get subtly wrong.
+
+        Table creation is catalog-state work and belongs on this surface;
+        uploading FILES into the new table remains local-Python territory
+        (see the module scope note / ``rag_search("asset upload download",
+        doc_type="ml-docs")``).
+
+        Args:
+            asset_name: Name for the new asset table. Must be a valid SQL
+                identifier (e.g. ``"Scan_File"``).
+            additional_columns: Optional domain-specific columns appended
+                to the standard hatrac shape. Each entry is a dict:
+                ``{"name": str (required), "type": str (required -- a
+                BuiltinTypes name like "text", "int4", "float8",
+                "boolean", "date", "timestamptz", "markdown"),
+                "nullok": bool (default true), "comment": str}``.
+            comment: Description of the asset table's purpose.
+            schema: Schema to create the table in. ``None`` (default)
+                means the catalog's domain schema.
+            use_hatrac: When true (default) the ``URL`` column is wired
+                with the Hatrac upload template (Chaise's file-upload UI
+                deposits bytes into Hatrac). False yields a plain-string
+                URL column for assets whose bytes live elsewhere.
+            update_navbar: If true (default), refresh the navigation bar
+                to include the new table. Set false during batch
+                creation, then apply catalog annotations once at the end
+                via the Python API (``ml.apply_catalog_annotations()``).
+
+        Returns:
+            JSON string ``{"status": "created", "schema", "asset_table",
+            "columns": [<all column names>]}``. Supplying an unknown
+            column ``type`` returns ``{"error": ...}`` naming the valid
+            type names, without touching the catalog.
+
+        Raises:
+            RuntimeError: Wrapped as ``{"error": ...}``, propagated from
+                ``deriva_ml.DerivaML.create_asset_table`` (e.g. table
+                already exists, unknown schema).
+
+        Example:
+            ``{"status": "created", "schema": "eye-ai", "asset_table":
+            "Scan_File", "columns": ["RID", "URL", "Filename", "Length",
+            "MD5", "Description", "Scanner_Model"]}``.
+        """
+        # Map LLM-friendly column dicts to deriva-ml ColumnDefinitions
+        # BEFORE touching the catalog, so a bad type name costs nothing.
+        from deriva_ml.core.definitions import BuiltinTypes, ColumnDefinition
+
+        column_defs = []
+        for spec in additional_columns or []:
+            name = spec.get("name")
+            type_name = spec.get("type")
+            if not name or not type_name:
+                return json.dumps(
+                    {"error": "each additional_columns entry requires 'name' and 'type'"}
+                )
+            try:
+                col_type = BuiltinTypes[type_name]
+            except KeyError:
+                valid = ", ".join(t.name for t in BuiltinTypes)
+                return json.dumps(
+                    {
+                        "error": (
+                            f"unknown column type {type_name!r} for column {name!r}; "
+                            f"valid types: {valid}"
+                        )
+                    }
+                )
+            column_defs.append(
+                ColumnDefinition(
+                    name=name,
+                    type=col_type,
+                    nullok=spec.get("nullok", True),
+                    comment=spec.get("comment"),
+                )
+            )
+
+        try:
+            with deriva_call():
+                # Run the synchronous deriva-ml calls in a thread pool so
+                # the event loop stays responsive (table + two association
+                # creates plus optional navbar annotation apply).
+                ml = await asyncio.to_thread(get_ml, hostname, catalog_id)
+
+                def _create():
+                    return ml.create_asset_table(
+                        asset_name,
+                        additional_columns=column_defs,
+                        comment=comment,
+                        schema=schema,
+                        use_hatrac=use_hatrac,
+                        update_navbar=update_navbar,
+                    )
+
+                table = await asyncio.to_thread(_create)
+            audit_event(
+                "deriva_ml_create_asset_table",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                asset_name=asset_name,
+                schema=table.schema.name,
+            )
+            return CreateAssetTableResponse(
+                status="created",
+                schema_=table.schema.name,
+                asset_table=table.name,
+                columns=[c.name for c in table.columns],
+            ).model_dump_json(by_alias=True)
+        except Exception as exc:
+            return _error_envelope(
+                exc,
+                operation="create_asset_table",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                asset_name=asset_name,
             )
