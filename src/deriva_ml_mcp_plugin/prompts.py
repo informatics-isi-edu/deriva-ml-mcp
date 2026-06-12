@@ -4,7 +4,7 @@ These are MCP prompts (registered via ``@ctx.prompt(...)``), not Python
 docstrings. FastMCP surfaces them through the MCP ``prompts/list`` and
 ``prompts/get`` endpoints so an LLM client can pull them up by name at
 the start of a conversation -- they are the cold-start anchor for the
-plugin's 47 tools and 19 resources.
+plugin's 48 tools and 19 resources.
 
 The two prompts complement the four built-in core prompts shipped by
 ``deriva-mcp-core`` (``query_guide``, ``entity_guide``,
@@ -677,7 +677,7 @@ you're driving the library directly from a notebook or skill.
 
 THE FIVE ML DOMAINS
 -------------------
-Forty-one of the 47 tools are organized into five domain modules. The
+Forty-two of the 48 tools are organized into five domain modules. The
 other six: the catalog-maintenance tools
 ``deriva_ml_create_vocabulary``, ``deriva_ml_reindex_vocabularies``,
 ``deriva_ml_reindex_rows``; the cross-domain
@@ -735,12 +735,14 @@ for the wire name.
                   Claude Code clients also have the deriva-ml-skills
                   ``execution-lifecycle`` skill.
 
-    asset      -- 4 tools. File-backed catalog rows (images, model
+    asset      -- 5 tools. File-backed catalog rows (images, model
                   weights, etc.) -- catalog-state operations only.
                   File I/O (upload/download) runs in local Python; for
                   the how-to, ``rag_search(query="asset upload download",
                   doc_type="ml-docs")`` (user-guide/assets.md). Verbs:
-                  list_assets / find_assets / lookup / update. For "what
+                  list_assets / find_assets / lookup / update /
+                  create_asset_table (canonical hatrac shape +
+                  Asset_Type/Execution associations in one call). For "what
                   asset tables exist in a schema?" use the
                   deriva-ml/assets/{schema} resource (no dedicated tool).
 
@@ -1290,7 +1292,7 @@ and ``description``. There is no compat shim; update any references.
 
 THE MENU
 --------
-Quick orientation: 47 tools -- 41 across the 5 ML domains (dataset,
+Quick orientation: 48 tools -- 42 across the 5 ML domains (dataset,
 feature, workflow, execution, asset) plus 3 catalog-maintenance tools
 (create_vocabulary, reindex_vocabularies, reindex_rows), the
 cross-domain describe_rid, and the orientation pair (primer,

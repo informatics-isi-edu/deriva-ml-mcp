@@ -120,6 +120,9 @@ _EXECUTION_TOOLS = frozenset(
 # ``list_assets`` calls plus client-side filtering.
 _ASSET_TOOLS = frozenset(
     {
+        # plugin#15: thin wrapper over DerivaML.create_asset_table
+        # (deriva-ml#292) -- canonical asset shape in one call.
+        "deriva_ml_create_asset_table",
         "deriva_ml_list_assets",
         "deriva_ml_find_assets",
         "deriva_ml_lookup_asset",

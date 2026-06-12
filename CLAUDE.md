@@ -26,7 +26,7 @@ src/deriva_ml_mcp_plugin/
 ├── prompts.py           # 3 MCP prompts (deriva_ml_concepts /
 │                        #   _getting_started / _primer) + the
 │                        #   deriva_ml_primer + deriva_ml_get_guide orientation tools
-├── tools/               # Per-domain tool modules (47 tools total)
+├── tools/               # Per-domain tool modules (48 tools total)
 │   ├── dataset/         #   19 tools, split into focused submodules:
 │   │   ├── __init__.py  #     register aggregator + helper re-exports
 │   │   ├── read.py      #     11 read tools + shared helpers
@@ -35,7 +35,7 @@ src/deriva_ml_mcp_plugin/
 │   ├── feature.py       #    5 tools
 │   ├── workflow.py      #    5 tools
 │   ├── execution/       #    8 read-only tools (lifecycle is local Python)
-│   ├── asset.py         #    4 tools
+│   ├── asset.py         #    5 tools
 │   ├── vocabulary.py    #    1 tool (deriva_ml_create_vocabulary)
 │   ├── maintenance.py   #    2 tools (reindex_vocabularies, reindex_rows)
 │   └── resolve.py       #    1 tool (deriva_ml_describe_rid -- RID -> kind + routing)
