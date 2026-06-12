@@ -34,8 +34,8 @@ from deriva_mcp_core import deriva_call
 
 from deriva_ml_mcp_plugin._helpers import _error_envelope
 from deriva_ml_mcp_plugin._response_models import (
-    ReindexVocabulariesResponse,
     ReindexRowsResponse,
+    ReindexVocabulariesResponse,
 )
 
 if TYPE_CHECKING:
