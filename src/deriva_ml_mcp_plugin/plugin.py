@@ -60,7 +60,7 @@ def register(ctx: PluginContext) -> None:
     read-through instead -- warmed on list/get/find via
     ``_index_rows_on_find`` and surgically on create/mutate via
     ``_reindex_*`` (see ``resources/rag.py``), with
-    ``deriva_ml_resync_indexes`` as the manual warm-everything button.
+    ``deriva_ml_reindex_rows`` as the manual warm-everything button.
 
     v1.2 added the asset domain (catalog-state operations -- file
     I/O lives in the deriva-skills ``work-with-assets`` skill) plus

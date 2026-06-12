@@ -25,7 +25,7 @@ src/deriva_ml_mcp_plugin/
 │                        # _table_to_dict, _MAX_LIMIT (shared)
 ├── prompts.py           # 3 MCP prompts (deriva_ml_concepts /
 │                        #   _getting_started / _primer) + the
-│                        #   deriva_ml_primer + get_guide orientation tools
+│                        #   deriva_ml_primer + deriva_ml_get_guide orientation tools
 ├── tools/               # Per-domain tool modules (47 tools total)
 │   ├── dataset/         #   19 tools, split into focused submodules:
 │   │   ├── __init__.py  #     register aggregator + helper re-exports
@@ -37,7 +37,7 @@ src/deriva_ml_mcp_plugin/
 │   ├── execution/       #    8 read-only tools (lifecycle is local Python)
 │   ├── asset.py         #    4 tools
 │   ├── vocabulary.py    #    1 tool (deriva_ml_create_vocabulary)
-│   ├── maintenance.py   #    2 tools (reindex_vocabularies, resync_indexes)
+│   ├── maintenance.py   #    2 tools (reindex_vocabularies, reindex_rows)
 │   └── resolve.py       #    1 tool (deriva_ml_describe_rid -- RID -> kind + routing)
 └── resources/           # MCP resources + per-user RAG
     ├── ml.py            #   19 resources (16 catalog-scoped under
@@ -53,7 +53,7 @@ package markers. `ml_context.py` arrived in Phase 1; the domain tool
 modules in Phases 2-5; `resources/ml.py` and `resources/rag.py` in
 Phase 6; v1.0 polish added `prompts.py` + the `deriva_ml_*` tool name
 prefix; v1.1 added vocabulary RAG indexing + `tools/vocabulary.py` (renamed to
-`tools/maintenance.py` in v1.4 when `deriva_ml_resync_indexes` joined it) +
+`tools/maintenance.py` in v1.4 when `deriva_ml_reindex_rows` joined it) +
 the discovery-pattern prompt section; v1.x split `tools/dataset.py`
 into a focused-submodule package.
 
@@ -100,7 +100,7 @@ propagate across users: when user A mutates a dataset visible to user
 B, B's per-user sources stay stale until B next lists/fetches that row
 (or resyncs). Same gap applies to mutations from non-MCP clients
 (Chaise UI, ERMrest direct). The manual bridge is
-`deriva_ml_resync_indexes(hostname, catalog_id, target=None)` in
+`deriva_ml_reindex_rows(hostname, catalog_id, target=None)` in
 `tools/maintenance.py` -- the "warm everything for this catalog now"
 button, re-running `_reindex_*` over every visible row for the calling
 user (target=None) or one (target="dataset:1-AAAA"). The

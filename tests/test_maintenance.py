@@ -6,7 +6,7 @@
   ``resources.rag._index_vocabularies`` (the same coroutine the
   on_catalog_connect hook fires); covered by the ``vocab_*`` tests
   in the first half of this file.
-- ``deriva_ml_resync_indexes`` (v1.4) -- cross-user freshness bridge
+- ``deriva_ml_reindex_rows`` (v1.4) -- cross-user freshness bridge
   for the per-user-trio sources; thin wrapper around
   ``resources.rag._resync_user_sources``; covered by the ``resync_*``
   tests in the second half of this file.
@@ -56,7 +56,7 @@ def vocab_ctx(ctx):
 
     The fixture name ``vocab_ctx`` is preserved from the v1.1 module
     layout for symmetry; the registered surface now includes both
-    ``deriva_ml_reindex_vocabularies`` and ``deriva_ml_resync_indexes``.
+    ``deriva_ml_reindex_vocabularies`` and ``deriva_ml_reindex_rows``.
     """
     from deriva_ml_mcp_plugin.tools import maintenance as maintenance_module
 
@@ -150,11 +150,11 @@ async def test_reindex_failure_returns_error_envelope_without_audit(vocab_ctx, c
 
 
 # ---------------------------------------------------------------------------
-# deriva_ml_resync_indexes (v1.4) -- cross-user freshness manual refresh
+# deriva_ml_reindex_rows (v1.4) -- cross-user freshness manual refresh
 # ---------------------------------------------------------------------------
 
 
-async def test_resync_indexes_all_returns_counts_dict(vocab_ctx, capturing_mcp):
+async def test_reindex_rows_all_returns_counts_dict(vocab_ctx, capturing_mcp):
     """No ``target`` arg -> _resync_user_sources called with target=None; counts forwarded."""
     from deriva_ml_mcp_plugin.resources import rag as rag_module
 
@@ -163,33 +163,33 @@ async def test_resync_indexes_all_returns_counts_dict(vocab_ctx, capturing_mcp):
         patch.object(rag_module, "_resync_user_sources", return_value=counts) as fake_resync,
         _patch_helpers_audit() as mock_audit,
     ):
-        result = await capturing_mcp.tools["deriva_ml_resync_indexes"](
+        result = await capturing_mcp.tools["deriva_ml_reindex_rows"](
             hostname="h.example", catalog_id="1"
         )
 
     fake_resync.assert_awaited_once_with("h.example", "1", target=None)
     payload = json.loads(result)
-    assert payload == {"resynced": counts}
+    assert payload == {"reindexed": counts}
     # mutates=False -> no audit emission on success.
     mock_audit.assert_not_called()
 
 
-async def test_resync_indexes_targeted_forwards_target(vocab_ctx, capturing_mcp):
+async def test_reindex_rows_targeted_forwards_target(vocab_ctx, capturing_mcp):
     """``target="dataset:1-AAAA"`` is forwarded to _resync_user_sources surgically."""
     from deriva_ml_mcp_plugin.resources import rag as rag_module
 
     counts = {"dataset": 1, "workflow": 0, "execution": 0}
     with patch.object(rag_module, "_resync_user_sources", return_value=counts) as fake_resync:
-        result = await capturing_mcp.tools["deriva_ml_resync_indexes"](
+        result = await capturing_mcp.tools["deriva_ml_reindex_rows"](
             hostname="h.example", catalog_id="1", target="dataset:1-AAAA"
         )
 
     fake_resync.assert_awaited_once_with("h.example", "1", target="dataset:1-AAAA")
     payload = json.loads(result)
-    assert payload == {"resynced": counts}
+    assert payload == {"reindexed": counts}
 
 
-async def test_resync_indexes_partial_progress_is_success(vocab_ctx, capturing_mcp):
+async def test_reindex_rows_partial_progress_is_success(vocab_ctx, capturing_mcp):
     """Per-RID failures inside _resync_user_sources are swallowed; partial counts return as success."""
     from deriva_ml_mcp_plugin.resources import rag as rag_module
 
@@ -198,16 +198,16 @@ async def test_resync_indexes_partial_progress_is_success(vocab_ctx, capturing_m
     # "return what landed"; the wrapping tool just forwards.
     counts = {"dataset": 4, "workflow": 0, "execution": 7}
     with patch.object(rag_module, "_resync_user_sources", return_value=counts):
-        result = await capturing_mcp.tools["deriva_ml_resync_indexes"](
+        result = await capturing_mcp.tools["deriva_ml_reindex_rows"](
             hostname="h.example", catalog_id="1"
         )
 
     payload = json.loads(result)
     assert "error" not in payload
-    assert payload == {"resynced": counts}
+    assert payload == {"reindexed": counts}
 
 
-async def test_resync_indexes_malformed_target_returns_error(vocab_ctx, capturing_mcp):
+async def test_reindex_rows_malformed_target_returns_error(vocab_ctx, capturing_mcp):
     """A malformed ``target`` string surfaces as ``{"error": ...}`` (no audit).
 
     ``_resync_user_sources`` raises ValueError for malformed targets;
@@ -224,7 +224,7 @@ async def test_resync_indexes_malformed_target_returns_error(vocab_ctx, capturin
         ),
         _patch_helpers_audit() as mock_audit,
     ):
-        result = await capturing_mcp.tools["deriva_ml_resync_indexes"](
+        result = await capturing_mcp.tools["deriva_ml_reindex_rows"](
             hostname="h.example", catalog_id="1", target="badtarget"
         )
 
@@ -234,9 +234,7 @@ async def test_resync_indexes_malformed_target_returns_error(vocab_ctx, capturin
     mock_audit.assert_not_called()
 
 
-async def test_resync_indexes_failure_returns_error_envelope_without_audit(
-    vocab_ctx, capturing_mcp
-):
+async def test_reindex_rows_failure_returns_error_envelope_without_audit(vocab_ctx, capturing_mcp):
     """A raised exception lands as ``{"error": ...}`` and does NOT emit an audit event.
 
     Same ``mutates=False`` contract as deriva_ml_reindex_vocabularies:
@@ -251,7 +249,7 @@ async def test_resync_indexes_failure_returns_error_envelope_without_audit(
         ),
         _patch_helpers_audit() as mock_audit,
     ):
-        result = await capturing_mcp.tools["deriva_ml_resync_indexes"](
+        result = await capturing_mcp.tools["deriva_ml_reindex_rows"](
             hostname="h.example", catalog_id="1"
         )
 

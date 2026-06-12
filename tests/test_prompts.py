@@ -197,43 +197,43 @@ def test_render_primer_has_three_blocks():
     body = prompts._render_primer()
     assert "DERIVA-ML AGENT GUIDELINES" in body  # block 1 header
     assert "ON-DEMAND GUIDES" in body  # block 2 header
-    assert "get_guide" in body  # block 3 references on-demand fetch
+    assert "deriva_ml_get_guide" in body  # block 3 references on-demand fetch
 
 
-def test_get_guide_returns_plugin_guide_body(ctx, capturing_mcp):
-    """get_guide returns the full body for a plugin-owned guide."""
+def test_deriva_ml_get_guide_returns_plugin_guide_body(ctx, capturing_mcp):
+    """deriva_ml_get_guide returns the full body for a plugin-owned guide."""
     prompts.register(ctx)
-    get_guide = capturing_mcp.tools["get_guide"]
-    assert get_guide(name="deriva_ml_concepts") == prompts._CONCEPTS_GUIDE
-    assert get_guide(name="deriva_ml_getting_started") == prompts._GETTING_STARTED_GUIDE
+    deriva_ml_get_guide = capturing_mcp.tools["deriva_ml_get_guide"]
+    assert deriva_ml_get_guide(name="deriva_ml_concepts") == prompts._CONCEPTS_GUIDE
+    assert deriva_ml_get_guide(name="deriva_ml_getting_started") == prompts._GETTING_STARTED_GUIDE
 
 
-def test_get_guide_redirects_core_guide(ctx, capturing_mcp):
-    """get_guide returns a slash-command redirect for a core guide name."""
+def test_deriva_ml_get_guide_redirects_core_guide(ctx, capturing_mcp):
+    """deriva_ml_get_guide returns a slash-command redirect for a core guide name."""
     prompts.register(ctx)
-    get_guide = capturing_mcp.tools["get_guide"]
-    result = get_guide(name="query_guide")
+    deriva_ml_get_guide = capturing_mcp.tools["deriva_ml_get_guide"]
+    result = deriva_ml_get_guide(name="query_guide")
     assert "query_guide" in result
     assert "/<server>:" in result or "slash-command" in result
 
 
-def test_get_guide_unknown_name_errors(ctx, capturing_mcp):
-    """get_guide returns a structured error for an unknown name."""
+def test_deriva_ml_get_guide_unknown_name_errors(ctx, capturing_mcp):
+    """deriva_ml_get_guide returns a structured error for an unknown name."""
     import json as _json
 
     prompts.register(ctx)
-    get_guide = capturing_mcp.tools["get_guide"]
-    result = get_guide(name="does_not_exist")
+    deriva_ml_get_guide = capturing_mcp.tools["deriva_ml_get_guide"]
+    result = deriva_ml_get_guide(name="does_not_exist")
     payload = _json.loads(result)
     assert "error" in payload
     # The error lists the valid names so the agent can recover.
     assert "deriva_ml_concepts" in payload["error"]
 
 
-def test_get_guide_registered_read_only(ctx, capturing_mcp):
-    """get_guide is a read-only tool."""
+def test_deriva_ml_get_guide_registered_read_only(ctx, capturing_mcp):
+    """deriva_ml_get_guide is a read-only tool."""
     prompts.register(ctx)
-    assert "get_guide" in capturing_mcp.tools
+    assert "deriva_ml_get_guide" in capturing_mcp.tools
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +247,7 @@ def test_primer_is_tiered_not_concatenated():
     Cold-start cost: the old primer concatenated _CONCEPTS_GUIDE +
     _GETTING_STARTED_GUIDE (~17K tokens). The tiered primer carries the
     load-bearing operating contract only; the full guides are fetched
-    on demand via get_guide (they appear in the manifest instead).
+    on demand via deriva_ml_get_guide (they appear in the manifest instead).
     """
     body = prompts._render_primer()
     # Deep-guide-only markers must NOT be inlined any more.
@@ -260,7 +260,7 @@ def test_primer_is_tiered_not_concatenated():
     # Both full guides are offered on demand in the manifest.
     assert "deriva_ml_concepts" in body
     assert "deriva_ml_getting_started" in body
-    assert "get_guide" in body
+    assert "deriva_ml_get_guide" in body
     # And the primer is actually compact: well under a third of the
     # combined full-guide length.
     combined = len(prompts._CONCEPTS_GUIDE) + len(prompts._GETTING_STARTED_GUIDE)

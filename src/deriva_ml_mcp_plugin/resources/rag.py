@@ -26,7 +26,7 @@ on-connect bulk pass for those three tables in favor of read-through
    so ACL behavior matches the read tools, and the per-RID source naming
    lets a single row be refreshed without touching the rest of the
    user's index, so ``rag_search`` finds the change on the very next
-   call. The ``deriva_ml_resync_indexes`` tool re-runs the same per-RID
+   call. The ``deriva_ml_reindex_rows`` tool re-runs the same per-RID
    re-index loop over every visible row on demand (manual "warm
    everything" backfill via ``_resync_*`` + ``_fetch_*_rows``) -- the
    replacement for the removed first-connect bulk pass.
@@ -105,7 +105,7 @@ First-connect lag (no startup prewarm):
     for catalog-public per-catalog indexing). Workaround until then:
     call ``deriva_ml_reindex_vocabularies(hostname, catalog_id)`` once
     per catalog after a restart to remove the vocab portion of the
-    first-connect lag, and ``deriva_ml_resync_indexes(hostname,
+    first-connect lag, and ``deriva_ml_reindex_rows(hostname,
     catalog_id)`` to warm the calling user's per-user trio in bulk.
 
 Wiring into ``plugin.py`` is in ``register_rag_sources(ctx)``. This
@@ -584,7 +584,7 @@ async def _reindex_dataset(hostname: str, catalog_id: str, dataset_rid: str) -> 
     tool's success path (the catalog mutation already succeeded). On
     failure returns 0; the row is picked up on the next read-through
     warm (a later list/get of this row via ``_index_rows_on_find``) or
-    via ``deriva_ml_resync_indexes``.
+    via ``deriva_ml_reindex_rows``.
 
     Args:
         hostname: Deriva hostname.
@@ -1214,7 +1214,7 @@ def register_rag_sources(ctx: PluginContext) -> None:
     (``data:{host}:{cat}:{user_id}:{table}:{rid}``) are now warmed
     read-through by the list/get tools (via ``_index_rows_on_find``) and
     surgically on mutate (via ``_reindex_<entity>``), with the
-    ``deriva_ml_resync_indexes`` tool (``_resync_*`` + ``_fetch_*_rows``)
+    ``deriva_ml_reindex_rows`` tool (``_resync_*`` + ``_fetch_*_rows``)
     available for manual bulk backfill. The per-RID ``data:`` source
     shape is unchanged.
 

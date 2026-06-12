@@ -4,7 +4,7 @@ This submodule houses the 7 simple-mutation dataset tools:
 ``deriva_ml_create_dataset``, ``deriva_ml_delete_dataset``,
 ``deriva_ml_add_dataset_members``, ``deriva_ml_delete_dataset_members``,
 ``deriva_ml_update_dataset``, ``deriva_ml_add_dataset_element_type``,
-and ``deriva_ml_release``.
+and ``deriva_ml_release_dataset``.
 
 These are the "one operation, one catalog mutation" tools -- each is
 short, body fits in a screen, no multi-step orchestration. The
@@ -276,7 +276,7 @@ def register(ctx: PluginContext) -> None:
         Per ADR-0003 (deriva-ml 1.34+), adding members flips the
         dataset to a *dev* version (``<last_release>.post1.devN``),
         not a released version. To mint a stable, citable released
-        label, call ``deriva_ml_release`` after the mutation. The
+        label, call ``deriva_ml_release_dataset`` after the mutation. The
         returned ``new_version`` will be a dev label.
 
         Member tables must already be registered as dataset element
@@ -298,7 +298,7 @@ def register(ctx: PluginContext) -> None:
         Returns:
             JSON string ``{"status": "added", "added_count",
             "dataset_rid", "new_version"}``. ``new_version`` is a
-            dev label; call ``deriva_ml_release`` to promote to a
+            dev label; call ``deriva_ml_release_dataset`` to promote to a
             released label. Supplying neither or both of
             ``member_rids`` / ``members_by_table`` returns
             ``{"error": ...}`` directly (no exception raised).
@@ -397,7 +397,7 @@ def register(ctx: PluginContext) -> None:
         Per ADR-0003 (deriva-ml 1.34+), removing members flips the
         dataset to a *dev* version (``<last_release>.post1.devN``),
         not a released version. To mint a stable, citable released
-        label, call ``deriva_ml_release`` after the mutation. The
+        label, call ``deriva_ml_release_dataset`` after the mutation. The
         returned ``new_version`` will be a dev label.
 
         Args:
@@ -411,7 +411,7 @@ def register(ctx: PluginContext) -> None:
         Returns:
             JSON string ``{"status": "removed", "removed_count",
             "dataset_rid", "new_version"}``. ``new_version`` is a
-            dev label; call ``deriva_ml_release`` to promote to a
+            dev label; call ``deriva_ml_release_dataset`` to promote to a
             released label.
 
         Raises:
@@ -516,7 +516,7 @@ def register(ctx: PluginContext) -> None:
             description was edited. ``new_version`` is the dataset's
             version after the update. Per ADR-0003, a type edit lands
             the dataset on a DEV version (``<release>.post1.devN``),
-            not a released bump -- call ``deriva_ml_release`` afterward
+            not a released bump -- call ``deriva_ml_release_dataset`` afterward
             to promote the change to a released snapshot.
 
         Raises:
@@ -706,7 +706,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=True)
-    async def deriva_ml_release(
+    async def deriva_ml_release_dataset(
         hostname: str,
         catalog_id: str,
         dataset_rid: str,
@@ -789,7 +789,7 @@ def register(ctx: PluginContext) -> None:
                 )
                 new_version_str = str(new_version)
             _pkg.audit_event(
-                "deriva_ml_release",
+                "deriva_ml_release_dataset",
                 hostname=hostname,
                 catalog_id=catalog_id,
                 dataset_rid=dataset_rid,
@@ -817,7 +817,7 @@ def register(ctx: PluginContext) -> None:
         except Exception as exc:
             return _error_envelope(
                 exc,
-                operation="release",
+                operation="release_dataset",
                 hostname=hostname,
                 catalog_id=catalog_id,
                 dataset_rid=dataset_rid,

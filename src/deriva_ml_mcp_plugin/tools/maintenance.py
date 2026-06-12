@@ -10,7 +10,7 @@ two scenarios the framework's lifecycle hooks don't cover:
   any framework lifecycle hook; tracked upstream as
   ``deriva-mcp-core#3``).
 
-- ``deriva_ml_resync_indexes`` (v1.4) -- to refresh the calling
+- ``deriva_ml_reindex_rows`` (v1.4) -- to refresh the calling
   user's per-user-trio (Dataset / Workflow / Execution) sources
   after **another user** (or a non-MCP client like Chaise) has
   mutated catalog state the calling user can see. v1.3's surgical
@@ -19,7 +19,7 @@ two scenarios the framework's lifecycle hooks don't cover:
   in the original issue body).
 
 (History: this module was named ``tools/vocabulary.py`` in v1.1 when
-it held only the vocab tool. v1.4 added ``deriva_ml_resync_indexes``,
+it held only the vocab tool. v1.4 added ``deriva_ml_reindex_rows``,
 which isn't vocabulary-specific, so the module was renamed to
 ``maintenance.py`` to reflect that both tools are RAG-cache management
 verbs. The fixture name ``vocab_ctx`` in ``tests/test_maintenance.py``
@@ -34,8 +34,8 @@ from deriva_mcp_core import deriva_call
 
 from deriva_ml_mcp_plugin._helpers import _error_envelope
 from deriva_ml_mcp_plugin._response_models import (
+    ReindexRowsResponse,
     ReindexVocabulariesResponse,
-    ResyncIndexesResponse,
 )
 
 if TYPE_CHECKING:
@@ -46,7 +46,7 @@ def register(ctx: PluginContext) -> None:
     """Register the RAG cache management tools with the plugin context.
 
     Two tools are registered: ``deriva_ml_reindex_vocabularies`` (v1.1)
-    and ``deriva_ml_resync_indexes`` (v1.4). Both are ``mutates=False``
+    and ``deriva_ml_reindex_rows`` (v1.4). Both are ``mutates=False``
     cache-refresh verbs; see the module docstring for the full
     rationale.
 
@@ -134,7 +134,7 @@ def register(ctx: PluginContext) -> None:
             )
 
     @ctx.tool(mutates=False)
-    async def deriva_ml_resync_indexes(
+    async def deriva_ml_reindex_rows(
         hostname: str,
         catalog_id: str,
         target: str | None = None,
@@ -185,7 +185,7 @@ def register(ctx: PluginContext) -> None:
                 per-user sources.
 
         Returns:
-            ``{"resynced": {"dataset": N, "workflow": M, "execution": K}}``
+            ``{"reindexed": {"dataset": N, "workflow": M, "execution": K}}``
             -- counts of sources successfully refreshed per table.
             For ``target="<table>:<rid>"`` mode, only the targeted
             table's count is non-zero.
@@ -199,11 +199,11 @@ def register(ctx: PluginContext) -> None:
         Example:
             Refresh everything (most common pattern)::
 
-                deriva_ml_resync_indexes(hostname="myhost", catalog_id="1")
+                deriva_ml_reindex_rows(hostname="myhost", catalog_id="1")
 
             Surgical refresh of one dataset::
 
-                deriva_ml_resync_indexes(
+                deriva_ml_reindex_rows(
                     hostname="myhost",
                     catalog_id="1",
                     target="dataset:1-AAAA",
@@ -217,11 +217,11 @@ def register(ctx: PluginContext) -> None:
                 from deriva_ml_mcp_plugin.resources.rag import _resync_user_sources
 
                 counts = await _resync_user_sources(hostname, catalog_id, target=target)
-            return ResyncIndexesResponse(resynced=counts).model_dump_json(by_alias=True)
+            return ReindexRowsResponse(reindexed=counts).model_dump_json(by_alias=True)
         except Exception as exc:
             return _error_envelope(
                 exc,
-                operation="resync_indexes",
+                operation="reindex_rows",
                 hostname=hostname,
                 catalog_id=catalog_id,
                 audit=False,  # not a catalog mutation

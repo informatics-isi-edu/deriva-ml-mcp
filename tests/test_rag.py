@@ -706,7 +706,7 @@ def test_vocab_hook_swallows_index_exception() -> None:
 #   2. A per-key asyncio.Lock with double-checked membership: concurrent
 #      firings serialize on the lock; the winner indexes and records the unit
 #      in the set; waiters re-check the set after acquiring and skip.
-# Manual re-index tools (deriva_ml_reindex_vocabularies / resync_indexes) clear
+# Manual re-index tools (deriva_ml_reindex_vocabularies / reindex_rows) clear
 # the relevant set entries so an explicit re-index still runs.
 #
 # Work units:
@@ -839,9 +839,7 @@ def test_reindex_execution_logs_concise_message_for_legacy_status_valueerror(cap
     from deriva_ml_mcp_plugin.resources import rag as rag_module
 
     fake_ml = MagicMock()
-    fake_ml.lookup_execution.side_effect = ValueError(
-        "'Completed' is not a valid ExecutionStatus"
-    )
+    fake_ml.lookup_execution.side_effect = ValueError("'Completed' is not a valid ExecutionStatus")
 
     with (
         patch.object(rag_module, "get_rag_store", return_value=MagicMock()),
