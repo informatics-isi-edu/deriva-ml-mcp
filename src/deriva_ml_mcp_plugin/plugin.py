@@ -27,6 +27,7 @@ from deriva_ml_mcp_plugin.tools import dataset as _dataset
 from deriva_ml_mcp_plugin.tools import execution as _execution
 from deriva_ml_mcp_plugin.tools import feature as _feature
 from deriva_ml_mcp_plugin.tools import maintenance as _maintenance
+from deriva_ml_mcp_plugin.tools import resolve as _resolve
 from deriva_ml_mcp_plugin.tools import vocabulary as _vocabulary
 from deriva_ml_mcp_plugin.tools import workflow as _workflow
 
@@ -90,6 +91,7 @@ def register(ctx: PluginContext) -> None:
     _asset.register(ctx)
     _vocabulary.register(ctx)
     _maintenance.register(ctx)
+    _resolve.register(ctx)
     _ml_resources.register(ctx)
     _ml_rag.register_rag_sources(ctx)
     _ml_prompts.register(ctx)

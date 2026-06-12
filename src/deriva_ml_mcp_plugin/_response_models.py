@@ -1447,3 +1447,31 @@ class AddDatasetElementTypeResponse(BaseModel):
 # docs/superpowers/notes/2026-05-23-cache-denormalize-deprecation-design.md).
 # Bag materialization is now a user-local Python operation; the
 # response models are no longer needed.
+
+
+class DescribeRidResponse(BaseModel):
+    """Response shape for ``deriva_ml_describe_rid``.
+
+    The "step 0" answer for a bare RID of unknown type: where it lives
+    (schema, table), which DerivaML abstraction it is, and what to call
+    next. ``resource_uri`` carries the matching ``ml/<kind>/{rid}``
+    resource for the kinds that have one (dataset / workflow /
+    execution / asset) and is ``None`` otherwise.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    rid: str
+    schema_: str = Field(alias="schema")
+    table: str
+    kind: Literal[
+        "dataset",
+        "workflow",
+        "execution",
+        "vocabulary_term",
+        "asset",
+        "association",
+        "entity",
+    ]
+    suggestion: str
+    resource_uri: str | None = None
