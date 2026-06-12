@@ -502,10 +502,10 @@ def register(ctx: PluginContext) -> None:
 
             # ANTI-PATTERN -- do not do this
             existing = deriva_ml_find_workflow_by_url(url=X)
-            if existing is None:
+            if "error" in existing:  # not found
                 deriva_ml_create_workflow(url=X, checksum=Y, ...)
             else:
-                workflow_rid = existing["workflow_rid"]
+                workflow_rid = existing["rid"]
 
         The right pattern::
 

@@ -1,10 +1,12 @@
 """Read-only execution tools and shared execution helpers.
 
-This submodule houses the 5 read tools (``deriva_ml_list_executions``,
+This submodule houses the 8 read tools (``deriva_ml_list_executions``,
 ``deriva_ml_get_execution``, ``deriva_ml_find_workflow_executions``,
-``deriva_ml_list_execution_children``, ``deriva_ml_list_execution_parents``)
-plus the three helpers (``_summarize_execution``,
-``_list_executions_impl``, ``_get_execution_detail_impl``) that the
+``deriva_ml_find_dataset_executions``, ``deriva_ml_find_experiments``,
+``deriva_ml_list_execution_children``, ``deriva_ml_list_execution_parents``,
+``deriva_ml_get_lineage``) plus the shared helpers
+(``_summarize_execution``, ``_list_executions_impl``,
+``_get_execution_detail_impl``, ``_get_lineage_impl``) that the
 read tools and the ``resources/ml.py`` / ``resources/rag.py`` modules
 consume to keep tool / resource shapes in sync.
 
@@ -853,14 +855,17 @@ def register(ctx: PluginContext) -> None:
         catalog_id: str,
         execution_rid: str,
     ) -> str:
-        """Read full details of one execution by RID.
+        """Read one execution's summary by RID.
 
         FIRST CALL for any execution-detail question (status, duration,
         description). When the question also implicates the run's
         inputs, outputs, or related artifacts, chain into
         ``deriva_ml_get_lineage`` next; for the nested-execution tree
         use ``deriva_ml_list_execution_parents`` /
-        ``deriva_ml_list_execution_children``. Raw ``query_attribute``
+        ``deriva_ml_list_execution_children``. For the bundled DETAIL
+        shape (inputs + outputs + ``experiment`` in one fetch), read the
+        ``deriva://catalog/{h}/{c}/deriva-ml/execution/{rid}`` resource
+        instead (resource-capable clients). Raw ``query_attribute``
         joins over the Execution association tables are the fallback
         for when these tools fail or don't cover the question (e.g.
         domain-specific relationships outside the ML provenance graph)
@@ -873,7 +878,8 @@ def register(ctx: PluginContext) -> None:
         Returns:
             JSON string with the execution summary: ``{"rid",
             "workflow_rid", "status", "description", "start_time",
-            "stop_time", "duration"}``.
+            "stop_time", "duration", "download_duration",
+            "upload_duration"}``.
 
         Raises:
             RuntimeError: Wrapped, propagated from
@@ -882,7 +888,8 @@ def register(ctx: PluginContext) -> None:
         Example:
             ``{"rid": "1-EXEC", "workflow_rid": "1-WF", "status": "Stopped",
             "description": "training run", "start_time": "...",
-            "stop_time": "...", "duration": "..."}``.
+            "stop_time": "...", "duration": "...",
+            "download_duration": null, "upload_duration": null}``.
         """
         try:
             with deriva_call():
@@ -1279,9 +1286,11 @@ def register(ctx: PluginContext) -> None:
 
         Returns executions that have a Hydra configuration asset
         (``*-config.yaml`` in ``Execution_Metadata``). Experiment
-        detail (``config_choices``, ``model_config``) is available
-        per-execution via ``deriva_ml_get_execution`` followed by
-        inspecting the ``experiment`` field on the detail payload.
+        detail (``config_choices``, ``model_config``) lives on the
+        ``experiment`` field of the execution DETAIL resource --
+        read ``deriva://catalog/{h}/{c}/deriva-ml/execution/{rid}``
+        per execution. (The ``deriva_ml_get_execution`` tool returns
+        the summary shape, which does NOT carry ``experiment``.)
 
         Returns execution summaries in the same shape as
         ``deriva_ml_list_executions`` -- the two can be used

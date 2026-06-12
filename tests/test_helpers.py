@@ -109,5 +109,28 @@ def test_error_envelope_no_missing_rids_for_generic_exception() -> None:
             audit=False,
         )
     )
-    assert out == {"error": "something else broke"}
+    assert out == {"error": "something else broke", "error_type": "RuntimeError"}
     assert "missing_rids" not in out
+
+
+def test_error_envelope_carries_machine_readable_error_type() -> None:
+    """The wire envelope includes error_type (exception class name).
+
+    Already computed for the audit row; surfacing it on the wire lets an
+    LLM distinguish not-found / permission / validation failures without
+    parsing the human-oriented message string.
+    """
+    import json
+
+    from deriva_ml_mcp_plugin._helpers import _error_envelope
+
+    raw = _error_envelope(
+        ValueError("boom"),
+        operation="unit_test",
+        hostname="h",
+        catalog_id="1",
+        audit=False,
+    )
+    payload = json.loads(raw)
+    assert payload["error"] == "boom"
+    assert payload["error_type"] == "ValueError"

@@ -419,13 +419,22 @@ def register(ctx: PluginContext) -> None:
         Selectors:
 
         - ``none`` -- return all matching records (multiple per target).
-        - ``newest`` / ``latest`` / ``first`` -- time-based collapse via
-          the corresponding ``FeatureRecord.select_*`` staticmethod.
+        - ``newest`` -- per target, keep the record with the most recent
+          row-creation time (RCT). ``latest`` is an exact alias of
+          ``newest``; ``first`` keeps the EARLIEST record instead.
         - ``majority_vote`` -- collapse by most common value.
         - ``by_workflow`` -- filter to records from one workflow.
           Requires ``selector_workflow``.
         - ``by_execution`` -- filter to records from one execution.
           Requires ``selector_execution_rid``.
+
+        COMPARE-RUNS RECIPE: to compare a metric across N known runs in
+        one round-trip, pass ``execution_rids=[ridA, ridB, ...]`` (no
+        selector) -- the response carries one row per (record,
+        execution), so group client-side by the ``Execution`` column.
+        Discover the run RIDs first via ``deriva_ml_find_experiments``
+        or ``deriva_ml_list_executions``. Metrics stored as JSONL asset
+        files (not features) are downloaded in local Python instead.
 
         Exactly one selector strategy applies per call: ``selector`` is a
         single value. Supply ``selector_workflow`` ONLY with
@@ -750,6 +759,13 @@ def register(ctx: PluginContext) -> None:
         feature_name: str,
     ) -> str:
         """Remove a feature definition and all its values.
+
+        DESTRUCTIVE: this drops every value ever recorded for the
+        feature (ground truth AND model predictions, from every
+        execution), not just the definition. Before calling, run
+        ``deriva_ml_list_feature_values(table, feature_name,
+        preflight_count=True)`` and report the count to the user so
+        they can confirm the blast radius -- there is no undo.
 
         Args:
             table: Target table the feature is defined on.

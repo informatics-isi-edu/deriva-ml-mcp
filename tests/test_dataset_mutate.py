@@ -109,7 +109,7 @@ async def test_create_dataset_failure_emits_failed_audit(dataset_ctx, capturing_
                 dataset_types=["BadTerm"],
             )
         )
-    assert out == {"error": "invalid term"}
+    assert out == {"error": "invalid term", "error_type": "RuntimeError"}
 
     failed = _success_calls(mock_audit, "deriva_ml_create_dataset_failed")
     assert failed, "expected deriva_ml_create_dataset_failed audit event"
@@ -167,7 +167,7 @@ async def test_delete_dataset_error_path(dataset_ctx, capturing_mcp, mock_ml):
                 hostname="h", catalog_id="1", dataset_rid="missing"
             )
         )
-    assert out == {"error": "not found"}
+    assert out == {"error": "not found", "error_type": "RuntimeError"}
     failed = _success_calls(mock_audit, "deriva_ml_delete_dataset_failed")
     assert failed
     assert failed[0].kwargs["error_type"] == "RuntimeError"
@@ -267,7 +267,7 @@ async def test_add_dataset_members_error_path(dataset_ctx, capturing_mcp, mock_m
                 member_rids=["r1"],
             )
         )
-    assert out == {"error": "cycle detected"}
+    assert out == {"error": "cycle detected", "error_type": "RuntimeError"}
     failed = _success_calls(mock_audit, "deriva_ml_add_dataset_members_failed")
     assert failed
     assert failed[0].kwargs["attempted_count"] == 1
@@ -316,7 +316,7 @@ async def test_delete_dataset_members_error(dataset_ctx, capturing_mcp, mock_ml)
                 member_rids=["r1", "r2", "r3"],
             )
         )
-    assert out == {"error": "rid not in dataset"}
+    assert out == {"error": "rid not in dataset", "error_type": "RuntimeError"}
     failed = _success_calls(mock_audit, "deriva_ml_delete_dataset_members_failed")
     assert failed
     assert failed[0].kwargs["attempted_count"] == 3
@@ -596,7 +596,7 @@ async def test_add_dataset_element_type_error(dataset_ctx, capturing_mcp, mock_m
                 hostname="h", catalog_id="1", table_name="Execution"
             )
         )
-    assert out == {"error": "not a domain table"}
+    assert out == {"error": "not a domain table", "error_type": "RuntimeError"}
     failed = _success_calls(mock_audit, "deriva_ml_add_dataset_element_type_failed")
     assert failed
     assert failed[0].kwargs["table_name"] == "Execution"

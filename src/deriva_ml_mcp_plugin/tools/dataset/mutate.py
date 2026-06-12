@@ -92,9 +92,22 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """Register a new dataset under an execution for provenance tracking.
 
+        WHERE execution_rid COMES FROM. Executions are minted in
+        user-local Python, not on this MCP surface (stateless rule) --
+        there is no create-execution tool to call first. Three routes:
+        (1) reuse an existing in-flight execution's RID if this dataset
+        is being created as part of that run; (2) for standalone
+        curation, the user runs a small local curation execution
+        (``with ml.create_execution(...) as exe:``) and passes its RID
+        -- route them to ``rag_search(query="execution lifecycle",
+        doc_type="ml-docs")`` for the pattern; (3) pick an existing
+        appropriate execution via ``deriva_ml_list_executions``. Do not
+        invent a RID -- creation fails on an unknown execution_rid.
+
         Args:
             execution_rid: RID of the parent Execution. Required -- the new
-                dataset's provenance is rooted in this execution.
+                dataset's provenance is rooted in this execution. See
+                "WHERE execution_rid COMES FROM" above.
             dataset_types: Optional list of dataset-type term names to tag
                 the new dataset with.
             description: Free-text description of the dataset.
@@ -286,11 +299,11 @@ def register(ctx: PluginContext) -> None:
             JSON string ``{"status": "added", "added_count",
             "dataset_rid", "new_version"}``. ``new_version`` is a
             dev label; call ``deriva_ml_release`` to promote to a
-            released label.
+            released label. Supplying neither or both of
+            ``member_rids`` / ``members_by_table`` returns
+            ``{"error": ...}`` directly (no exception raised).
 
         Raises:
-            ValueError: If neither or both of ``member_rids``/
-                ``members_by_table`` are supplied.
             RuntimeError: Wrapped, propagated from
                 ``deriva_ml.dataset.dataset.Dataset.add_dataset_members``
                 (e.g. table not a registered element type, would create a
@@ -484,14 +497,9 @@ def register(ctx: PluginContext) -> None:
         property performs the catalog write and the in-memory mirror
         in one call); this tool delegates to that setter.
 
-        v1.2 breaking rename. This tool used to be
-        ``deriva_ml_update_dataset_types`` with separate ``add`` /
-        ``remove`` kwargs. The new shape mirrors the curation pattern
-        shared with ``update_workflow`` / ``update_asset`` /
-        ``update_execution``: a single per-entity update tool with
-        only-the-changed-fields semantics. Skill consumers (the
-        ``deriva-skills`` plugin) must update references to the new
-        name and signature.
+        This tool follows the curation pattern shared with
+        ``update_workflow`` / ``update_asset``: a single per-entity
+        update tool with only-the-changed-fields semantics.
 
         Args:
             dataset_rid: The RID of the dataset to update.
@@ -503,25 +511,27 @@ def register(ctx: PluginContext) -> None:
         Returns:
             JSON string ``{"status": "updated", "dataset_rid",
             "updated_fields": [...], "dataset_types", "added",
-            "removed", "new_version"}``. ``dataset_types`` /
-            ``added`` / ``removed`` are present only when
-            ``dataset_types`` was actually edited. ``new_version`` is
-            the dataset's version after the update (the underlying
-            type-mutation APIs auto-bump the minor version).
+            "removed", "new_version"}``. ``dataset_types`` / ``added``
+            / ``removed`` are ALWAYS present -- ``null`` when only the
+            description was edited. ``new_version`` is the dataset's
+            version after the update. Per ADR-0003, a type edit lands
+            the dataset on a DEV version (``<release>.post1.devN``),
+            not a released bump -- call ``deriva_ml_release`` afterward
+            to promote the change to a released snapshot.
 
         Raises:
             RuntimeError: Wrapped, propagated from
                 ``deriva_ml.dataset.dataset.Dataset.add_dataset_types``
                 / ``remove_dataset_type`` (e.g. unknown vocabulary
-                term) or the Description pathBuilder write (e.g.
-                read-only catalog).
+                term) or the ``description`` setter's catalog write
+                (e.g. read-only catalog).
 
         Example:
             ``{"status": "updated", "dataset_rid": "1-AAAA",
             "updated_fields": ["dataset_types", "description"],
             "dataset_types": ["Training", "Validation"],
             "added": ["Validation"], "removed": [],
-            "new_version": "1.4.0"}``.
+            "new_version": "1.3.0.post1.dev2"}``.
         """
         # Argument validation -- return errors directly without audit.
         if dataset_types is None and description is None:

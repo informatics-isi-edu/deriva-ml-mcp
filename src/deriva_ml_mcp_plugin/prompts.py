@@ -4,7 +4,7 @@ These are MCP prompts (registered via ``@ctx.prompt(...)``), not Python
 docstrings. FastMCP surfaces them through the MCP ``prompts/list`` and
 ``prompts/get`` endpoints so an LLM client can pull them up by name at
 the start of a conversation -- they are the cold-start anchor for the
-plugin's 44 tools and 18 resources.
+plugin's 47 tools and 19 resources.
 
 The two prompts complement the four built-in core prompts shipped by
 ``deriva-mcp-core`` (``query_guide``, ``entity_guide``,
@@ -194,7 +194,7 @@ DERIVA-ML DOMAIN OBJECTS, NOT AS RAW TABLES.
              access to the user's local filesystem). Use
              ``deriva_ml_list_assets``, ``deriva_ml_lookup_asset``,
              ``deriva_ml_update_asset``. Browse asset tables by schema
-             via the ``ml/assets/{schema}`` resource. For asset bytes, hand off to
+             via the ``deriva-ml/assets/{schema}`` resource. For asset bytes, hand off to
              local Python via the user's environment (``ml.download_asset``,
              ``exe.asset_file_path()``).
 
@@ -677,13 +677,14 @@ you're driving the library directly from a notebook or skill.
 
 THE FIVE ML DOMAINS
 -------------------
-Forty-one of the 45 tools are organized into five domain modules (the
-other four are the catalog-maintenance tools
+Forty-one of the 47 tools are organized into five domain modules. The
+other six: the catalog-maintenance tools
 ``deriva_ml_create_vocabulary``, ``deriva_ml_reindex_vocabularies``,
-``deriva_ml_resync_indexes``, and the cross-domain
-``deriva_ml_describe_rid`` -- resolve a bare RID to its table and the
-right next tool). Pick the domain first, then the
-verb. All actual tool names are prefixed
+``deriva_ml_resync_indexes``; the cross-domain
+``deriva_ml_describe_rid`` (resolve a bare RID to its table and the
+right next tool); and the orientation pair ``deriva_ml_primer`` /
+``get_guide`` (static text, no catalog I/O). Pick the domain first,
+then the verb. All actual tool names are prefixed
 ``deriva_ml_<verb>`` (e.g. the ``create`` verb under ``dataset`` is
 the ``deriva_ml_create_dataset`` tool). The bare verbs below name the
 concept; prepend ``deriva_ml_`` (and append the noun where natural)
@@ -741,7 +742,7 @@ for the wire name.
                   doc_type="ml-docs")`` (user-guide/assets.md). Verbs:
                   list_assets / find_assets / lookup / update. For "what
                   asset tables exist in a schema?" use the
-                  ml/assets/{schema} resource (no dedicated tool).
+                  deriva-ml/assets/{schema} resource (no dedicated tool).
 
 READ-SIDE QUESTIONS: FETCH THE RESOURCE FIRST
 ---------------------------------------------
@@ -763,8 +764,8 @@ ANTI-PATTERN (resource-capable clients): do NOT call
 ``deriva_ml_get_execution`` (or ``deriva_ml_get_dataset``, etc.) when
 you already have the RID, want the entity's full state, and your client
 can fetch MCP resources. Those tools return a thinner record and force
-follow-up calls; the ``ml/<kind>/{rid}`` resource is the one-fetch
-answer. If your client cannot read resources, the tools ARE the right
+follow-up calls; the ``deriva-ml/<kind>/{rid}`` resource is the
+one-fetch answer. If your client cannot read resources, the tools ARE the right
 surface -- follow the ORDERED STRATEGY ladder below (typed deriva-ml
 tools, chained; generic catalog tools only as the gated fallback).
 
@@ -909,12 +910,17 @@ COMMON TASKS -> WHERE TO LOOK
     Intent                         Tools / route
     ------------------------------ --------------------------------------------
     "what's in this catalog?"      rag_search(doc_type="catalog-schema" |
-                                   "catalog-data"); ml/datasets, ml/workflows
-                                   resources
+                                   "catalog-data"); the deriva-ml/datasets and
+                                   deriva-ml/workflows resources
     "set up / run an experiment"   create_workflow (MCP) -> local Python
                                    execution; rag_search "execution lifecycle"
     "organize data for ML"         create_dataset, add_dataset_members,
-                                   split_dataset, release; rag_search "datasets"
+                                   release; splitting is local Python --
+                                   rag_search "split dataset"
+    "compare metrics across runs"  find_experiments / list_feature_values(
+                                   execution_rids=[...]) for features-as-
+                                   scalars; metrics-as-JSONL assets download
+                                   in local Python
     "label / score records"        create_feature (MCP) + exe.add_features
                                    (local); rag_search "features"
     "upload / fetch a file"        exe.asset_file_path / exe.download_asset
@@ -940,8 +946,8 @@ start at step 3.
    get_execution in turn, and do not schema-spelunk to find the table.
 
 1. TYPED DERIVA-ML SURFACE FIRST. If your client reads MCP resources,
-   the ``ml/<kind>/{rid}`` resource is the preferred one-fetch form for
-   a known-RID detail question (it bundles the entity plus its children
+   the ``deriva-ml/<kind>/{rid}`` resource is the preferred one-fetch
+   form for a known-RID detail question (it bundles the entity plus its children
    -- see READ-SIDE QUESTIONS above); the tools below are the same data
    for tool-only clients and for filtered / paginated questions the
    resources don't express. Either way, the typed deriva-ml surface
@@ -1278,20 +1284,19 @@ and ``description``. There is no compat shim; update any references.
 
 THE MENU
 --------
-Quick orientation: 45 tools -- 41 across the 5 ML domains (dataset,
+Quick orientation: 47 tools -- 41 across the 5 ML domains (dataset,
 feature, workflow, execution, asset) plus 3 catalog-maintenance tools
-(create_vocabulary, reindex_vocabularies, resync_indexes) plus the
-cross-domain describe_rid -- + 18
-read-only resources under the
-``deriva://catalog/{h}/{c}/deriva-ml/...`` URI prefix + 1 GitHub doc source
-indexed for RAG (``deriva-ml-docs``) + per-user RAG indexes that
+(create_vocabulary, reindex_vocabularies, resync_indexes), the
+cross-domain describe_rid, and the orientation pair (primer,
+get_guide) -- + 19 read-only resources (16 catalog-scoped under the
+``deriva://catalog/{h}/{c}/deriva-ml/...`` URI prefix + 3 static
+cold-start) + GitHub doc sources indexed for RAG (``deriva-ml-docs``,
+``deriva-ml-mcp-plugin-docs``) + per-user RAG indexes that
 ingest Dataset / Workflow / Execution rows read-through (warmed when
 you list/get them, surgically refreshed on mutation -- not on
-connect). Plus 4 built-in core prompts and 2 ML prompts: this one
-(``deriva_ml_getting_started``) and ``deriva_ml_concepts``. (v3.x
-removed two earlier prompts, ``deriva_ml_execution_lifecycle`` and
-``deriva_ml_workflow_dedup``, and redistributed their content to the
-relevant tool docstrings and RAG-indexed docs.)
+connect). Plus 4 built-in core prompts and 3 ML prompts: this one
+(``deriva_ml_getting_started``), ``deriva_ml_concepts``, and
+``deriva_ml_primer`` (the compact operating contract).
 """
 
 
@@ -1306,11 +1311,89 @@ relevant tool docstrings and RAG-indexed docs.)
 # prompts at runtime without reaching into core internals; the names are
 # stable public API. The drift-guard test lives in test_prompts.py.
 _GUIDE_MANIFEST: list[tuple[str, str, str]] = [
+    (
+        "deriva_ml_concepts",
+        "deriva-ml",
+        "full conceptual frame: the five abstractions in depth, provenance "
+        "principle, vocabulary-extension pattern, inheritance-with-override",
+    ),
+    (
+        "deriva_ml_getting_started",
+        "deriva-ml",
+        "full operational guide: pagination contract, query-strategy ladder "
+        "+ anti-patterns, common-task routing, RID discipline, curation "
+        "patterns, index freshness",
+    ),
     ("query_guide", "core", "ERMrest query and path syntax, pagination, result interpretation"),
     ("entity_guide", "core", "entity CRUD, preflight count rule, display rules"),
     ("annotation_guide", "core", "Chaise annotation patterns, context names, templates"),
     ("catalog_guide", "core", "catalog create/clone/alias, snaptime format, history"),
 ]
+
+
+# Compact operating contract returned by the primer. This is the
+# load-bearing subset a cold-start client must see WITHOUT fetching
+# anything (the tiering decision from the 2026-06-12 review: the old
+# primer concatenated both full guides, ~17K tokens; the full texts are
+# now on-demand via get_guide and listed in the manifest).
+_PRIMER_CONTRACT = """\
+WHAT THIS IS. DerivaML runs reproducible ML workflows on Deriva
+catalogs. Five abstractions, all carrying RIDs (permanent record IDs):
+
+  Dataset    -- versioned, curated bundle of catalog rows (training
+                sets, splits). Versions are immutable once released.
+  Workflow   -- registered runnable artifact (script + Git URL +
+                checksum). Deduplicated by URL/checksum.
+  Execution  -- one run of a Workflow against Datasets/Assets. The
+                provenance hub: every artifact links to its producing
+                Execution.
+  Feature    -- typed per-row annotation (label/score/asset) on a
+                target table, written with execution provenance.
+  Asset      -- file-backed catalog row (images, model weights) with
+                checksummed object-store storage.
+
+CALL RULE. The server is stateless: EVERY tool takes hostname= and
+catalog_id=. There is no connect step.
+
+QUERY STRATEGY (full ladder + anti-patterns: get_guide
+"deriva_ml_getting_started").
+  0. Bare RID of unknown type? deriva_ml_describe_rid(rid) FIRST --
+     never guess by trying typed get-tools in turn.
+  1. Typed deriva-ml surface first. Known-RID detail in
+     resource-capable clients: read the
+     deriva://catalog/{host}/{cat}/deriva-ml/<kind>/{rid} resource
+     (one fetch, bundles children). Tool-only clients / filtered
+     scans: the deriva_ml_* read tools.
+  2. Chain: deriva_ml_get_execution -> deriva_ml_get_lineage (when
+     inputs/outputs are implicated) -> deriva_ml_get_dataset on the
+     consumed RIDs. Feature values: deriva_ml_list_feature_values
+     (selectors pick the annotation layer; raw feature-table reads
+     mix ground truth with every model's predictions).
+  3. Generic catalog tools (query_attribute / get_entities) are the
+     gated FALLBACK for shapes the typed tools can't express -- never
+     the opening move. An empty per-RID slice of one association
+     table does NOT mean no data: report "no RECORDED provenance",
+     never speculate, never fish in Hatrac.
+
+PAGINATION. Paginated tools: optional preflight_count=True returns the
+total; pages carry truncated + next_after_rid -- pass it back as
+after_rid= to advance. Resources are page-free snapshots capped at
+1000 rows with a truncated flag (switch to the tool to page).
+
+ERRORS. Failures return {"error": "<message>", "error_type":
+"<ExceptionClass>"} (plus context fields on partial mutations) instead
+of raising.
+
+MUTATION BOUNDARY. Catalog-state mutations (datasets, feature
+definitions, workflows, vocabularies) happen here via deriva_ml_*
+tools. The EXECUTION LIFECYCLE (create/start/commit runs, upload
+assets, write feature values) is deliberately NOT on this surface --
+it runs in user-local Python (with ml.create_execution(...) as exe:);
+route users to rag_search(query="execution lifecycle",
+doc_type="ml-docs") for the pattern. Vocabulary terms: use core's
+add_term -- check for an existing term first; add_term does not
+auto-reindex RAG (call deriva_ml_reindex_vocabularies after bulk term
+edits; deriva_ml_resync_indexes refreshes your per-user row indexes)."""
 
 
 # Bodies of guides this plugin owns and can return directly via get_guide.
@@ -1325,10 +1408,18 @@ _PLUGIN_GUIDE_BODIES: dict[str, str] = {
 def _render_primer() -> str:
     """Render the DerivaML startup primer body.
 
-    Composes three blocks: (1) the mandatory-core guide bodies
-    (concepts + getting-started), (2) a one-line manifest of on-demand
-    guides grouped by source, and (3) a closing directive on when to
-    fetch a guide and to prefer resources for read-side questions.
+    Composes three blocks: (1) the compact operating contract
+    (``_PRIMER_CONTRACT`` -- the load-bearing facts a cold-start client
+    needs without fetching anything), (2) a one-line manifest of
+    on-demand guides grouped by source (including the two full plugin
+    guides, fetchable via ``get_guide``), and (3) a closing directive
+    on when to fetch a guide and to prefer resources for read-side
+    questions.
+
+    Tiering history: through the 2026-06-12 review the primer inlined
+    both full guide bodies (~17K tokens of cold-start cost per
+    client). The full texts remain authoritative and on-demand; the
+    primer now carries only the contract.
 
     The body is phrased neutrally ("DERIVA-ML AGENT GUIDELINES") rather
     than "you MUST", so it reads correctly whether it lands in a system
@@ -1347,10 +1438,9 @@ def _render_primer() -> str:
 
     parts: list[str] = []
 
-    # Block 1 -- mandatory core (full bodies).
+    # Block 1 -- the compact operating contract.
     parts.append("=== DERIVA-ML AGENT GUIDELINES ===\n")
-    parts.append(_CONCEPTS_GUIDE)
-    parts.append(_GETTING_STARTED_GUIDE)
+    parts.append(_PRIMER_CONTRACT)
 
     # Block 2 -- manifest of on-demand guides.
     parts.append("=== ON-DEMAND GUIDES ===")

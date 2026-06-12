@@ -106,7 +106,7 @@ async def test_list_datasets_error_path(dataset_ctx, capturing_mcp, mock_ml):
     out = json.loads(
         await capturing_mcp.tools["deriva_ml_list_datasets"](hostname="h", catalog_id="1")
     )
-    assert out == {"error": "boom"}
+    assert out == {"error": "boom", "error_type": "RuntimeError"}
 
 
 async def test_list_datasets_sort_forwards_to_deriva_ml(dataset_ctx, capturing_mcp, mock_ml):
@@ -322,7 +322,7 @@ async def test_get_dataset_not_found(dataset_ctx, capturing_mcp, mock_ml):
             hostname="h", catalog_id="1", dataset_rid="missing"
         )
     )
-    assert out == {"error": "Dataset not found"}
+    assert out == {"error": "Dataset not found", "error_type": "RuntimeError"}
 
 
 async def test_get_dataset_tool_schedules_index_on_find(dataset_ctx, capturing_mcp, mock_ml):
@@ -444,7 +444,7 @@ async def test_list_dataset_members_error_path(dataset_ctx, capturing_mcp, mock_
             hostname="h", catalog_id="1", dataset_rid="1-AAAA"
         )
     )
-    assert out == {"error": "nope"}
+    assert out == {"error": "nope", "error_type": "RuntimeError"}
 
 
 # ---------------------------------------------------------------------------
@@ -497,7 +497,7 @@ async def test_list_dataset_relations_error(dataset_ctx, capturing_mcp, mock_ml)
             hostname="h", catalog_id="1", dataset_rid="x"
         )
     )
-    assert out == {"error": "relations boom"}
+    assert out == {"error": "relations boom", "error_type": "RuntimeError"}
 
 
 async def test_list_dataset_relations_after_rid_with_both_emits_warning(
@@ -611,7 +611,7 @@ async def test_list_dataset_element_types_error(dataset_ctx, capturing_mcp, mock
             hostname="h", catalog_id="1"
         )
     )
-    assert out == {"error": "bad"}
+    assert out == {"error": "bad", "error_type": "RuntimeError"}
 
 
 # ---------------------------------------------------------------------------
@@ -671,7 +671,7 @@ async def test_bag_info_error(dataset_ctx, capturing_mcp, mock_ml):
             version="1.0.0",
         )
     )
-    assert out == {"error": "cant compute"}
+    assert out == {"error": "cant compute", "error_type": "RuntimeError"}
 
 
 # ---------------------------------------------------------------------------
@@ -721,7 +721,7 @@ async def test_get_dataset_spec_error(dataset_ctx, capturing_mcp, mock_ml):
             hostname="h", catalog_id="1", dataset_rid="1-AAAA"
         )
     )
-    assert out == {"error": "missing"}
+    assert out == {"error": "missing", "error_type": "RuntimeError"}
 
 
 # ---------------------------------------------------------------------------
@@ -867,7 +867,7 @@ async def test_validate_execution_configuration_error_path(dataset_ctx, capturin
                 config={"workflow": {"rid": "1-WFLW"}},
             )
         )
-    assert out == {"error": "config has unresolvable workflow"}
+    assert out == {"error": "config has unresolvable workflow", "error_type": "RuntimeError"}
 
 
 # ---------------------------------------------------------------------------
@@ -923,7 +923,7 @@ async def test_validate_config_file_error_path(dataset_ctx, capturing_mcp, mock_
         hostname="h", catalog_id="1", file_contents="# empty"
     )
     out = json.loads(result)
-    assert out == {"error": "AST blew up"}
+    assert out == {"error": "AST blew up", "error_type": "RuntimeError"}
 
 
 async def test_bootstrap_config_default_kinds(dataset_ctx, capturing_mcp, mock_ml) -> None:
@@ -980,4 +980,4 @@ async def test_bootstrap_config_error_path(dataset_ctx, capturing_mcp, mock_ml) 
     mock_ml.bootstrap_config.side_effect = RuntimeError("cannot connect")
     result = await capturing_mcp.tools["deriva_ml_bootstrap_config"](hostname="h", catalog_id="1")
     out = json.loads(result)
-    assert out == {"error": "cannot connect"}
+    assert out == {"error": "cannot connect", "error_type": "RuntimeError"}

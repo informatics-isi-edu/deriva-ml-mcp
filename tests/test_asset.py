@@ -127,7 +127,7 @@ async def test_list_assets_failure_returns_error_envelope(asset_ctx, capturing_m
                 hostname="h", catalog_id="1", asset_table="Image"
             )
         )
-    assert out == {"error": "not an asset table"}
+    assert out == {"error": "not an asset table", "error_type": "RuntimeError"}
     # Read-only: no audit on failure.
     assert mock_audit.call_count == 0
 
@@ -298,7 +298,7 @@ async def test_find_assets_failure_returns_error_envelope(asset_ctx, capturing_m
                 hostname="h", catalog_id="1", asset_type="Model_File"
             )
         )
-    assert out == {"error": "Model_File: term not found"}
+    assert out == {"error": "Model_File: term not found", "error_type": "RuntimeError"}
     assert mock_audit.call_count == 0
 
 
@@ -479,7 +479,7 @@ async def test_lookup_asset_failure_returns_error_envelope(asset_ctx, capturing_
                 hostname="h", catalog_id="1", asset_rid="1-XXXX"
             )
         )
-    assert out == {"error": "not an asset"}
+    assert out == {"error": "not an asset", "error_type": "RuntimeError"}
     # Read-only: no audit on failure.
     assert mock_audit.call_count == 0
 

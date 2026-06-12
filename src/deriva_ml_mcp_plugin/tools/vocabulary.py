@@ -98,10 +98,10 @@ def register(ctx: PluginContext) -> None:
             update_navbar: If ``True`` (default), refresh the
                 catalog's navigation bar so the new vocab shows up
                 in Chaise immediately. Set to ``False`` during batch
-                table creation, then call
-                ``deriva_ml_apply_catalog_annotations`` once at the
-                end (not currently exposed as an MCP tool -- batch
-                callers should use the Python API directly).
+                table creation, then apply catalog annotations once at
+                the end via the Python API
+                (``ml.apply_catalog_annotations()`` -- deliberately not
+                exposed as an MCP tool).
 
         Returns:
             JSON string ``{"status": "created", "schema",

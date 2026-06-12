@@ -666,37 +666,6 @@ class FeatureSummary(BaseModel):
     value_columns: list[str]
 
 
-class FeatureColumnSpec(BaseModel):
-    """One column on a Feature's detail view."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    type: str
-    nullok: bool
-    vocabulary: str | None = None
-    asset_table: str | None = None
-
-
-class FeatureDetail(BaseModel):
-    """Full Feature detail with column specs. Produced by feature get tools.
-
-    Note: this is NOT a subclass of FeatureSummary because the
-    ``*_columns`` fields change type (list[str] in Summary,
-    list[FeatureColumnSpec] in Detail).
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    feature_name: str
-    target_table: str
-    feature_table: str
-    term_columns: list[FeatureColumnSpec]
-    asset_columns: list[FeatureColumnSpec]
-    value_columns: list[FeatureColumnSpec]
-    required_fields: list[str]
-
-
 class FeatureListResponse(_PaginationFields):
     """Paginated list of Features. Produced by ``_list_features_impl``."""
 

@@ -150,6 +150,13 @@ def register(ctx: PluginContext) -> None:
             plus ``"rows", "returned_count", "truncated", "next_after_rid"``.
             Dataset preflight: ``{"mode": "dataset_preflight", "dataset_rid",
             "total_count", "entities_fetched": False, "action_required"}``.
+            Preflight REQUIRED (returned instead of rows when the
+            planner's estimate exceeds 10x the requested limit):
+            ``{"mode": "dataset_preflight_required", "dataset_rid",
+            "estimated_row_count", "requested_limit",
+            "entities_fetched": False, "action_required"}`` -- follow
+            its instruction (confirm with ``preflight_count=True``,
+            then pick a larger limit) rather than retrying blindly.
 
         Raises:
             RuntimeError: Wrapped, propagated from
