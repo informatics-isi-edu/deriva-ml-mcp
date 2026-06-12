@@ -521,6 +521,14 @@ def register(ctx: PluginContext) -> None:
         Workflow: call with ``element_table=None`` first to see the shape;
         then call again with ``element_table`` set to drill into one table.
 
+        USE THIS (not raw ``query_attribute`` joins over the
+        ``Dataset_<Type>`` association tables) for "what's in dataset X"
+        questions. Membership is VERSION-pinned and may recurse into
+        nested child datasets -- a raw association join sees only the
+        current unversioned rows of one element table and silently
+        misses both. Raw queries are the fallback for questions this
+        tool's shape can't express, not the opening move.
+
         ``recurse=True`` and ``version`` apply to BOTH modes — summary counts
         reflect the recursive/versioned member set just like page rows do.
         When ``recurse=True``, ``summary["Image"]`` includes images from

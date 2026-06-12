@@ -757,11 +757,14 @@ execution's inputs / outputs / metadata, an asset's producing-execution
 chain) in a stable shape, while the equivalent tool path typically
 takes 2-7 round trips of fetch + filter + join.
 
-ANTI-PATTERN: do NOT call ``deriva_ml_get_execution`` (or
-``deriva_ml_get_dataset``, etc.) when you already have the RID and want
-the entity's full state. Those tools return a thinner record and force
-follow-up ``deriva_ml_list_assets`` / ``query_attribute`` calls. The
-``ml/<kind>/{rid}`` resource is the one-fetch answer.
+ANTI-PATTERN (resource-capable clients): do NOT call
+``deriva_ml_get_execution`` (or ``deriva_ml_get_dataset``, etc.) when
+you already have the RID, want the entity's full state, and your client
+can fetch MCP resources. Those tools return a thinner record and force
+follow-up calls; the ``ml/<kind>/{rid}`` resource is the one-fetch
+answer. If your client cannot read resources, the tools ARE the right
+surface -- follow the ORDERED STRATEGY ladder below (typed deriva-ml
+tools, chained; generic catalog tools only as the gated fallback).
 
 PRESENTING & STORING RIDs
 -------------------------
@@ -917,6 +920,143 @@ COMMON TASKS -> WHERE TO LOOK
     "which runs used dataset X?"   find_dataset_executions / get_lineage
     "why is my run failing?"       rag_search "troubleshoot execution",
                                    doc_type="ml-docs"
+
+PROVENANCE & RELATIONSHIP QUERIES -> ORDERED STRATEGY
+-----------------------------------------------------
+When the user asks how artifacts relate -- execution detail (status /
+duration / inputs / outputs), which datasets a run consumed or
+produced, asset provenance, a lineage walk, dataset membership --
+recognize the pattern EARLY and run this escalation ladder. Do not
+start at step 3.
+
+1. TYPED DERIVA-ML SURFACE FIRST. If your client reads MCP resources,
+   the ``ml/<kind>/{rid}`` resource is the preferred one-fetch form for
+   a known-RID detail question (it bundles the entity plus its children
+   -- see READ-SIDE QUESTIONS above); the tools below are the same data
+   for tool-only clients and for filtered / paginated questions the
+   resources don't express. Either way, the typed deriva-ml surface
+   comes first:
+
+    Question                              Tool (start here)
+    ------------------------------------- -------------------------------
+    execution status/duration/detail      deriva_ml_get_execution(rid)
+    full provenance chain for any RID      deriva_ml_get_lineage(rid)
+    dataset summary + version history      deriva_ml_get_dataset(rid)
+    what's in a dataset                    deriva_ml_list_dataset_members(rid)
+    parent/child dataset relations         deriva_ml_list_dataset_relations(rid)
+    which runs used / produced a dataset   deriva_ml_find_dataset_executions /
+                                           deriva_ml_get_lineage
+    executions of a workflow               deriva_ml_find_workflow_executions
+    feature values a run produced          deriva_ml_list_feature_values(
+                                             ..., execution_rids=[rid])
+                                           -- NOT a raw query on the feature
+                                           table, even though it carries
+                                           Execution provenance columns
+    nested execution tree                  deriva_ml_list_execution_children /
+                                           _list_execution_parents
+
+   No RID in hand yet? Use the deriva-ml DISCOVERY tools to find it,
+   then return to this table: ``deriva_ml_list_executions`` (filter by
+   status / workflow / type), ``deriva_ml_find_workflow_executions``,
+   ``deriva_ml_find_dataset_executions``, ``deriva_ml_list_datasets``.
+   Discovery is still deriva-ml territory -- don't drop to generic
+   catalog tools just because the RID is unknown.
+
+2. CHAIN INTO LINEAGE. If ``deriva_ml_get_execution`` succeeds and the
+   question implicates the run's inputs, outputs, or related artifacts
+   (not just its status), chain directly into
+   ``deriva_ml_get_lineage(rid)`` -- one call returns the consumed
+   datasets/assets and the producing-execution tree, replacing 5-15
+   raw-table round-trips. These tools encode the traversal a hand-built
+   join gets subtly wrong: which FK to follow, the dataset VERSION per
+   edge, the input-vs-output ROLE per execution, nested-execution
+   recursion. (This is the INHERITANCE WITH OVERRIDE rule applied to
+   reads, not just mutations.)
+
+3. FALL BACK TO RAW QUERIES when the typed tools don't cover the
+   question. Inferring relationships from association / linking tables
+   with the generic catalog tools (``query_attribute`` /
+   ``query_aggregate`` / ``get_entities``) is legitimate -- as the
+   fallback, not the opening move. Do NOT skip steps 1-2 and jump
+   straight here. Reach for it when:
+   - the relationship is DOMAIN-specific, outside the five ML
+     abstractions (e.g. an ``Image_Diagnosis`` image-to-diagnosis link
+     or any domain-schema association table -- the ML tools don't model
+     those edges at all);
+   - a typed tool returned an error or its shape can't express the
+     question (an aggregate over edges, a filter the tool doesn't
+     expose);
+   - you need to verify or debug what a typed tool reported.
+   When you do go raw, check the table's row count or a small page
+   first; don't assume the table is populated or empty -- both occur
+   (some subsystem tables are empty, others hold 100K+ rows).
+
+   WHEN A QUERY COMES BACK EMPTY: report it plainly ("0 rows in X for
+   this RID") -- then escalate, don't iterate. If you haven't run
+   deriva_ml_get_lineage yet, that is the next move, not another
+   table. If lineage already returned null, you are done: the answer
+   is "no RECORDED provenance / no REGISTERED assets" -- never "no
+   assets exist", and never a "would have produced ..." guess.
+   Unregistered outputs are simply out of reach: do NOT go looking
+   for them in Hatrac (no namespace browsing / object-store fishing),
+   and do not fan out table-by-table hoping one is populated. Report
+   what is recorded and stop.
+
+ANTI-PATTERNS (observed failures -- do not repeat)
+
+  WRONG: "Let me query Model_Artifact_Execution for 6-05FW."
+    Opening with a single association table. A per-RID slice of one
+    table can be EMPTY even when the run has full provenance -- the
+    edge may live in a different table (Execution_Asset,
+    Dataset_Execution, ...). And ``{Asset}_Execution`` association
+    rows only exist at all for runs that REGISTERED their outputs
+    through the execution machinery (``exe.commit_output_assets()``);
+    a run that wrote files to Hatrac directly leaves no association
+    row, by design. One empty slice, no fallback plan, wasted
+    round-trip. get_lineage walks every recorded edge in one call.
+
+  WRONG: "Image_Diagnosis came back empty, so this run *would have*
+    produced ..." NEVER speculate from an empty slice. An empty
+    per-RID result does not mean no data exists, and fabricated
+    "would have" provenance is worse than reporting none. If
+    deriva_ml_get_lineage returns "lineage": null, the honest answer
+    is: this artifact has no recorded provenance link (often a run
+    that never registered its outputs). Note lineage walks the same
+    recorded catalog edges -- it cannot recover unregistered outputs
+    either; nothing can. Its value is that it checks EVERY edge and
+    reports absence explicitly instead of leaving you to misread one
+    table's empty slice.
+
+  WRONG: "Let me join Dataset_Image / Subject_Dataset to see what's in
+    dataset X." Dataset membership is VERSION-PINNED and may RECURSE:
+    a raw association join returns only the current unversioned rows of
+    one element table -- it cannot answer "members of v0.3.0" (the
+    released version the user usually means) and it is blind to members
+    contributed by nested child datasets.
+    deriva_ml_list_dataset_members(version=..., recurse=...) handles
+    both; call it in summary mode first (element_table=None) to see the
+    shape before paging rows.
+
+  WRONG: "Let me read the Image_Diagnosis table directly to get the
+    labels." A feature table interleaves ground truth AND every model's
+    predictions -- one row per (record, execution) for every run that
+    ever wrote the feature. A raw read returns them indistinguishably
+    mixed. Use deriva_ml_list_feature_values with its filters
+    (execution_rids=..., etc.) to select which annotation layer you
+    mean.
+
+  WRONG: "Let me explore the schema first to understand the
+    structure." For provenance questions the typed tools already
+    encode the graph -- schema spelunking before
+    get_execution/get_lineage burns round-trips without changing the
+    answer. Explore schema when the question is about the SCHEMA, or
+    at step 3 when you genuinely need a domain table's shape.
+
+  CORRECT: deriva_ml_get_execution(rid)
+           -> (inputs/outputs implicated?) deriva_ml_get_lineage(rid)
+           -> deriva_ml_get_dataset(...) on the consumed dataset RIDs
+              lineage returned, if the user needs dataset detail
+           -> done. Raw queries only via step 3 of the ladder above.
 
 DISCOVERY: RESOLVING USER-MENTIONED NAMES TO CATALOG IDENTIFIERS
 ----------------------------------------------------------------

@@ -855,6 +855,18 @@ def register(ctx: PluginContext) -> None:
     ) -> str:
         """Read full details of one execution by RID.
 
+        FIRST CALL for any execution-detail question (status, duration,
+        description). When the question also implicates the run's
+        inputs, outputs, or related artifacts, chain into
+        ``deriva_ml_get_lineage`` next; for the nested-execution tree
+        use ``deriva_ml_list_execution_parents`` /
+        ``deriva_ml_list_execution_children``. Raw ``query_attribute``
+        joins over the Execution association tables are the fallback
+        for when these tools fail or don't cover the question (e.g.
+        domain-specific relationships outside the ML provenance graph)
+        -- they encode a graph traversal that is easy to get subtly
+        wrong by hand.
+
         Args:
             execution_rid: The RID of the execution to retrieve.
 
@@ -1383,6 +1395,24 @@ def register(ctx: PluginContext) -> None:
         inputs back to the natural root of every branch. Replaces
         what would otherwise be 5-15 round-trips through typed read
         methods with one call.
+
+        USE THIS FIRST FOR PROVENANCE. For "how do these relate"
+        questions (which datasets/assets a run consumed or produced,
+        asset provenance, the full chain behind an artifact), start
+        here -- typically chained right after a successful
+        ``deriva_ml_get_execution`` when the question implicates the
+        run's inputs/outputs. Reconstructing the answer with
+        ``query_attribute`` / ``query_aggregate`` joins across the raw
+        association tables (``Dataset_Execution``, ``Execution_Asset``,
+        ``*_Execution``, ``Dataset_*``, etc.) is the FALLBACK, not the
+        opening move: the correct traversal (which FK to follow, the
+        dataset VERSION per edge, the input-vs-output ROLE,
+        nested-execution recursion) is non-trivial and a hand-built
+        join gets it subtly wrong. Go raw only when this tool errors,
+        when the question needs a shape it can't express, or when the
+        relationship is domain-specific (a domain-schema association
+        table outside the ML provenance graph, which this tool does
+        not model).
 
         The walk follows **data-flow parents only**: for each
         execution node, the parents are the producing executions of

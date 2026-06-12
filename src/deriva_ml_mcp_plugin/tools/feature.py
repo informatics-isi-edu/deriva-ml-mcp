@@ -405,6 +405,17 @@ def register(ctx: PluginContext) -> None:
         Optionally collapses values via a selector and/or scopes the
         query to a single dataset's members.
 
+        USE THIS (not a raw ``query_attribute`` read of the feature
+        table) for "what labels / scores does X have" questions. A
+        feature table interleaves ground truth AND every model's
+        predictions -- one row per (record, execution) for every run
+        that ever wrote the feature -- so a raw read returns the layers
+        indistinguishably mixed. The selectors and filters below
+        (``newest``, ``majority_vote``, ``by_workflow``,
+        ``execution_rids=...``) exist precisely to pick the annotation
+        layer you mean; raw queries are the fallback for shapes this
+        tool can't express, not the opening move.
+
         Selectors:
 
         - ``none`` -- return all matching records (multiple per target).
