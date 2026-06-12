@@ -860,9 +860,15 @@ executions that produced quality scores"), prefer ``rag_search`` over
 the paginated list tools:
 
     rag_search(query="...", doc_type="ml-docs")      -- search DerivaML docs
-    rag_search(query="...", doc_type="catalog-data") -- search per-user RAG
-                                                        index of Dataset /
-                                                        Workflow / Execution rows
+    rag_search(query="...", doc_type="ml-dataset")   -- Dataset rows only
+    rag_search(query="...", doc_type="ml-workflow")  -- Workflow rows only
+    rag_search(query="...", doc_type="ml-execution") -- Execution rows only
+    rag_search(query="...", doc_type="ml-vocab")     -- vocabulary terms only
+    rag_search(query="...")                          -- no filter: broadest recall
+                                                        (rows indexed before the
+                                                        ml-* tags shipped carry the
+                                                        legacy "catalog-data" tag
+                                                        until re-indexed)
 
 Reach for the paginated list tools (``deriva_ml_list_datasets``,
 ``deriva_ml_list_workflows``, ``deriva_ml_list_executions``,

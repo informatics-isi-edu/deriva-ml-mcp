@@ -251,17 +251,20 @@ during the v1.0 polish sprint -- `rag_search` now filters `data:` sources by
 user_id symmetrically with the schema-source filter, closing the cross-user
 read leak. The plugin no longer carries a TODO marker for it.
 
-Still open:
+Resolved plugin-side (2026-06-12, issue #7):
 
-- **`index_table_data` hardcodes `doc_type="catalog-data"`**
-  ([deriva-mcp-core#2](https://github.com/informatics-isi-edu/deriva-mcp-core/issues/2);
-  `rag/data.py` lines 138, 142). Plugins cannot tag per-user catalog chunks
-  with a domain-specific doc_type, so `rag_search(doc_type="ml-dataset")`
-  cannot distinguish Dataset chunks from Workflow or Execution chunks. The
-  rendered Markdown header (`## Dataset: <RID>`) still tags chunks
-  inline for the LLM. Fix is a one-line `doc_type` parameter addition
-  upstream. The plugin marks the gap with `# TODO(upstream-rag-doctype)` at
-  the `index_table_data` call site in `resources/rag.py`.
+- **ML-kind doc_types on RAG chunks.** The gap originally tracked here
+  ([deriva-mcp-core#2](https://github.com/informatics-isi-edu/deriva-mcp-core/issues/2):
+  `index_table_data` hardcodes `doc_type="catalog-data"`) stopped
+  applying when v1.3 moved the plugin to direct `store.add` writes --
+  the doc_type became ours to set. Chunks now carry `ml-dataset` /
+  `ml-workflow` / `ml-execution` / `ml-vocab`, so
+  `rag_search(doc_type=...)` filters by kind. core#2 remains open
+  upstream for plugins that still use `index_table_data`. Rows indexed
+  before the tags shipped keep the legacy `catalog-data` doc_type
+  until re-indexed (read-through refresh or the reindex tools).
+
+Still open:
 
 - **No `on_data_change` lifecycle hook**
   ([deriva-mcp-core#3](https://github.com/informatics-isi-edu/deriva-mcp-core/issues/3)).

@@ -561,7 +561,10 @@ async def test_get_lineage_error_path_workflow_rid(execution_ctx, capturing_mcp,
             hostname="h", catalog_id="1", rid="1-WF"
         )
     payload = json.loads(result)
-    assert payload == {"error": "Workflow RIDs are not lineage-shaped", "error_type": "RuntimeError"}
+    assert payload == {
+        "error": "Workflow RIDs are not lineage-shaped",
+        "error_type": "RuntimeError",
+    }
     assert mock_audit.call_count == 0
 
 

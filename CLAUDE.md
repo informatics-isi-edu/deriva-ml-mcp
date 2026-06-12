@@ -116,10 +116,14 @@ prefix that bypasses upstream's `data:` user-id filter and serves
 chunks to all users in the catalog. See `resources/rag.py`'s module
 docstring for the full rationale.
 
-One upstream gap remains: deriva-mcp-core#2 (`index_table_data`
-should accept a `doc_type` parameter so per-table RAG chunks can
-be filtered by `rag_search(doc_type="ml-dataset")`). Tracked
-inline at the call site with `# TODO(upstream-rag-doctype)`.
+ML-kind doc_types (issue #7, resolved plugin-side): because the
+plugin writes chunks directly to the store, it tags them
+`ml-dataset` / `ml-workflow` / `ml-execution` / `ml-vocab` so
+`rag_search(doc_type=...)` filters by kind. deriva-mcp-core#2
+(`index_table_data` doc_type parameter) no longer blocks anything
+here -- it remains open for plugins that use that path. Rows
+indexed before the tags shipped carry the legacy `catalog-data`
+doc_type until re-indexed (read-through refresh / reindex tools).
 
 **Boundary rules.** This plugin **never** duplicates anything that lives in
 `deriva-mcp-core`:
