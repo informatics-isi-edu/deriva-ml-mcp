@@ -926,7 +926,7 @@ def test_write_vocab_chunks_deletes_then_adds() -> None:
     assert fake_store.add.await_count == 1
     chunks = fake_store.add.await_args.args[0]
     assert all(c.source == "vocab:h:1:s.t" for c in chunks)
-    assert all(c.doc_type == "catalog-data" for c in chunks)
+    assert all(c.doc_type == "ml-vocab" for c in chunks)
 
 
 def test_write_vocab_chunks_empty_terms_drains_only() -> None:
@@ -994,7 +994,7 @@ def test_write_row_chunk_deletes_then_adds() -> None:
     assert fake_store.add.await_count == 1
     chunks = fake_store.add.await_args.args[0]
     assert all(c.source == "data:h:1:userA:dataset:1-DSAA" for c in chunks)
-    assert all(c.doc_type == "catalog-data" for c in chunks)
+    assert all(c.doc_type == "ml-dataset" for c in chunks)
 
 
 def test_write_row_chunk_serializer_returns_none_drains_only() -> None:
@@ -1481,3 +1481,42 @@ def test_index_rows_on_find_no_running_loop_is_noop() -> None:
 
     # Not inside asyncio.run -> no running loop. Must not raise.
     rag_module._index_rows_on_find("h", "1", rag_module._DATASET_TOKEN, [{"rid": "1-AAAA"}])
+
+
+def test_write_row_chunk_doc_type_per_kind() -> None:
+    """Row chunks carry the ML-kind doc_type so rag_search(doc_type=...) can filter.
+
+    Plugin-side resolution of issue #7: we write chunks directly to the
+    store (not via core's index_table_data), so the doc_type is ours to
+    set -- no upstream change needed. The per-user ``data:`` source-name
+    filter is independent of doc_type, so ACL posture is unchanged.
+    """
+    from deriva_ml_mcp_plugin.resources.rag import (
+        _DatasetSerializer,
+        _ExecutionSerializer,
+        _WorkflowSerializer,
+        _write_row_chunk,
+    )
+
+    cases = [
+        ("Dataset", {"rid": "1-A", "name": "x"}, _DatasetSerializer(), "ml-dataset"),
+        ("Workflow", {"rid": "1-B", "name": "y"}, _WorkflowSerializer(), "ml-workflow"),
+        (
+            "Execution",
+            {"rid": "1-C", "workflow_rid": "1-B", "status": "Created"},
+            _ExecutionSerializer(),
+            "ml-execution",
+        ),
+    ]
+    for table_name, row, serializer, expected in cases:
+        fake_store = MagicMock()
+        fake_store.delete_source = AsyncMock()
+        fake_store.add = AsyncMock()
+        _run(
+            _write_row_chunk(fake_store, f"data:h:1:u:t:{row['rid']}", table_name, row, serializer)
+        )
+        chunks = fake_store.add.await_args.args[0]
+        assert chunks, f"{table_name}: no chunks written"
+        assert all(c.doc_type == expected for c in chunks), (
+            f"{table_name}: expected doc_type {expected!r}"
+        )

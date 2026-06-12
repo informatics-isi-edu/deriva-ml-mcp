@@ -246,6 +246,21 @@ _DATASET_TOKEN = "dataset"
 _WORKFLOW_TOKEN = "workflow"
 _EXECUTION_TOKEN = "execution"
 
+# ML-kind doc_type per catalog table, carried on every chunk so
+# ``rag_search(doc_type="ml-dataset" | "ml-workflow" | "ml-execution")``
+# can filter to one kind (issue #7, resolved plugin-side). We write
+# chunks directly to the store -- core's hardcoded-doc_type
+# ``index_table_data`` path (deriva-mcp-core#2) is not on our write
+# path, so the tag is ours to set. The per-user ``data:`` source-name
+# filter in core's rag_search is independent of doc_type; ACL posture
+# is unchanged. Unknown tables fall back to the generic "catalog-data".
+_DOC_TYPE_BY_TABLE: dict[str, str] = {
+    "Dataset": "ml-dataset",
+    "Workflow": "ml-workflow",
+    "Execution": "ml-execution",
+}
+_VOCAB_DOC_TYPE = "ml-vocab"
+
 
 # Strong references to in-flight index-on-find background tasks. Without
 # this set the event loop may garbage-collect a pending task before it
@@ -549,17 +564,13 @@ async def _write_row_chunk(
         return 0
     chunks: list[Chunk] = []
     chunk_index = 0
-    # TODO(upstream-rag-doctype): tracked as deriva-mcp-core#2.
-    # Once chunks can carry a domain-specific doc_type, switch to
-    # "ml-dataset" / "ml-workflow" / "ml-execution" so
-    # rag_search(doc_type=...) can distinguish these from generic
-    # catalog-data chunks.
-    for c in chunk_markdown(rendered, source=source, doc_type="catalog-data"):
+    doc_type = _DOC_TYPE_BY_TABLE.get(table_name, "catalog-data")
+    for c in chunk_markdown(rendered, source=source, doc_type=doc_type):
         chunks.append(
             Chunk(
                 text=c.text,
                 source=source,
-                doc_type="catalog-data",
+                doc_type=doc_type,
                 section_heading=c.section_heading,
                 heading_hierarchy=c.heading_hierarchy,
                 chunk_index=chunk_index,
@@ -1047,17 +1058,12 @@ async def _write_vocab_chunks(
         rendered = serializer.serialize(vocab_table, term)
         if rendered is None:
             continue
-        # TODO(upstream-rag-doctype): tracked as deriva-mcp-core#2
-        # (https://github.com/informatics-isi-edu/deriva-mcp-core/issues/2).
-        # Once chunks can carry a domain-specific doc_type, switch to
-        # "ml-vocab" so rag_search(doc_type=...) can distinguish vocab
-        # term chunks from generic catalog-data chunks.
-        for c in chunk_markdown(rendered, source=source, doc_type="catalog-data"):
+        for c in chunk_markdown(rendered, source=source, doc_type=_VOCAB_DOC_TYPE):
             chunks.append(
                 Chunk(
                     text=c.text,
                     source=source,
-                    doc_type="catalog-data",
+                    doc_type=_VOCAB_DOC_TYPE,
                     section_heading=c.section_heading,
                     heading_hierarchy=c.heading_hierarchy,
                     chunk_index=chunk_index,
