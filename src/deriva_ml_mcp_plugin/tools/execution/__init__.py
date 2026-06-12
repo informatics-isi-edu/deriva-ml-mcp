@@ -80,9 +80,11 @@ from deriva_ml_mcp_plugin.ml_context import get_ml
 # ``from deriva_ml_mcp_plugin.tools.execution import _list_executions_impl, ...``
 # is preserved here so the resource modules don't need to change.
 from deriva_ml_mcp_plugin.tools.execution.read import (
+    _find_executions_consuming_impl,
     _get_execution_detail_impl,
     _get_lineage_impl,
     _list_executions_impl,
+    _multirun_status_impl,
     _summarize_execution,
 )
 
@@ -94,9 +96,11 @@ __all__ = [
     "audit_event",
     "get_ml",
     "register",
+    "_find_executions_consuming_impl",
     "_get_execution_detail_impl",
     "_get_lineage_impl",
     "_list_executions_impl",
+    "_multirun_status_impl",
     "_summarize_execution",
 ]
 

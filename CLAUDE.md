@@ -26,7 +26,7 @@ src/deriva_ml_mcp_plugin/
 ├── prompts.py           # 3 MCP prompts (deriva_ml_concepts /
 │                        #   _getting_started / _primer) + the
 │                        #   deriva_ml_primer + deriva_ml_get_guide orientation tools
-├── tools/               # Per-domain tool modules (50 tools total)
+├── tools/               # Per-domain tool modules (52 tools total)
 │   ├── dataset/         #   20 tools, split into focused submodules:
 │   │   ├── __init__.py  #     register aggregator + helper re-exports
 │   │   ├── read.py      #     12 read tools + shared helpers
@@ -34,13 +34,13 @@ src/deriva_ml_mcp_plugin/
 │   │   └── complex.py   #     1 complex tool (denormalize)
 │   ├── feature.py       #    6 tools
 │   ├── workflow.py      #    5 tools
-│   ├── execution/       #    8 read-only tools (lifecycle is local Python)
+│   ├── execution/       #   10 read-only tools (lifecycle is local Python)
 │   ├── asset.py         #    5 tools
 │   ├── vocabulary.py    #    1 tool (deriva_ml_create_vocabulary)
 │   ├── maintenance.py   #    2 tools (reindex_vocabularies, reindex_rows)
 │   └── resolve.py       #    1 tool (deriva_ml_describe_rid -- RID -> kind + routing)
 └── resources/           # MCP resources + per-user RAG
-    ├── ml.py            #   19 resources (16 catalog-scoped under
+    ├── ml.py            #   21 resources (18 catalog-scoped under
     │                    #   deriva://catalog/{h}/{c}/deriva-ml/... + 3 static)
     └── rag.py           #   1 GitHub doc source +
                          #   read-through per-user-per-RID writers (Dataset/Workflow/Execution,

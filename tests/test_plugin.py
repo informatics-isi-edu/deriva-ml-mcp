@@ -112,6 +112,11 @@ _EXECUTION_TOOLS = frozenset(
         "deriva_ml_find_experiments",
         # v3.3: provenance traversal (data-flow walk; see deriva-ml ADR-0001).
         "deriva_ml_get_lineage",
+        # Round C (plugin#26): forward lineage + multirun status counts
+        # over deriva-ml's find_executions_consuming /
+        # multirun_status_summary.
+        "deriva_ml_find_executions_consuming",
+        "deriva_ml_multirun_status",
     }
 )
 
@@ -214,6 +219,11 @@ _ML_RESOURCE_URIS = frozenset(
         "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/vocabularies/{schema}/{vocab_name}",
         # v3.3 lineage resource (mirrors deriva_ml_get_lineage tool).
         "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/lineage/{rid}",
+        # Round C (plugin#26) forward-lineage + multirun-status resources
+        # (mirror deriva_ml_find_executions_consuming /
+        # deriva_ml_multirun_status; shared _impl helpers).
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/lineage-forward/{rid}",
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/workflow/{workflow_rid}/multirun-status",
         # v3.3 dataset-spec resource (mirrors deriva_ml_get_dataset_spec tool).
         "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/dataset/{dataset_rid}/spec",
         # bag-preview resource (mirrors deriva_ml_bag_info tool, current

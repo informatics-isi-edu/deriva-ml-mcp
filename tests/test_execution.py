@@ -783,3 +783,90 @@ async def test_get_execution_preserves_workflow_rid_when_present(
     )
     payload = json.loads(result)
     assert payload["workflow_rid"] == "1-WF-DIRECT"
+
+
+# ---------------------------------------------------------------------------
+# find_executions_consuming (plugin#26 -- Round C wrapper over deriva-ml#296)
+# ---------------------------------------------------------------------------
+
+
+async def test_find_executions_consuming_success(execution_ctx, capturing_mcp, mock_ml):
+    """Forward lineage: consuming ExecutionRecords map to ExecutionSummary."""
+    mock_ml.find_executions_consuming.return_value = [
+        _make_execution_record_mock(rid="1-EXEC-A"),
+        _make_execution_record_mock(rid="1-EXEC-B"),
+    ]
+    payload = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_executions_consuming"](
+            hostname="h", catalog_id="1", rid="1-DS"
+        )
+    )
+    assert payload["rid"] == "1-DS"
+    assert payload["count"] == 2
+    assert [c["rid"] for c in payload["consumers"]] == ["1-EXEC-A", "1-EXEC-B"]
+    mock_ml.find_executions_consuming.assert_called_once_with("1-DS")
+
+
+async def test_find_executions_consuming_empty(execution_ctx, capturing_mcp, mock_ml):
+    """No recorded consumption -> count 0, empty consumers (not an error)."""
+    mock_ml.find_executions_consuming.return_value = []
+    payload = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_executions_consuming"](
+            hostname="h", catalog_id="1", rid="1-ASSET"
+        )
+    )
+    assert payload == {"rid": "1-ASSET", "count": 0, "consumers": []}
+
+
+async def test_find_executions_consuming_error_envelope(execution_ctx, capturing_mcp, mock_ml):
+    """Non-consumable RID kinds propagate as the standard error envelope."""
+    mock_ml.find_executions_consuming.side_effect = RuntimeError(
+        "RID 1-WF is a Workflow; not consumption-shaped"
+    )
+    payload = json.loads(
+        await capturing_mcp.tools["deriva_ml_find_executions_consuming"](
+            hostname="h", catalog_id="1", rid="1-WF"
+        )
+    )
+    assert payload == {
+        "error": "RID 1-WF is a Workflow; not consumption-shaped",
+        "error_type": "RuntimeError",
+    }
+
+
+# ---------------------------------------------------------------------------
+# multirun_status (plugin#26 -- Round C wrapper over deriva-ml#296)
+# ---------------------------------------------------------------------------
+
+
+async def test_multirun_status_success(execution_ctx, capturing_mcp, mock_ml):
+    """Status counts pass through from the library's MultirunStatusSummary."""
+    from deriva_ml.execution.execution_record import MultirunStatusSummary
+
+    mock_ml.multirun_status_summary.return_value = MultirunStatusSummary(
+        workflow_rid="1-WF01",
+        counts={"Uploaded": 18, "Running": 2, "Failed": 1},
+        total=21,
+    )
+    payload = json.loads(
+        await capturing_mcp.tools["deriva_ml_multirun_status"](
+            hostname="h", catalog_id="1", workflow_rid="1-WF01"
+        )
+    )
+    assert payload == {
+        "workflow_rid": "1-WF01",
+        "counts": {"Uploaded": 18, "Running": 2, "Failed": 1},
+        "total": 21,
+    }
+    mock_ml.multirun_status_summary.assert_called_once_with("1-WF01")
+
+
+async def test_multirun_status_error_envelope(execution_ctx, capturing_mcp, mock_ml):
+    """Non-workflow RIDs propagate as the standard error envelope."""
+    mock_ml.multirun_status_summary.side_effect = RuntimeError("1-XX is not a workflow")
+    payload = json.loads(
+        await capturing_mcp.tools["deriva_ml_multirun_status"](
+            hostname="h", catalog_id="1", workflow_rid="1-XX"
+        )
+    )
+    assert payload == {"error": "1-XX is not a workflow", "error_type": "RuntimeError"}

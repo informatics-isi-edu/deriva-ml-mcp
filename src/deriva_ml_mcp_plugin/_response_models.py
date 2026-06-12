@@ -675,6 +675,38 @@ class ExecutionParentsResponse(BaseModel):
     parents: list[ExecutionSummary]
 
 
+class ExecutionConsumersResponse(BaseModel):
+    """Response for ``deriva_ml_find_executions_consuming`` (forward lineage).
+
+    ``count == 0`` with an empty ``consumers`` list means no RECORDED
+    consumption -- the "is it safe to delete this?" green light, not an
+    error. Producers are not consumers and are excluded.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    rid: str
+    count: int
+    consumers: list[ExecutionSummary]
+
+
+class MultirunStatusResponse(BaseModel):
+    """Response for ``deriva_ml_multirun_status``.
+
+    Wire mirror of ``deriva_ml``'s ``MultirunStatusSummary``
+    (constructed via ``model_dump()`` so library-side field additions
+    fail loudly under ``extra="forbid"``). ``counts`` maps status name
+    to execution count; null catalog statuses are counted under
+    ``"Created"`` by the library.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    workflow_rid: str
+    counts: dict[str, int]
+    total: int
+
+
 # ---------------------------------------------------------------------------
 # Feature response models
 # ---------------------------------------------------------------------------

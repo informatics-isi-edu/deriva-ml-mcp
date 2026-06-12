@@ -29,6 +29,8 @@ Resources registered:
     deriva://catalog/{hostname}/{catalog_id}/deriva-ml/executions
     deriva://catalog/{hostname}/{catalog_id}/deriva-ml/execution/{execution_rid}
     deriva://catalog/{hostname}/{catalog_id}/deriva-ml/lineage/{rid}
+    deriva://catalog/{hostname}/{catalog_id}/deriva-ml/lineage-forward/{rid}
+    deriva://catalog/{hostname}/{catalog_id}/deriva-ml/workflow/{workflow_rid}/multirun-status
     deriva://catalog/{hostname}/{catalog_id}/deriva-ml/features/{table_name}
     deriva://catalog/{hostname}/{catalog_id}/deriva-ml/asset/{asset_rid}
     deriva://catalog/{hostname}/{catalog_id}/deriva-ml/assets/{schema}
@@ -82,9 +84,11 @@ from deriva_ml_mcp_plugin.tools.dataset import (
     _list_datasets_impl,
 )
 from deriva_ml_mcp_plugin.tools.execution import (
+    _find_executions_consuming_impl,
     _get_execution_detail_impl,
     _get_lineage_impl,
     _list_executions_impl,
+    _multirun_status_impl,
 )
 from deriva_ml_mcp_plugin.tools.feature import _list_features_impl
 from deriva_ml_mcp_plugin.tools.workflow import _get_workflow_impl, _list_workflows_impl
@@ -679,6 +683,57 @@ def register(ctx: PluginContext) -> None:
             return _error_envelope(
                 exc,
                 operation="resource_ml_lineage",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+    @ctx.resource("deriva://catalog/{hostname}/{catalog_id}/deriva-ml/lineage-forward/{rid}")
+    async def ml_lineage_forward(hostname: str, catalog_id: str, rid: str) -> str:
+        """Forward lineage: the executions that CONSUMED the given
+        Dataset or asset as an input.
+
+        Same shape as the ``deriva_ml_find_executions_consuming`` tool
+        -- the resource and tool share an internal helper so the two
+        cannot drift. The forward complement of the ``lineage/{rid}``
+        resource (which walks backward to producers). An empty
+        ``consumers`` list means no RECORDED consumption.
+        """
+        try:
+            with deriva_call():
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(_find_executions_consuming_impl, ml, rid)
+            return payload.model_dump_json(by_alias=True)
+        except Exception as exc:  # noqa: BLE001
+            return _error_envelope(
+                exc,
+                operation="resource_ml_lineage_forward",
+                hostname=hostname,
+                catalog_id=catalog_id,
+                audit=False,
+            )
+
+    @ctx.resource(
+        "deriva://catalog/{hostname}/{catalog_id}/deriva-ml/workflow/{workflow_rid}/multirun-status"
+    )
+    async def ml_workflow_multirun_status(hostname: str, catalog_id: str, workflow_rid: str) -> str:
+        """Status counts across all executions of one workflow.
+
+        Same shape as the ``deriva_ml_multirun_status`` tool -- the
+        resource and tool share an internal helper so the two cannot
+        drift. The "is the sweep done?" snapshot for multirun
+        experiments; null catalog statuses are counted under
+        ``"Created"``.
+        """
+        try:
+            with deriva_call():
+                ml = await asyncio.to_thread(_pkg.get_ml, hostname, catalog_id)
+                payload = await asyncio.to_thread(_multirun_status_impl, ml, workflow_rid)
+            return payload.model_dump_json(by_alias=True)
+        except Exception as exc:  # noqa: BLE001
+            return _error_envelope(
+                exc,
+                operation="resource_ml_workflow_multirun_status",
                 hostname=hostname,
                 catalog_id=catalog_id,
                 audit=False,
