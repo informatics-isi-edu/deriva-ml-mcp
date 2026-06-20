@@ -309,10 +309,15 @@ def register(ctx: PluginContext) -> None:
 
         NEWEST / MOST RECENT: pass ``sort=True`` for newest-first
         (record-creation-time descending); add ``limit=1`` for "the
-        single newest". This applies to ``deriva_ml_list_workflows``
-        and ``deriva_ml_list_executions`` too. Do NOT hand-roll an RCT
+        single newest". Five tools take ``sort=``:
+        ``deriva_ml_list_datasets``, ``deriva_ml_list_workflows``,
+        ``deriva_ml_list_executions``,
+        ``deriva_ml_find_workflow_executions``, and
+        ``deriva_ml_find_dataset_executions``. Do NOT hand-roll an RCT
         sort with ``query_attribute`` -- the typed list tools carry the
-        sort flag.
+        flag. (Features and assets are not date-sortable; for newest
+        feature VALUE per record use
+        ``deriva_ml_list_feature_values(selector="newest")``.)
 
         [End cold-start block.]
 
