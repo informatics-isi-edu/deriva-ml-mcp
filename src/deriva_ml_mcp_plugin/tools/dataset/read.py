@@ -307,6 +307,18 @@ def register(ctx: PluginContext) -> None:
              ``after_rid=<last RID>`` from the prior page to advance the
              cursor. Repeat until ``truncated`` is False.
 
+        NEWEST / MOST RECENT: pass ``sort=True`` for newest-first
+        (record-creation-time descending); add ``limit=1`` for "the
+        single newest". Five tools take ``sort=``:
+        ``deriva_ml_list_datasets``, ``deriva_ml_list_workflows``,
+        ``deriva_ml_list_executions``,
+        ``deriva_ml_find_workflow_executions``, and
+        ``deriva_ml_find_dataset_executions``. Do NOT hand-roll an RCT
+        sort with ``query_attribute`` -- the typed list tools carry the
+        flag. (Features and assets are not date-sortable; for newest
+        feature VALUE per record use
+        ``deriva_ml_list_feature_values(selector="newest")``.)
+
         [End cold-start block.]
 
         Args:

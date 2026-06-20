@@ -950,6 +950,23 @@ COMMON TASKS -> WHERE TO LOOK
     "upload / fetch a file"        exe.asset_file_path / exe.download_asset
                                    (local); rag_search "asset upload download"
     "which runs used dataset X?"   find_dataset_executions / get_lineage
+    "newest / most recent /        Pass sort=True (newest-first by RCT)
+     latest dataset|workflow|      to the typed list tool. Five tools
+     execution"                    take it: list_datasets, list_workflows,
+                                   list_executions, find_workflow_executions,
+                                   find_dataset_executions. Add limit=1 for
+                                   "the single newest". Do NOT reach for
+                                   query_attribute on RCT -- the flag is
+                                   already there. For executions, combine
+                                   with status= / workflow_type= (e.g.
+                                   "latest successful training run").
+                                   NOTE: features and assets are NOT
+                                   date-sortable -- find_features /
+                                   list_assets have no sort param (features
+                                   key by feature_table name). For "newest
+                                   feature VALUE per record" use
+                                   list_feature_values(selector="newest"),
+                                   a different mechanism.
     "will changing table X break   find_datasets_referencing +
      anything?"                    find_features_referencing (impact
                                    analysis before schema evolution)
@@ -1098,6 +1115,23 @@ ANTI-PATTERNS (observed failures -- do not repeat)
     get_execution/get_lineage burns round-trips without changing the
     answer. Explore schema when the question is about the SCHEMA, or
     at step 3 when you genuinely need a domain table's shape.
+
+  WRONG: "Newest dataset? Let me query_attribute the Dataset table
+    sorted by RCT." (Same trap for workflows and executions, including
+    find_workflow_executions / find_dataset_executions.) Those five
+    typed tools take ``sort=True`` -- ``deriva_ml_list_datasets(
+    sort=True, limit=1)`` returns the newest dataset directly,
+    newest-first by record creation time, in one bounded call.
+    Hand-rolling an RCT sort on the raw table re-implements what the
+    flag already does, skips the typed summary shape, and (for
+    executions) loses the status= / workflow_type= filters. Reach for
+    query_attribute only when you need an ordering the flag can't
+    express (a non-RCT column, ascending/oldest-first, a computed key).
+    EXCEPTION -- features and assets have NO sort flag (find_features /
+    list_assets don't accept one): for "newest feature value per
+    record" use deriva_ml_list_feature_values(selector="newest"); only
+    for a genuinely unsupported asset/feature ordering is a raw query
+    the right tool.
 
   CORRECT: deriva_ml_get_execution(rid)
            -> (inputs/outputs implicated?) deriva_ml_get_lineage(rid)
