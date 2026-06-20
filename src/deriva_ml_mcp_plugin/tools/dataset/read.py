@@ -307,6 +307,13 @@ def register(ctx: PluginContext) -> None:
              ``after_rid=<last RID>`` from the prior page to advance the
              cursor. Repeat until ``truncated`` is False.
 
+        NEWEST / MOST RECENT: pass ``sort=True`` for newest-first
+        (record-creation-time descending); add ``limit=1`` for "the
+        single newest". This applies to ``deriva_ml_list_workflows``
+        and ``deriva_ml_list_executions`` too. Do NOT hand-roll an RCT
+        sort with ``query_attribute`` -- the typed list tools carry the
+        sort flag.
+
         [End cold-start block.]
 
         Args:

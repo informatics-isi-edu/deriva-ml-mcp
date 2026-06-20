@@ -950,6 +950,15 @@ COMMON TASKS -> WHERE TO LOOK
     "upload / fetch a file"        exe.asset_file_path / exe.download_asset
                                    (local); rag_search "asset upload download"
     "which runs used dataset X?"   find_dataset_executions / get_lineage
+    "newest / most recent /        list_datasets / list_workflows /
+     latest dataset|workflow|      list_executions with sort=True
+     execution"                    (newest-first by RCT). Add limit=1 for
+                                   "the single newest". Do NOT reach for
+                                   query_attribute on RCT -- the typed
+                                   list tool already has the sort flag.
+                                   For executions, combine with status= /
+                                   workflow_type= (e.g. "latest successful
+                                   training run").
     "will changing table X break   find_datasets_referencing +
      anything?"                    find_features_referencing (impact
                                    analysis before schema evolution)
@@ -1098,6 +1107,17 @@ ANTI-PATTERNS (observed failures -- do not repeat)
     get_execution/get_lineage burns round-trips without changing the
     answer. Explore schema when the question is about the SCHEMA, or
     at step 3 when you genuinely need a domain table's shape.
+
+  WRONG: "Newest dataset? Let me query_attribute the Dataset table
+    sorted by RCT." (Same for workflows / executions.) The typed list
+    tools take ``sort=True`` -- ``deriva_ml_list_datasets(sort=True,
+    limit=1)`` returns the newest dataset directly, newest-first by
+    record creation time, in one bounded call. Hand-rolling an RCT sort
+    on the raw table re-implements what the flag already does, skips
+    the typed summary shape, and (for executions) loses the
+    status= / workflow_type= filters. Reach for query_attribute only
+    when you need an ordering the flag can't express (a non-RCT column,
+    ascending/oldest-first, a computed key).
 
   CORRECT: deriva_ml_get_execution(rid)
            -> (inputs/outputs implicated?) deriva_ml_get_lineage(rid)
