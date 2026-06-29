@@ -163,6 +163,15 @@ _RESOLVE_TOOLS = frozenset(
     }
 )
 
+# Cross-domain authentication pre-flight (tools/auth.py): "can the MCP
+# server authenticate to this catalog, and as whom?" -- wraps
+# DerivaML.whoami (deriva-ml #353). mutates=False, no audit row.
+_AUTH_TOOLS = frozenset(
+    {
+        "deriva_ml_check_authentication",
+    }
+)
+
 # Orientation tools registered by ``prompts.py`` (not part of the five ML
 # domains). ``deriva_ml_primer`` returns the startup primer body; it is the
 # tool-shaped counterpart of the ``deriva_ml_primer`` prompt, for agents that
@@ -188,6 +197,7 @@ _ALL_REGISTERED_TOOLS = (
     | _VOCABULARY_TOOLS
     | _ASSET_TOOLS
     | _RESOLVE_TOOLS
+    | _AUTH_TOOLS
     | _PRIMER_TOOLS
 )
 

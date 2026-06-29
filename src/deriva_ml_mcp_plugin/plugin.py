@@ -23,6 +23,7 @@ from deriva_ml_mcp_plugin import prompts as _ml_prompts
 from deriva_ml_mcp_plugin.resources import ml as _ml_resources
 from deriva_ml_mcp_plugin.resources import rag as _ml_rag
 from deriva_ml_mcp_plugin.tools import asset as _asset
+from deriva_ml_mcp_plugin.tools import auth as _auth
 from deriva_ml_mcp_plugin.tools import dataset as _dataset
 from deriva_ml_mcp_plugin.tools import execution as _execution
 from deriva_ml_mcp_plugin.tools import feature as _feature
@@ -92,6 +93,7 @@ def register(ctx: PluginContext) -> None:
     _vocabulary.register(ctx)
     _maintenance.register(ctx)
     _resolve.register(ctx)
+    _auth.register(ctx)
     _ml_resources.register(ctx)
     _ml_rag.register_rag_sources(ctx)
     _ml_prompts.register(ctx)
