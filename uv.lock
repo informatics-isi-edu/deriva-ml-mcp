@@ -11,7 +11,7 @@ resolution-markers = [
 ]
 
 [manifest]
-overrides = [{ name = "deriva", git = "https://github.com/informatics-isi-edu/deriva-py?rev=deriva-ml" }]
+overrides = [{ name = "deriva", git = "https://github.com/informatics-isi-edu/deriva-py?rev=943bfa394c8246ae379b4a15b3f7b615d7da1fdd" }]
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -658,7 +658,7 @@ wheels = [
 [[package]]
 name = "deriva"
 version = "2.0.0.dev0"
-source = { git = "https://github.com/informatics-isi-edu/deriva-py?rev=deriva-ml#a8d42c80d96061a414428b36635bc3011e4437a9" }
+source = { git = "https://github.com/informatics-isi-edu/deriva-py?rev=943bfa394c8246ae379b4a15b3f7b615d7da1fdd#943bfa394c8246ae379b4a15b3f7b615d7da1fdd" }
 dependencies = [
     { name = "bdbag" },
     { name = "fair-identifiers-client" },
@@ -720,7 +720,6 @@ dependencies = [
 name = "deriva-ml-mcp-plugin"
 source = { editable = "." }
 dependencies = [
-    { name = "deriva" },
     { name = "deriva-mcp-core" },
     { name = "deriva-ml" },
 ]
@@ -740,7 +739,6 @@ system-certs = [
 [package.metadata]
 requires-dist = [
     { name = "bump-my-version", marker = "extra == 'dev'" },
-    { name = "deriva", git = "https://github.com/informatics-isi-edu/deriva-py?rev=deriva-ml" },
     { name = "deriva-mcp-core", git = "https://github.com/informatics-isi-edu/deriva-mcp-core.git" },
     { name = "deriva-ml", git = "https://github.com/informatics-isi-edu/deriva-ml.git" },
     { name = "pip-system-certs", marker = "extra == 'system-certs'", specifier = ">=5.3" },

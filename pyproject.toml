@@ -48,11 +48,19 @@ dependencies = [
     # find_features_referencing (#294), find_executions_consuming /
     # multirun_status_summary (#296).
     "deriva-ml>=1.47,<2.0",
-    # Pin deriva-py to the `deriva-ml` branch in the built wheel metadata --
-    # not just in [tool.uv] (which is local-only and does not ship). Installers
-    # other than uv (pip, plain build envs) would otherwise resolve whatever
-    # version of `deriva` is on PyPI, which is incompatible with this plugin.
-    "deriva @ git+https://github.com/informatics-isi-edu/deriva-py@deriva-ml",
+    # NOTE: this plugin deliberately does NOT pin `deriva` (deriva-py).
+    # deriva-ml pins its own deriva-py via an immutable commit SHA (as of
+    # deriva-ml v1.54.0; it was a `@deriva-ml` branch before), and
+    # deriva-mcp-core declares `deriva` unpinned. A `deriva @ ...@deriva-ml`
+    # branch pin here used to be needed to beat core's old `@master` pin --
+    # but core dropped that, and once deriva-ml moved to a SHA the plugin's
+    # branch pin became a SECOND, conflicting URL for the same package. Under
+    # the deriva-docker container install (`uv pip install --no-sources`,
+    # which ignores [tool.uv] overrides), that surfaced as
+    # "Requirements contain conflicting URLs for package `deriva`" and broke
+    # the build. Letting deriva-ml drive the deriva-py version removes the
+    # conflict and the maintenance treadmill. Re-add a pin ONLY if a future
+    # conflict requires forcing a specific deriva-py here.
 ]
 
 [project.optional-dependencies]
@@ -79,8 +87,10 @@ system-certs = [
 deriva-ml = "deriva_ml_mcp_plugin.plugin:register"
 
 [tool.hatch.metadata]
-# Required so `deriva @ git+...` in [project.dependencies] is allowed in the
-# built wheel's METADATA. Without this, hatchling rejects the direct URL.
+# Kept on: deriva-ml (a [project.dependencies] entry) is itself a direct
+# git URL via [tool.uv.sources], and transitive direct-reference metadata
+# can still surface at build time. Harmless if every dep were on PyPI;
+# required the moment any direct URL is in play.
 allow-direct-references = true
 
 [tool.hatch.version]
@@ -93,13 +103,21 @@ version-file = "src/deriva_ml_mcp_plugin/_version.py"
 packages = ["src/deriva_ml_mcp_plugin"]
 
 [tool.uv]
-# Force uv to ignore deriva-mcp-core's `deriva @ ...@master` pin and use the
-# `deriva-ml` branch instead. The wheel METADATA already declares the
-# `deriva-ml` branch (see [project.dependencies]); this override only kicks
-# in for local `uv sync`/`uv run` to resolve the conflict between sibling
-# pins. Drop this once deriva-mcp-core moves off the `master` branch pin.
+# LOCAL-ONLY deriva-py reconciliation. This override does NOT ship in the
+# wheel (the built METADATA no longer pins `deriva` at all -- see the note in
+# [project.dependencies]). It exists solely so a local `uv sync` / `uv run`
+# resolves the sibling conflict: the `deriva-mcp-core` git source still drags
+# in `deriva-py@master`, while `deriva-ml` pins `deriva-py` to an immutable
+# SHA. Without this override, local resolution fails with conflicting URLs for
+# `deriva`. We align local dev to deriva-ml's pin (the SHA wins). Keep this in
+# lockstep with deriva-ml's deriva-py SHA on each bump; drop it entirely once
+# deriva-mcp-core stops sourcing deriva-py from `@master`.
+#
+# The container build does NOT use this (it runs `uv pip install --no-sources`,
+# which is why the [project.dependencies] pin -- not this override -- was the
+# thing that broke the container and had to be removed).
 override-dependencies = [
-    "deriva @ git+https://github.com/informatics-isi-edu/deriva-py@deriva-ml",
+    "deriva @ git+https://github.com/informatics-isi-edu/deriva-py@943bfa394c8246ae379b4a15b3f7b615d7da1fdd",
 ]
 
 [tool.uv.sources]
