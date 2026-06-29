@@ -117,7 +117,12 @@ packages = ["src/deriva_ml_mcp_plugin"]
 # which is why the [project.dependencies] pin -- not this override -- was the
 # thing that broke the container and had to be removed).
 override-dependencies = [
-    "deriva @ git+https://github.com/informatics-isi-edu/deriva-py@943bfa394c8246ae379b4a15b3f7b615d7da1fdd",
+    # Lockstep with deriva-ml's deriva-py pin. deriva-ml 1.54.1 (#354,
+    # "pyproject packaging migration") moved its deriva-py pin to
+    # c93e71e (the deriva-py deriva-ml-branch tip); advance this to
+    # match on every deriva-ml bump that changes the pin, or local
+    # `uv sync` fails with conflicting URLs for `deriva`.
+    "deriva @ git+https://github.com/informatics-isi-edu/deriva-py@c93e71e480e2ef501ed58077e5fff3705bcdb5a1",
 ]
 
 [tool.uv.sources]
