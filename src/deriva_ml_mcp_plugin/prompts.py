@@ -4,7 +4,7 @@ These are MCP prompts (registered via ``@ctx.prompt(...)``), not Python
 docstrings. FastMCP surfaces them through the MCP ``prompts/list`` and
 ``prompts/get`` endpoints so an LLM client can pull them up by name at
 the start of a conversation -- they are the cold-start anchor for the
-plugin's 52 tools and 21 resources.
+plugin's 53 tools and 21 resources.
 
 The two prompts complement the four built-in core prompts shipped by
 ``deriva-mcp-core`` (``query_guide``, ``entity_guide``,
@@ -677,12 +677,14 @@ you're driving the library directly from a notebook or skill.
 
 THE FIVE ML DOMAINS
 -------------------
-Forty-six of the 52 tools are organized into five domain modules. The
-other six: the catalog-maintenance tools
+Forty-six of the 53 tools are organized into five domain modules. The
+other seven: the catalog-maintenance tools
 ``deriva_ml_create_vocabulary``, ``deriva_ml_reindex_vocabularies``,
-``deriva_ml_reindex_rows``; the cross-domain
+``deriva_ml_reindex_rows``; the two cross-domain tools
 ``deriva_ml_describe_rid`` (resolve a bare RID to its table and the
-right next tool); and the orientation pair ``deriva_ml_primer`` /
+right next tool) and ``deriva_ml_check_authentication`` (pre-flight:
+is the server authenticated to this catalog, and as whom?); and the
+orientation pair ``deriva_ml_primer`` /
 ``deriva_ml_get_guide`` (static text, no catalog I/O). Pick the domain first,
 then the verb. All actual tool names are prefixed
 ``deriva_ml_<verb>`` (e.g. the ``create`` verb under ``dataset`` is
@@ -933,6 +935,11 @@ COMMON TASKS -> WHERE TO LOOK
 -----------------------------
     Intent                         Tools / route
     ------------------------------ --------------------------------------------
+    "am I logged in? / can the     check_authentication(hostname, catalog_id)
+     server reach this catalog?"   -- pre-flight before catalog ops; returns
+                                   {authenticated, identity}. Distinguishes
+                                   "no session" from a connect error. Run it
+                                   first when ops 401 or a host is untested.
     "what's in this catalog?"      rag_search(doc_type="catalog-schema" |
                                    "catalog-data"); the deriva-ml/datasets and
                                    deriva-ml/workflows resources
@@ -1349,10 +1356,11 @@ and ``description``. There is no compat shim; update any references.
 
 THE MENU
 --------
-Quick orientation: 52 tools -- 46 across the 5 ML domains (dataset,
+Quick orientation: 53 tools -- 46 across the 5 ML domains (dataset,
 feature, workflow, execution, asset) plus 3 catalog-maintenance tools
-(create_vocabulary, reindex_vocabularies, reindex_rows), the
-cross-domain describe_rid, and the orientation pair (primer,
+(create_vocabulary, reindex_vocabularies, reindex_rows), the two
+cross-domain tools (describe_rid, check_authentication), and the
+orientation pair (primer,
 deriva_ml_get_guide) -- + 21 read-only resources (18 catalog-scoped under the
 ``deriva://catalog/{h}/{c}/deriva-ml/...`` URI prefix + 3 static
 cold-start) + GitHub doc sources indexed for RAG (``deriva-ml-docs``,

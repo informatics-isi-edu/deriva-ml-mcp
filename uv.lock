@@ -11,7 +11,7 @@ resolution-markers = [
 ]
 
 [manifest]
-overrides = [{ name = "deriva", git = "https://github.com/informatics-isi-edu/deriva-py?rev=943bfa394c8246ae379b4a15b3f7b615d7da1fdd" }]
+overrides = [{ name = "deriva", git = "https://github.com/informatics-isi-edu/deriva-py?rev=c93e71e480e2ef501ed58077e5fff3705bcdb5a1" }]
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -179,7 +179,7 @@ wheels = [
 [[package]]
 name = "bdbag"
 version = "1.9.0.dev0"
-source = { git = "https://github.com/fair-research/bdbag?rev=1.9.0-dev#4de3a48b2132afb7e0ee26768b745da5cfd6cbe6" }
+source = { git = "https://github.com/fair-research/bdbag.git?rev=1.9.0-dev#4de3a48b2132afb7e0ee26768b745da5cfd6cbe6" }
 dependencies = [
     { name = "bagit" },
     { name = "bagit-profile" },
@@ -658,7 +658,7 @@ wheels = [
 [[package]]
 name = "deriva"
 version = "2.0.0.dev0"
-source = { git = "https://github.com/informatics-isi-edu/deriva-py?rev=943bfa394c8246ae379b4a15b3f7b615d7da1fdd#943bfa394c8246ae379b4a15b3f7b615d7da1fdd" }
+source = { git = "https://github.com/informatics-isi-edu/deriva-py?rev=c93e71e480e2ef501ed58077e5fff3705bcdb5a1#c93e71e480e2ef501ed58077e5fff3705bcdb5a1" }
 dependencies = [
     { name = "bdbag" },
     { name = "fair-identifiers-client" },
@@ -671,6 +671,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-dateutil" },
     { name = "requests" },
+    { name = "setuptools" },
     { name = "sqlalchemy" },
     { name = "urllib3" },
 ]
@@ -691,8 +692,8 @@ dependencies = [
 
 [[package]]
 name = "deriva-ml"
-version = "1.54.0"
-source = { git = "https://github.com/informatics-isi-edu/deriva-ml.git#f523eece10bd6752f638225dff53dfa37b7aacc0" }
+version = "1.54.1"
+source = { git = "https://github.com/informatics-isi-edu/deriva-ml.git#abd78e56d00423900c542292d0c8bc32425fcb04" }
 dependencies = [
     { name = "bdbag" },
     { name = "bump-my-version" },

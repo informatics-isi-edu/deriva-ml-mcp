@@ -1557,3 +1557,35 @@ class DescribeRidResponse(BaseModel):
     ]
     suggestion: str
     resource_uri: str | None = None
+
+
+class CheckAuthenticationResponse(BaseModel):
+    """Response for ``deriva_ml_check_authentication``.
+
+    Answers "can the MCP server authenticate to this catalog, and as
+    whom?" -- a pre-flight before catalog operations. ``authenticated``
+    is the boolean (server returned a session); ``identity`` is the
+    logged-in client dict (``id`` / ``display_name`` / ``email`` /
+    ``full_name`` / ``identities``) when authenticated, ``None``
+    otherwise. ``hostname`` / ``catalog_id`` echo the target so the
+    answer is self-describing.
+
+    Confirms *authentication* (the server knows who the credential
+    is), NOT *authorization* for any specific operation -- a write to a
+    read-only table can still be refused with a valid session. A
+    network/connection failure or a non-auth HTTP error is surfaced as
+    the standard ``{"error", "error_type"}`` envelope, NOT as
+    ``authenticated: false`` (which means specifically "reached the
+    server, no valid session").
+
+    ``identity`` is ``extra="allow"`` -- the server's client dict shape
+    is owned by the Deriva auth layer and may carry fields beyond the
+    documented five.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    authenticated: bool
+    identity: dict[str, Any] | None = None
+    hostname: str
+    catalog_id: str
